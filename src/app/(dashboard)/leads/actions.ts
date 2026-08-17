@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import type { LeadStatus } from "@/types/lead";
 
 type AssignLeadInput = {
   leadId: string;
@@ -226,6 +227,193 @@ export async function reassignLead(
   }
 
   revalidatePath("/leads");
+
+  return {
+    success: true,
+  };
+}
+
+type UpdateLeadStatusInput = {
+  leadId: string;
+  status: LeadStatus;
+};
+
+const validLeadStatuses: LeadStatus[] = [
+  "nova",
+  "em_contacto",
+  "a_aguardar",
+  "simulacao_enviada",
+  "proposta",
+  "ganha",
+  "convertida",
+  "perdida",
+];
+
+export async function updateLeadStatus(
+  input: UpdateLeadStatusInput,
+) {
+  const supabase = await createClient();
+
+  // 1. Quem está autenticado?
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Não autenticado.");
+  }
+
+  // 2. Obter perfil e role
+  const {
+    data: profile,
+    error: profileError,
+  } = await supabase
+    .from("profiles")
+    .select(`
+      id,
+      role,
+      store_id,
+      active
+    `)
+    .eq("id", user.id)
+    .single();
+
+  if (profileError || !profile) {
+    throw new Error("Perfil não encontrado.");
+  }
+
+  if (!profile.active) {
+    throw new Error("Conta desativada.");
+  }
+
+  // Segurança adicional
+  if (!validLeadStatuses.includes(input.status)) {
+    throw new Error("Estado inválido.");
+  }
+
+  const admin = createAdminClient();
+
+  // 3. Buscar estado atual e responsável
+  const {
+    data: lead,
+    error: leadError,
+  } = await admin
+    .from("leads")
+    .select(`
+      id,
+      status,
+      store_id,
+      assigned_user_id
+    `)
+    .eq("id", input.leadId)
+    .single();
+
+  if (leadError || !lead) {
+    throw new Error("Lead não encontrada.");
+  }
+
+  const currentStatus =
+    lead.status as LeadStatus;
+
+  const newStatus = input.status;
+
+  if (currentStatus === newStatus) {
+    return {
+      success: true,
+    };
+  }
+
+  // ==========================================
+  // COMERCIAL
+  // ==========================================
+
+  if (profile.role === "COMERCIAL") {
+    // Só mexe nas próprias leads
+    if (lead.assigned_user_id !== user.id) {
+      throw new Error(
+        "Não tens permissão para alterar esta lead.",
+      );
+    }
+
+    // REGRA PRINCIPAL:
+    // comercial NUNCA confirma conversão
+    if (newStatus === "convertida") {
+      throw new Error(
+        "A conversão tem de ser validada pela gestão.",
+      );
+    }
+  }
+
+  // ==========================================
+  // GESTOR DE LOJA
+  // ==========================================
+
+  if (profile.role === "GESTOR_LOJA") {
+    if (
+      !profile.store_id ||
+      lead.store_id !== profile.store_id
+    ) {
+      throw new Error(
+        "Esta lead não pertence à tua loja.",
+      );
+    }
+  }
+
+  // ==========================================
+  // CONVERSÃO
+  // ==========================================
+
+  if (newStatus === "convertida") {
+    const canValidateConversion =
+      profile.role === "OWNER" ||
+      profile.role === "ADMIN" ||
+      profile.role === "GESTOR_LOJA";
+
+    if (!canValidateConversion) {
+      throw new Error(
+        "Não tens permissão para validar uma conversão.",
+      );
+    }
+
+    // Só uma lead marcada como ganha
+    // pode ser confirmada como convertida.
+    if (currentStatus !== "ganha") {
+      throw new Error(
+        "A lead tem de estar como 'Ganha' antes de ser convertida.",
+      );
+    }
+  }
+
+  // ==========================================
+  // UPDATE
+  // ==========================================
+
+  const now = new Date().toISOString();
+
+  const updateData: {
+    status: LeadStatus;
+    updated_at: string;
+    converted_at?: string;
+  } = {
+    status: newStatus,
+    updated_at: now,
+  };
+
+  if (newStatus === "convertida") {
+    updateData.converted_at = now;
+  }
+
+  const { error: updateError } = await admin
+    .from("leads")
+    .update(updateData)
+    .eq("id", input.leadId);
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
 
   return {
     success: true,

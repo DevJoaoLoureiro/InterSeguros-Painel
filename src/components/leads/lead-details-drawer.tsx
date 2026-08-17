@@ -19,6 +19,7 @@ import {
 import {
   assignLead,
   reassignLead,
+  updateLeadStatus,
 } from "@/app/(dashboard)/leads/actions";
 
 import type {
@@ -196,28 +197,36 @@ export function LeadDetailsDrawer({
     setEditingAssignment,
   ] = useState(false);
 
+
+  const [selectedStatus, setSelectedStatus] =
+  useState<LeadStatus>("nova");
+
+const [savingStatus, setSavingStatus] =
+  useState(false);
+
+const [statusError, setStatusError] =
+  useState<string | null>(null);
+
   /*
    * Sempre que abrimos outra lead,
    * sincronizamos os selects.
    */
-  useEffect(() => {
-    if (!lead) {
-      return;
-    }
+ useEffect(() => {
+  if (!lead) {
+    return;
+  }
 
-    setStoreId(
-      lead.store_id ?? "",
-    );
+  setStoreId(lead.store_id ?? "");
+  setCommercialId(
+    lead.assigned_user_id ?? "",
+  );
 
-    setCommercialId(
-      lead.assigned_user_id ?? "",
-    );
+  setAssignmentError(null);
+  setEditingAssignment(false);
 
-    setAssignmentError(null);
-
-    setEditingAssignment(false);
-  }, [lead]);
-
+  setSelectedStatus(lead.status);
+  setStatusError(null);
+}, [lead]);
   /*
    * Só mostra comerciais pertencentes
    * à loja selecionada.
@@ -337,6 +346,38 @@ export function LeadDetailsDrawer({
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+
+    async function handleStatusChange() {
+    if (!lead) {
+      return;
+    }
+
+    if (selectedStatus === lead.status) {
+      return;
+    }
+
+    try {
+      setSavingStatus(true);
+      setStatusError(null);
+
+      await updateLeadStatus({
+        leadId: lead.id,
+        status: selectedStatus,
+      });
+
+      router.refresh();
+      onClose();
+    } catch (error) {
+      setStatusError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível alterar o estado.",
+      );
+    } finally {
+      setSavingStatus(false);
     }
   }
 
@@ -573,6 +614,89 @@ export function LeadDetailsDrawer({
               </p>
             )}
           </section>
+
+          <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
+              <h3 className="font-semibold text-[#20242a]">
+                Estado da lead
+              </h3>
+
+              <p className="mt-1 text-sm text-[#7d848e]">
+                Atualiza o progresso comercial desta lead.
+              </p>
+
+              <div className="mt-5">
+                <label className="text-xs font-semibold text-[#6f7680]">
+                  Estado
+                </label>
+
+                <select
+                  value={selectedStatus}
+                  onChange={(event) =>
+                    setSelectedStatus(
+                      event.target.value as LeadStatus,
+                    )
+                  }
+                  className="mt-2 h-11 w-full rounded-xl border border-[#dde1e6] bg-white px-3 text-sm outline-none focus:border-[#ff4b0a]"
+                >
+                  <option value="nova">
+                    Nova
+                  </option>
+
+                  <option value="em_contacto">
+                    Em contacto
+                  </option>
+
+                  <option value="a_aguardar">
+                    A aguardar
+                  </option>
+
+                  <option value="simulacao_enviada">
+                    Simulação enviada
+                  </option>
+
+                  <option value="proposta">
+                    Proposta
+                  </option>
+
+                  <option value="ganha">
+                    Ganha
+                  </option>
+
+                  {currentUserRole !== "COMERCIAL" && (
+                    <option value="convertida">
+                      Convertida
+                    </option>
+                  )}
+
+                  <option value="perdida">
+                    Perdida
+                  </option>
+                </select>
+              </div>
+
+              {statusError && (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {statusError}
+                </div>
+              )}
+
+              <div className="mt-5 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleStatusChange}
+                  disabled={
+                    savingStatus ||
+                    selectedStatus === lead.status
+                  }
+                  className="inline-flex h-11 items-center justify-center rounded-xl bg-[#242a32] px-5 text-sm font-semibold text-white transition hover:bg-[#171b20] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {savingStatus
+                    ? "A guardar..."
+                    : "Guardar estado"}
+                </button>
+              </div>
+            </section>
+
 
           {/* ATRIBUIÇÃO - SÓ OWNER */}
 
