@@ -15,24 +15,56 @@ export default async function Page() {
 
   const { data: currentProfile } = await supabase
     .from("profiles")
-    .select("role")
+    .select(`
+      id,
+      role,
+      store_id,
+      active
+    `)
     .eq("id", user.id)
     .single();
 
-  const currentUserRole =
-    currentProfile?.role ?? null;
+  if (!currentProfile || !currentProfile.active) {
+    return null;
+  }
+
+  let leadsQuery = supabase
+    .from("leads")
+    .select("*")
+    .order("created_at", {
+      ascending: false,
+    });
+
+  // COMERCIAL:
+  // só vê leads atribuídas diretamente a ele
+  if (currentProfile.role === "COMERCIAL") {
+    leadsQuery = leadsQuery.eq(
+      "assigned_user_id",
+      user.id,
+    );
+  }
+
+  // GESTOR_LOJA:
+  // vê todas as leads da sua loja
+  if (
+    currentProfile.role === "GESTOR_LOJA" &&
+    currentProfile.store_id
+  ) {
+    leadsQuery = leadsQuery.eq(
+      "store_id",
+      currentProfile.store_id,
+    );
+  }
+
+  // OWNER e ADMIN:
+  // não adicionamos filtro => veem todas
 
   const [
     leadsResult,
     storesResult,
     commercialsResult,
   ] = await Promise.all([
-    supabase
-      .from("leads")
-      .select("*")
-      .order("created_at", {
-        ascending: false,
-      }),
+    leadsQuery,
 
     supabase
       .from("stores")
@@ -82,18 +114,12 @@ export default async function Page() {
   const commercials =
     commercialsResult.data ?? [];
 
-
-    console.log("=== DEBUG LEADS ===");
-console.log("STORES:", stores);
-console.log("COMMERCIALS:", commercials);
-console.log("===================");
-
   return (
     <LeadsPage
       leads={leads}
       stores={stores}
       commercials={commercials}
-      currentUserRole={currentUserRole}
+      currentUserRole={currentProfile.role}
     />
   );
 }
