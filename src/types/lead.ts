@@ -31,7 +31,7 @@ export type Lead = {
   answers: Record<string, string> | null;
 
   store_id: string | null;
-  assigned_to: string | null;
+assigned_user_id: string | null;
 
   created_at: string;
   updated_at: string | null;

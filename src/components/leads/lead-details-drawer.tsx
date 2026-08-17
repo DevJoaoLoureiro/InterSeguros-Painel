@@ -1,6 +1,9 @@
 "use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+
 import {
-  Bot,
   CalendarDays,
   Clock3,
   MapPin,
@@ -13,10 +16,10 @@ import {
   X,
 } from "lucide-react";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
-
-import { assignLead } from "@/app/(dashboard)/leads/actions";
+import {
+  assignLead,
+  reassignLead,
+} from "@/app/(dashboard)/leads/actions";
 
 import type {
   Lead,
@@ -25,7 +28,6 @@ import type {
 
 import { LeadPriorityBadge } from "@/components/leads/lead-priority-badge";
 import { LeadStatusBadge } from "@/components/leads/lead-status-badge";
-
 
 type StoreOption = {
   id: string;
@@ -37,8 +39,6 @@ type CommercialOption = {
   full_name: string;
   store_id: string | null;
 };
-
-
 
 type LeadDetailsDrawerProps = {
   lead: Lead | null;
@@ -62,12 +62,24 @@ const statusOptions: Array<{
     label: "Em contacto",
   },
   {
+    value: "a_aguardar",
+    label: "A aguardar",
+  },
+  {
+    value: "simulacao_enviada",
+    label: "Simulação enviada",
+  },
+  {
     value: "proposta",
     label: "Proposta",
   },
   {
     value: "ganha",
     label: "Ganha",
+  },
+  {
+    value: "convertida",
+    label: "Convertida",
   },
   {
     value: "perdida",
@@ -163,46 +175,100 @@ export function LeadDetailsDrawer({
 }: LeadDetailsDrawerProps) {
   const router = useRouter();
 
-  const [storeId, setStoreId] = useState("");
-  const [commercialId, setCommercialId] =
+  const [storeId, setStoreId] =
     useState("");
 
-  const [saving, setSaving] = useState(false);
-  const [assignmentError, setAssignmentError] =
-    useState<string | null>(null);
+  const [
+    commercialId,
+    setCommercialId,
+  ] = useState("");
 
-  const [assignmentSuccess, setAssignmentSuccess] =
+  const [saving, setSaving] =
     useState(false);
 
+  const [
+    assignmentError,
+    setAssignmentError,
+  ] = useState<string | null>(null);
+
+  const [
+    editingAssignment,
+    setEditingAssignment,
+  ] = useState(false);
+
+  /*
+   * Sempre que abrimos outra lead,
+   * sincronizamos os selects.
+   */
   useEffect(() => {
     if (!lead) {
       return;
     }
 
-    setStoreId(lead.store_id ?? "");
-    setCommercialId(lead.assigned_to ?? "");
+    setStoreId(
+      lead.store_id ?? "",
+    );
+
+    setCommercialId(
+      lead.assigned_user_id ?? "",
+    );
+
     setAssignmentError(null);
-    setAssignmentSuccess(false);
+
+    setEditingAssignment(false);
   }, [lead]);
 
-  const availableCommercials = useMemo(() => {
-    if (!storeId) {
-      return [];
-    }
+  /*
+   * Só mostra comerciais pertencentes
+   * à loja selecionada.
+   */
+  const availableCommercials =
+    useMemo(() => {
+      if (!storeId) {
+        return [];
+      }
 
-    return commercials.filter(
-      (commercial) =>
-        commercial.store_id === storeId,
-    );
-  }, [commercials, storeId]);
+      return commercials.filter(
+        (commercial) =>
+          commercial.store_id ===
+          storeId,
+      );
+    }, [commercials, storeId]);
+
+  const isAssigned = Boolean(
+    lead?.assigned_user_id,
+  );
 
   function handleStoreChange(
     newStoreId: string,
   ) {
     setStoreId(newStoreId);
+
+    /*
+     * Ao trocar de loja temos de
+     * limpar o comercial anterior.
+     */
     setCommercialId("");
+
     setAssignmentError(null);
-    setAssignmentSuccess(false);
+  }
+
+  function cancelReassignment() {
+    if (!lead) {
+      return;
+    }
+
+    setStoreId(
+      lead.store_id ?? "",
+    );
+
+    setCommercialId(
+      lead.assigned_user_id ?? "",
+    );
+
+    setAssignmentError(null);
+
+    setEditingAssignment(false);
   }
 
   async function handleAssignment() {
@@ -212,8 +278,9 @@ export function LeadDetailsDrawer({
 
     if (!storeId) {
       setAssignmentError(
-        "Seleciona primeiro uma loja.",
+        "Seleciona uma loja.",
       );
+
       return;
     }
 
@@ -221,28 +288,52 @@ export function LeadDetailsDrawer({
       setAssignmentError(
         "Seleciona um comercial.",
       );
+
       return;
     }
 
     try {
       setSaving(true);
       setAssignmentError(null);
-      setAssignmentSuccess(false);
 
-      await assignLead({
-        leadId: lead.id,
-        storeId,
-        commercialId,
-      });
+      /*
+       * Se já existe responsável:
+       * REATRIBUIÇÃO.
+       *
+       * Se não existe:
+       * PRIMEIRA ATRIBUIÇÃO.
+       */
+      if (isAssigned) {
+        await reassignLead({
+          leadId: lead.id,
+          storeId,
+          commercialId,
+        });
+      } else {
+        await assignLead({
+          leadId: lead.id,
+          storeId,
+          commercialId,
+        });
+      }
 
-      setAssignmentSuccess(true);
-
+      /*
+       * Atualiza Server Components.
+       */
       router.refresh();
+
+      /*
+       * Fechamos para evitar mostrar
+       * o objeto antigo da lead.
+       * Ao abrir novamente já vem
+       * atualizado do Supabase.
+       */
+      onClose();
     } catch (error) {
       setAssignmentError(
         error instanceof Error
           ? error.message
-          : "Não foi possível atribuir a lead.",
+          : "Não foi possível guardar a atribuição.",
       );
     } finally {
       setSaving(false);
@@ -257,18 +348,34 @@ export function LeadDetailsDrawer({
     lead.answers ?? {},
   );
 
-
   const registration =
     lead.answers?.registration;
 
+  const currentStore =
+    stores.find(
+      (store) =>
+        store.id === lead.store_id,
+    ) ?? null;
+
+  const currentCommercial =
+    commercials.find(
+      (commercial) =>
+        commercial.id ===
+        lead.assigned_user_id,
+    ) ?? null;
+
   return (
     <div className="fixed inset-0 z-[100]">
+      {/* OVERLAY */}
+
       <button
         type="button"
         aria-label="Fechar detalhe da lead"
         onClick={onClose}
         className="absolute inset-0 bg-slate-950/35 backdrop-blur-[1px]"
       />
+
+      {/* DRAWER */}
 
       <aside
         role="dialog"
@@ -312,15 +419,13 @@ export function LeadDetailsDrawer({
 
           <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
             <div className="flex h-11 items-center rounded-xl border border-[#dde1e6] bg-[#f8f9fa] px-3 text-sm text-[#59616d]">
-              Estado:{" "}
+              Estado:
               <span className="ml-1 font-semibold">
-                {
-                  statusOptions.find(
-                    (option) =>
-                      option.value ===
-                      lead.status,
-                  )?.label
-                }
+                {statusOptions.find(
+                  (option) =>
+                    option.value ===
+                    lead.status,
+                )?.label ?? lead.status}
               </span>
             </div>
 
@@ -329,6 +434,7 @@ export function LeadDetailsDrawer({
               className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#ff4b0a] px-5 text-sm font-semibold text-white transition hover:bg-[#e94308]"
             >
               <Phone className="h-4 w-4" />
+
               Ligar
             </a>
           </div>
@@ -337,11 +443,12 @@ export function LeadDetailsDrawer({
         {/* BODY */}
 
         <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
-          {/* CONTACTO */}
+          {/* DADOS */}
 
           <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
             <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
               <User className="h-4 w-4 text-[#ff4b0a]" />
+
               Dados da lead
             </h3>
 
@@ -374,6 +481,7 @@ export function LeadDetailsDrawer({
               <div>
                 <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
                   <ShieldCheck className="h-3.5 w-3.5" />
+
                   Tipo de seguro
                 </dt>
 
@@ -389,7 +497,9 @@ export function LeadDetailsDrawer({
                   </dt>
 
                   <dd className="mt-1 text-sm font-medium uppercase text-[#333842]">
-                    {registration}
+                    {formatAnswer(
+                      registration,
+                    )}
                   </dd>
                 </div>
               )}
@@ -397,17 +507,21 @@ export function LeadDetailsDrawer({
               <div>
                 <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
                   <MapPin className="h-3.5 w-3.5" />
+
                   Origem
                 </dt>
 
                 <dd className="mt-1 text-sm font-medium text-[#333842]">
-                  {getSourceLabel(lead.source)}
+                  {getSourceLabel(
+                    lead.source,
+                  )}
                 </dd>
               </div>
 
               <div>
                 <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
                   <CalendarDays className="h-3.5 w-3.5" />
+
                   Data de entrada
                 </dt>
 
@@ -425,6 +539,7 @@ export function LeadDetailsDrawer({
           <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
             <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
               <MessageSquareText className="h-4 w-4 text-[#ff4b0a]" />
+
               Respostas do chatbot
             </h3>
 
@@ -459,151 +574,298 @@ export function LeadDetailsDrawer({
             )}
           </section>
 
-            {/* GESTÃO / ATRIBUIÇÃO */}
+          {/* ATRIBUIÇÃO - SÓ OWNER */}
+
           {currentUserRole === "OWNER" && (
-          <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
-            <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50">
-                <UserRoundCheck className="h-5 w-5 text-[#ff4b0a]" />
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-[#20242a]">
-                  Atribuição da lead
-                </h3>
-
-                <p className="mt-1 text-sm text-[#7d848e]">
-                  Seleciona a loja e o comercial responsável
-                  por esta lead.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              {/* LOJA */}
-
-              <div>
-                <label
-                  htmlFor="lead-store"
-                  className="text-xs font-semibold text-[#6f7680]"
-                >
-                  Loja
-                </label>
-
-                <select
-                  id="lead-store"
-                  value={storeId}
-                  onChange={(event) =>
-                    handleStoreChange(event.target.value)
-                  }
-                  className="mt-2 h-11 w-full rounded-xl border border-[#dde1e6] bg-white px-3 text-sm text-[#333842] outline-none transition focus:border-[#ff4b0a] focus:ring-2 focus:ring-orange-100"
-                >
-                  <option value="">
-                    Selecionar loja
-                  </option>
-
-                  {stores.map((store) => (
-                    <option
-                      key={store.id}
-                      value={store.id}
-                    >
-                      {store.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* COMERCIAL */}
-
-              <div>
-                <label
-                  htmlFor="lead-commercial"
-                  className="text-xs font-semibold text-[#6f7680]"
-                >
-                  Comercial
-                </label>
-
-                <select
-                  id="lead-commercial"
-                  value={commercialId}
-                  disabled={!storeId}
-                  onChange={(event) => {
-                    setCommercialId(event.target.value);
-                    setAssignmentError(null);
-                    setAssignmentSuccess(false);
-                  }}
-                  className="mt-2 h-11 w-full rounded-xl border border-[#dde1e6] bg-white px-3 text-sm text-[#333842] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f4f5f7] disabled:text-[#9ca3af] focus:border-[#ff4b0a] focus:ring-2 focus:ring-orange-100"
-                >
-                  <option value="">
-                    {!storeId
-                      ? "Seleciona uma loja primeiro"
-                      : "Selecionar comercial"}
-                  </option>
-
-                  {availableCommercials.map(
-                    (commercial) => (
-                      <option
-                        key={commercial.id}
-                        value={commercial.id}
-                      >
-                        {commercial.full_name}
-                      </option>
-                    ),
-                  )}
-                </select>
-              </div>
-            </div>
-
-            {/* SEM COMERCIAIS */}
-
-            {storeId &&
-              availableCommercials.length === 0 && (
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                  Não existem comerciais ativos associados a
-                  esta loja.
+            <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50">
+                  <UserRoundCheck className="h-5 w-5 text-[#ff4b0a]" />
                 </div>
+
+                <div>
+                  <h3 className="font-semibold text-[#20242a]">
+                    Atribuição da lead
+                  </h3>
+
+                  <p className="mt-1 text-sm text-[#7d848e]">
+                    Gere a loja e o comercial
+                    responsável por esta lead.
+                  </p>
+                </div>
+              </div>
+
+              {/* ============================= */}
+              {/* LEAD JÁ ATRIBUÍDA              */}
+              {/* ============================= */}
+
+              {isAssigned &&
+              !editingAssignment ? (
+                <>
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs font-semibold text-[#6f7680]">
+                        Loja
+                      </p>
+
+                      <div className="mt-2 rounded-xl border border-[#dde1e6] bg-[#f8f9fa] px-4 py-3 text-sm font-semibold text-[#20242a]">
+                        {currentStore?.name ??
+                          "Loja atribuída"}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-semibold text-[#6f7680]">
+                        Responsável
+                      </p>
+
+                      <div className="mt-2 rounded-xl border border-[#dde1e6] bg-[#f8f9fa] px-4 py-3 text-sm font-semibold text-[#20242a]">
+                        {currentCommercial?.full_name ??
+                          "Comercial atribuído"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
+                    Esta lead já está atribuída.
+                  </div>
+
+                  <div className="mt-5 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingAssignment(
+                          true,
+                        );
+
+                        setAssignmentError(
+                          null,
+                        );
+                      }}
+                      className="inline-flex h-11 items-center justify-center rounded-xl bg-[#ff4b0a] px-5 text-sm font-semibold text-white transition hover:bg-[#e94308]"
+                    >
+                      Mudar responsável
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* ============================= */}
+                  {/* PRIMEIRA / NOVA ATRIBUIÇÃO    */}
+                  {/* ============================= */}
+
+                  <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                    {/* LOJA */}
+
+                    <div>
+                      <label
+                        htmlFor="lead-store"
+                        className="text-xs font-semibold text-[#6f7680]"
+                      >
+                        Loja
+                      </label>
+
+                      <select
+                        id="lead-store"
+                        value={storeId}
+                        onChange={(event) =>
+                          handleStoreChange(
+                            event.target.value,
+                          )
+                        }
+                        className="mt-2 h-11 w-full rounded-xl border border-[#dde1e6] bg-white px-3 text-sm text-[#333842] outline-none transition focus:border-[#ff4b0a] focus:ring-2 focus:ring-orange-100"
+                      >
+                        <option value="">
+                          Selecionar loja
+                        </option>
+
+                        {stores.map(
+                          (store) => (
+                            <option
+                              key={store.id}
+                              value={store.id}
+                            >
+                              {store.name}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </div>
+
+                    {/* COMERCIAL */}
+
+                    <div>
+                      <label
+                        htmlFor="lead-commercial"
+                        className="text-xs font-semibold text-[#6f7680]"
+                      >
+                        Comercial
+                      </label>
+
+                      <select
+                        id="lead-commercial"
+                        value={commercialId}
+                        disabled={!storeId}
+                        onChange={(
+                          event,
+                        ) => {
+                          setCommercialId(
+                            event.target
+                              .value,
+                          );
+
+                          setAssignmentError(
+                            null,
+                          );
+                        }}
+                        className="mt-2 h-11 w-full rounded-xl border border-[#dde1e6] bg-white px-3 text-sm text-[#333842] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f4f5f7] disabled:text-[#9ca3af] focus:border-[#ff4b0a] focus:ring-2 focus:ring-orange-100"
+                      >
+                        <option value="">
+                          {!storeId
+                            ? "Seleciona uma loja primeiro"
+                            : "Selecionar comercial"}
+                        </option>
+
+                        {availableCommercials.map(
+                          (
+                            commercial,
+                          ) => (
+                            <option
+                              key={
+                                commercial.id
+                              }
+                              value={
+                                commercial.id
+                              }
+                            >
+                              {
+                                commercial.full_name
+                              }
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* SEM COMERCIAIS */}
+
+                  {storeId &&
+                    availableCommercials.length ===
+                      0 && (
+                      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        Não existem comerciais
+                        ativos associados a esta
+                        loja.
+                      </div>
+                    )}
+
+                  {/* ERRO */}
+
+                  {assignmentError && (
+                    <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      {assignmentError}
+                    </div>
+                  )}
+
+                  {/* BOTÕES */}
+
+                  <div className="mt-5 flex justify-end gap-3">
+                    {isAssigned && (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={
+                          cancelReassignment
+                        }
+                        className="h-11 rounded-xl border border-[#dde1e6] bg-white px-5 text-sm font-semibold text-[#4b525c] transition hover:bg-[#f5f6f7] disabled:opacity-50"
+                      >
+                        Cancelar
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={
+                        handleAssignment
+                      }
+                      disabled={
+                        saving ||
+                        !storeId ||
+                        !commercialId
+                      }
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#ff4b0a] px-5 text-sm font-semibold text-white transition hover:bg-[#e94308] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Save className="h-4 w-4" />
+
+                      {saving
+                        ? "A guardar..."
+                        : isAssigned
+                          ? "Guardar nova atribuição"
+                          : "Atribuir lead"}
+                    </button>
+                  </div>
+                </>
               )}
-
-            {/* ERRO */}
-
-            {assignmentError && (
-              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {assignmentError}
-              </div>
-            )}
-
-            {/* SUCESSO */}
-
-            {assignmentSuccess && (
-              <div className="mt-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
-                Lead atribuída com sucesso.
-              </div>
-            )}
-
-            {/* BOTÃO */}
-
-            <div className="mt-5 flex justify-end">
-              <button
-                type="button"
-                onClick={handleAssignment}
-                disabled={
-                  saving ||
-                  !storeId ||
-                  !commercialId
-                }
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#ff4b0a] px-5 text-sm font-semibold text-white transition hover:bg-[#e94308] disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Save className="h-4 w-4" />
-
-                {saving
-                  ? "A guardar..."
-                  : lead.assigned_to
-                    ? "Alterar atribuição"
-                    : "Atribuir lead"}
-              </button>
-            </div>
-          </section>
+            </section>
           )}
+
+          {/* INFORMAÇÃO DO SISTEMA */}
+
+          <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
+            <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
+              <Clock3 className="h-4 w-4 text-[#ff4b0a]" />
+
+              Informação do sistema
+            </h3>
+
+            <dl className="mt-5 space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <dt className="text-sm text-[#7d848e]">
+                  ID
+                </dt>
+
+                <dd className="max-w-[65%] break-all text-right text-xs font-medium text-[#333842]">
+                  {lead.id}
+                </dd>
+              </div>
+
+              <div className="flex items-start justify-between gap-4">
+                <dt className="text-sm text-[#7d848e]">
+                  Referência externa
+                </dt>
+
+                <dd className="max-w-[65%] break-all text-right text-xs font-medium text-[#333842]">
+                  {lead.source_reference ??
+                    "—"}
+                </dd>
+              </div>
+
+              <div className="flex items-start justify-between gap-4">
+                <dt className="text-sm text-[#7d848e]">
+                  Criada
+                </dt>
+
+                <dd className="text-right text-sm font-medium text-[#333842]">
+                  {formatDate(
+                    lead.created_at,
+                  )}
+                </dd>
+              </div>
+
+              <div className="flex items-start justify-between gap-4">
+                <dt className="text-sm text-[#7d848e]">
+                  Última atualização
+                </dt>
+
+                <dd className="text-right text-sm font-medium text-[#333842]">
+                  {formatDate(
+                    lead.updated_at,
+                  )}
+                </dd>
+              </div>
+            </dl>
+          </section>
         </div>
       </aside>
     </div>

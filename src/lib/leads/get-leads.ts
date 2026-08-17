@@ -18,15 +18,23 @@ export async function getLeads(): Promise<Lead[]> {
     .select(`
       id,
       name,
+      email,
       phone,
+      birth_date,
+      nif,
+      postal_code,
+      parish,
+      city,
       insurance_type,
+      store_id,
+      assigned_user_id,
       status,
       priority,
       source,
       source_reference,
       answers,
-      store_id,
-      assigned_to,
+      privacy_consent,
+      converted_at,
       created_at,
       updated_at
     `)
@@ -35,7 +43,11 @@ export async function getLeads(): Promise<Lead[]> {
     });
 
   if (error) {
-    console.error("Erro ao carregar leads:", error);
+    console.error(
+      "Erro ao carregar leads:",
+      error,
+    );
+
     return [];
   }
 
