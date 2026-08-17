@@ -2,20 +2,46 @@
 
 import { useMemo, useState } from "react";
 
-import { leads } from "@/data/leads";
 import type { Lead } from "@/types/lead";
+
 import { LeadDetailsDrawer } from "@/components/leads/lead-details-drawer";
 import { LeadsFilters } from "@/components/leads/leads-filters";
 import { LeadsHeader } from "@/components/leads/leads-header";
 import { LeadsSummary } from "@/components/leads/leads-summary";
 import { LeadsTable } from "@/components/leads/leads-table";
 
-export function LeadsPage() {
+type StoreOption = {
+  id: string;
+  name: string;
+};
+
+type CommercialOption = {
+  id: string;
+  full_name: string;
+  store_id: string | null;
+};
+
+type LeadsPageProps = {
+  leads: Lead[];
+  stores: StoreOption[];
+  commercials: CommercialOption[];
+  currentUserRole: string | null;
+};
+
+export function LeadsPage({
+  leads,
+  stores,
+  commercials,
+  currentUserRole,
+}: LeadsPageProps) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("todos");
+
   const [insuranceType, setInsuranceType] =
     useState("todos");
+
   const [store, setStore] = useState("todas");
+
   const [selectedLead, setSelectedLead] =
     useState<Lead | null>(null);
 
@@ -30,20 +56,19 @@ export function LeadsPage() {
         lead.name
           .toLocaleLowerCase("pt-PT")
           .includes(searchValue) ||
-        lead.phone.includes(searchValue) ||
-        lead.email
-          ?.toLocaleLowerCase("pt-PT")
-          .includes(searchValue);
+        lead.phone.includes(searchValue);
 
       const matchesStatus =
-        status === "todos" || lead.status === status;
+        status === "todos" ||
+        lead.status === status;
 
       const matchesInsurance =
         insuranceType === "todos" ||
-        lead.insuranceType === insuranceType;
+        lead.insurance_type === insuranceType;
 
       const matchesStore =
-        store === "todas" || lead.store === store;
+        store === "todas" ||
+        lead.store_id === store;
 
       return (
         matchesSearch &&
@@ -52,7 +77,13 @@ export function LeadsPage() {
         matchesStore
       );
     });
-  }, [search, status, insuranceType, store]);
+  }, [
+    leads,
+    search,
+    status,
+    insuranceType,
+    store,
+  ]);
 
   function clearFilters() {
     setSearch("");
@@ -79,7 +110,9 @@ export function LeadsPage() {
           store={store}
           onSearchChange={setSearch}
           onStatusChange={setStatus}
-          onInsuranceTypeChange={setInsuranceType}
+          onInsuranceTypeChange={
+            setInsuranceType
+          }
           onStoreChange={setStore}
           onClear={clearFilters}
         />
@@ -89,12 +122,14 @@ export function LeadsPage() {
           onSelectLead={setSelectedLead}
         />
       </div>
-
-      <LeadDetailsDrawer
-        lead={selectedLead}
-        open={selectedLead !== null}
-        onClose={() => setSelectedLead(null)}
-      />
+    <LeadDetailsDrawer
+      lead={selectedLead}
+      stores={stores}
+      commercials={commercials}
+      currentUserRole={currentUserRole}
+      open={selectedLead !== null}
+      onClose={() => setSelectedLead(null)}
+    />
     </>
   );
 }

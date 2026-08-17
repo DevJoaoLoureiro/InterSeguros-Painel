@@ -1,58 +1,39 @@
 export type LeadStatus =
   | "nova"
   | "em_contacto"
-  | "a_aguardar"
-  | "simulacao_enviada"
-  | "convertida"
+  | "proposta"
+  | "ganha"
   | "perdida";
 
 export type LeadPriority =
   | "baixa"
   | "media"
-  | "alta"
-  | "urgente";
+  | "alta";
 
-export type LeadSource =
-  | "chatbot"
-  | "manual"
-  | "importacao";
-
-export type LeadAnswerValue =
-  | string
-  | number
-  | boolean
-  | null;
-
-export type LeadHistoryItem = {
-  id: string;
-  title: string;
-  description?: string;
-  createdAt: string;
-};
-
-export type LeadRecommendation = {
-  id: string;
-  insuranceType: string;
-  reason: string;
-  confidence: number;
+export type LeadAnswers = {
+  registration?: string;
+  [key: string]: string | undefined;
 };
 
 export type Lead = {
   id: string;
+
   name: string;
-  email?: string;
   phone: string;
-  birthDate?: string;
-  postalCode?: string;
-  insuranceType: string;
+
+  insurance_type: string;
+
   status: LeadStatus;
   priority: LeadPriority;
-  store: string;
-  assignedTo?: string;
-  createdAt: string;
-  source: LeadSource;
-  answers: Record<string, LeadAnswerValue>;
-  notes?: string;
-  recommendations: LeadRecommendation[];
-  history: LeadHistoryItem[];
+
+  source: string | null;
+  source_reference: string | null;
+
+  answers: LeadAnswers | null;
+
+  store_id: string | null;
+  assigned_to: string | null;
+
+  created_at: string;
+  updated_at: string | null;
 };

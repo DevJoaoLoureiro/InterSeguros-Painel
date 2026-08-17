@@ -1,30 +1,50 @@
 "use client";
-
-import { useEffect, useState } from "react";
 import {
   Bot,
-  Building2,
   CalendarDays,
-  Check,
   Clock3,
-  Mail,
   MapPin,
   MessageSquareText,
   Phone,
   Save,
+  ShieldCheck,
   User,
+  UserRoundCheck,
   X,
 } from "lucide-react";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+
+import { assignLead } from "@/app/(dashboard)/leads/actions";
 
 import type {
   Lead,
   LeadStatus,
 } from "@/types/lead";
+
 import { LeadPriorityBadge } from "@/components/leads/lead-priority-badge";
 import { LeadStatusBadge } from "@/components/leads/lead-status-badge";
 
+
+type StoreOption = {
+  id: string;
+  name: string;
+};
+
+type CommercialOption = {
+  id: string;
+  full_name: string;
+  store_id: string | null;
+};
+
+
+
 type LeadDetailsDrawerProps = {
   lead: Lead | null;
+  stores: StoreOption[];
+  commercials: CommercialOption[];
+  currentUserRole: string | null;
   open: boolean;
   onClose: () => void;
 };
@@ -33,388 +53,558 @@ const statusOptions: Array<{
   value: LeadStatus;
   label: string;
 }> = [
-  { value: "nova", label: "Nova" },
-  { value: "em_contacto", label: "Em contacto" },
-  { value: "a_aguardar", label: "A aguardar" },
   {
-    value: "simulacao_enviada",
-    label: "Simulação enviada",
+    value: "nova",
+    label: "Nova",
   },
-  { value: "convertida", label: "Convertida" },
-  { value: "perdida", label: "Perdida" },
+  {
+    value: "em_contacto",
+    label: "Em contacto",
+  },
+  {
+    value: "proposta",
+    label: "Proposta",
+  },
+  {
+    value: "ganha",
+    label: "Ganha",
+  },
+  {
+    value: "perdida",
+    label: "Perdida",
+  },
 ];
 
-function formatDate(date: string) {
+function formatDate(
+  date: string | null | undefined,
+) {
+  if (!date) {
+    return "—";
+  }
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return "—";
+  }
+
   return new Intl.DateTimeFormat("pt-PT", {
     day: "2-digit",
     month: "long",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(date));
+  }).format(parsedDate);
 }
 
 function formatAnswer(value: unknown) {
-  if (value === true) return "Sim";
-  if (value === false) return "Não";
-  if (value === null || value === "") return "Não indicado";
+  if (value === true) {
+    return "Sim";
+  }
+
+  if (value === false) {
+    return "Não";
+  }
+
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return "Não indicado";
+  }
 
   return String(value);
 }
 
+function formatAnswerLabel(key: string) {
+  const labels: Record<string, string> = {
+    registration: "Matrícula",
+    insuranceType: "Tipo de seguro",
+    insurance_type: "Tipo de seguro",
+    contact: "Contacto",
+    phone: "Telefone",
+    name: "Nome",
+  };
+
+  return (
+    labels[key] ??
+    key
+      .replaceAll("_", " ")
+      .replace(/^\w/, (character) =>
+        character.toUpperCase(),
+      )
+  );
+}
+
+function getSourceLabel(
+  source: string | null,
+) {
+  if (!source) {
+    return "Não indicada";
+  }
+
+  const sources: Record<string, string> = {
+    chatbot: "Chatbot",
+    website: "Website",
+    manual: "Manual",
+  };
+
+  return sources[source] ?? source;
+}
+
 export function LeadDetailsDrawer({
   lead,
+  stores,
+  commercials,
+  currentUserRole,
   open,
   onClose,
 }: LeadDetailsDrawerProps) {
-  const [notes, setNotes] = useState("");
-  const [status, setStatus] =
-    useState<LeadStatus>("nova");
+  const router = useRouter();
+
+  const [storeId, setStoreId] = useState("");
+  const [commercialId, setCommercialId] =
+    useState("");
+
+  const [saving, setSaving] = useState(false);
+  const [assignmentError, setAssignmentError] =
+    useState<string | null>(null);
+
+  const [assignmentSuccess, setAssignmentSuccess] =
+    useState(false);
 
   useEffect(() => {
-    if (!lead) return;
-
-    setNotes(lead.notes ?? "");
-    setStatus(lead.status);
-  }, [lead]);
-
-  useEffect(() => {
-    if (!open) return;
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        onClose();
-      }
+    if (!lead) {
+      return;
     }
 
-    window.addEventListener("keydown", handleEscape);
+    setStoreId(lead.store_id ?? "");
+    setCommercialId(lead.assigned_to ?? "");
+    setAssignmentError(null);
+    setAssignmentSuccess(false);
+  }, [lead]);
 
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", handleEscape);
-    };
-  }, [open, onClose]);
+  const availableCommercials = useMemo(() => {
+    if (!storeId) {
+      return [];
+    }
+
+    return commercials.filter(
+      (commercial) =>
+        commercial.store_id === storeId,
+    );
+  }, [commercials, storeId]);
+
+  function handleStoreChange(
+    newStoreId: string,
+  ) {
+    setStoreId(newStoreId);
+    setCommercialId("");
+    setAssignmentError(null);
+    setAssignmentSuccess(false);
+  }
+
+  async function handleAssignment() {
+    if (!lead) {
+      return;
+    }
+
+    if (!storeId) {
+      setAssignmentError(
+        "Seleciona primeiro uma loja.",
+      );
+      return;
+    }
+
+    if (!commercialId) {
+      setAssignmentError(
+        "Seleciona um comercial.",
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+      setAssignmentError(null);
+      setAssignmentSuccess(false);
+
+      await assignLead({
+        leadId: lead.id,
+        storeId,
+        commercialId,
+      });
+
+      setAssignmentSuccess(true);
+
+      router.refresh();
+    } catch (error) {
+      setAssignmentError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível atribuir a lead.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open || !lead) {
+    return null;
+  }
+
+  const answers = Object.entries(
+    lead.answers ?? {},
+  );
+
+
+  const registration =
+    lead.answers?.registration;
 
   return (
-    <div
-      className={[
-        "fixed inset-0 z-[100] transition",
-        open ? "pointer-events-auto" : "pointer-events-none",
-      ].join(" ")}
-      aria-hidden={!open}
-    >
+    <div className="fixed inset-0 z-[100]">
       <button
         type="button"
         aria-label="Fechar detalhe da lead"
         onClick={onClose}
-        className={[
-          "absolute inset-0 bg-slate-950/35 backdrop-blur-[1px] transition-opacity",
-          open ? "opacity-100" : "opacity-0",
-        ].join(" ")}
+        className="absolute inset-0 bg-slate-950/35 backdrop-blur-[1px]"
       />
 
       <aside
         role="dialog"
         aria-modal="true"
         aria-label="Detalhe da lead"
-        className={[
-          "absolute right-0 top-0 flex h-dvh w-full max-w-[680px] flex-col bg-[#f7f8fc] shadow-2xl transition-transform duration-300",
-          open ? "translate-x-0" : "translate-x-full",
-        ].join(" ")}
+        className="absolute right-0 top-0 flex h-dvh w-full max-w-[680px] flex-col bg-[#f7f8fc] shadow-2xl"
       >
-        {lead && (
-          <>
-            <header className="shrink-0 border-b border-[#e5e8ec] bg-white px-5 py-5 sm:px-7">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <LeadStatusBadge status={status} />
-                    <LeadPriorityBadge
-                      priority={lead.priority}
-                    />
-                  </div>
+        {/* HEADER */}
 
-                  <h2 className="mt-3 truncate text-2xl font-semibold tracking-tight text-[#17191d]">
-                    {lead.name}
-                  </h2>
+        <header className="shrink-0 border-b border-[#e5e8ec] bg-white px-5 py-5 sm:px-7">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <LeadStatusBadge
+                  status={lead.status}
+                />
 
-                  <p className="mt-1 text-sm text-[#6f7680]">
-                    {lead.insuranceType} · {lead.id}
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#e1e4e8] text-[#59616d] transition hover:bg-[#f4f5f7]"
-                  aria-label="Fechar"
-                >
-                  <X className="h-5 w-5" />
-                </button>
+                <LeadPriorityBadge
+                  priority={lead.priority}
+                />
               </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto_auto]">
-                <select
-                  value={status}
-                  onChange={(event) =>
-                    setStatus(
-                      event.target.value as LeadStatus,
-                    )
-                  }
-                  className="h-11 rounded-xl border border-[#dde1e6] bg-white px-3 text-sm outline-none focus:border-[#ff4b0a]"
-                >
-                  {statusOptions.map((option) => (
-                    <option
-                      key={option.value}
-                      value={option.value}
+              <h2 className="mt-3 truncate text-2xl font-semibold tracking-tight text-[#17191d]">
+                {lead.name}
+              </h2>
+
+              <p className="mt-1 text-sm text-[#6f7680]">
+                {lead.insurance_type}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[#e1e4e8] text-[#59616d] transition hover:bg-[#f4f5f7]"
+              aria-label="Fechar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]">
+            <div className="flex h-11 items-center rounded-xl border border-[#dde1e6] bg-[#f8f9fa] px-3 text-sm text-[#59616d]">
+              Estado:{" "}
+              <span className="ml-1 font-semibold">
+                {
+                  statusOptions.find(
+                    (option) =>
+                      option.value ===
+                      lead.status,
+                  )?.label
+                }
+              </span>
+            </div>
+
+            <a
+              href={`tel:${lead.phone.replace(/\s/g, "")}`}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#ff4b0a] px-5 text-sm font-semibold text-white transition hover:bg-[#e94308]"
+            >
+              <Phone className="h-4 w-4" />
+              Ligar
+            </a>
+          </div>
+        </header>
+
+        {/* BODY */}
+
+        <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
+          {/* CONTACTO */}
+
+          <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
+            <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
+              <User className="h-4 w-4 text-[#ff4b0a]" />
+              Dados da lead
+            </h3>
+
+            <dl className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <div>
+                <dt className="text-xs text-[#8a9099]">
+                  Nome
+                </dt>
+
+                <dd className="mt-1 text-sm font-medium text-[#333842]">
+                  {lead.name}
+                </dd>
+              </div>
+
+              <div>
+                <dt className="text-xs text-[#8a9099]">
+                  Telefone
+                </dt>
+
+                <dd className="mt-1">
+                  <a
+                    href={`tel:${lead.phone.replace(/\s/g, "")}`}
+                    className="text-sm font-semibold text-[#ff4b0a] hover:underline"
+                  >
+                    {lead.phone}
+                  </a>
+                </dd>
+              </div>
+
+              <div>
+                <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  Tipo de seguro
+                </dt>
+
+                <dd className="mt-1 text-sm font-medium text-[#333842]">
+                  {lead.insurance_type}
+                </dd>
+              </div>
+
+              {registration && (
+                <div>
+                  <dt className="text-xs text-[#8a9099]">
+                    Matrícula
+                  </dt>
+
+                  <dd className="mt-1 text-sm font-medium uppercase text-[#333842]">
+                    {registration}
+                  </dd>
+                </div>
+              )}
+
+              <div>
+                <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
+                  <MapPin className="h-3.5 w-3.5" />
+                  Origem
+                </dt>
+
+                <dd className="mt-1 text-sm font-medium text-[#333842]">
+                  {getSourceLabel(lead.source)}
+                </dd>
+              </div>
+
+              <div>
+                <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
+                  <CalendarDays className="h-3.5 w-3.5" />
+                  Data de entrada
+                </dt>
+
+                <dd className="mt-1 text-sm font-medium text-[#333842]">
+                  {formatDate(
+                    lead.created_at,
+                  )}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          {/* RESPOSTAS CHATBOT */}
+
+          <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
+            <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
+              <MessageSquareText className="h-4 w-4 text-[#ff4b0a]" />
+              Respostas do chatbot
+            </h3>
+
+            {answers.length > 0 ? (
+              <dl className="mt-5 divide-y divide-[#edf0f2]">
+                {answers.map(
+                  ([question, answer]) => (
+                    <div
+                      key={question}
+                      className="grid gap-1 py-3 sm:grid-cols-[200px_1fr]"
                     >
-                      {option.label}
+                      <dt className="text-sm text-[#7d848e]">
+                        {formatAnswerLabel(
+                          question,
+                        )}
+                      </dt>
+
+                      <dd className="text-sm font-medium text-[#333842]">
+                        {formatAnswer(
+                          answer,
+                        )}
+                      </dd>
+                    </div>
+                  ),
+                )}
+              </dl>
+            ) : (
+              <p className="mt-4 text-sm text-[#707782]">
+                Não existem respostas
+                adicionais para esta lead.
+              </p>
+            )}
+          </section>
+
+            {/* GESTÃO / ATRIBUIÇÃO */}
+          {currentUserRole === "OWNER" && (
+          <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-orange-50">
+                <UserRoundCheck className="h-5 w-5 text-[#ff4b0a]" />
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-[#20242a]">
+                  Atribuição da lead
+                </h3>
+
+                <p className="mt-1 text-sm text-[#7d848e]">
+                  Seleciona a loja e o comercial responsável
+                  por esta lead.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              {/* LOJA */}
+
+              <div>
+                <label
+                  htmlFor="lead-store"
+                  className="text-xs font-semibold text-[#6f7680]"
+                >
+                  Loja
+                </label>
+
+                <select
+                  id="lead-store"
+                  value={storeId}
+                  onChange={(event) =>
+                    handleStoreChange(event.target.value)
+                  }
+                  className="mt-2 h-11 w-full rounded-xl border border-[#dde1e6] bg-white px-3 text-sm text-[#333842] outline-none transition focus:border-[#ff4b0a] focus:ring-2 focus:ring-orange-100"
+                >
+                  <option value="">
+                    Selecionar loja
+                  </option>
+
+                  {stores.map((store) => (
+                    <option
+                      key={store.id}
+                      value={store.id}
+                    >
+                      {store.name}
                     </option>
                   ))}
                 </select>
-
-                <a
-                  href={`tel:${lead.phone.replace(/\s/g, "")}`}
-                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-[#dde1e6] bg-white px-4 text-sm font-semibold text-[#424852] transition hover:bg-[#f4f5f7]"
-                >
-                  <Phone className="h-4 w-4" />
-                  Ligar
-                </a>
-
-                <a
-                  href={
-                    lead.email
-                      ? `mailto:${lead.email}`
-                      : undefined
-                  }
-                  aria-disabled={!lead.email}
-                  className={[
-                    "inline-flex h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition",
-                    lead.email
-                      ? "bg-[#ff4b0a] text-white hover:bg-[#e94308]"
-                      : "cursor-not-allowed bg-[#e5e7eb] text-[#9ca3af]",
-                  ].join(" ")}
-                >
-                  <Mail className="h-4 w-4" />
-                  Email
-                </a>
               </div>
-            </header>
 
-            <div className="flex-1 space-y-5 overflow-y-auto p-4 sm:p-6">
-              <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
-                <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
-                  <User className="h-4 w-4 text-[#ff4b0a]" />
-                  Dados da lead
-                </h3>
+              {/* COMERCIAL */}
 
-                <dl className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div>
-                    <dt className="text-xs text-[#8a9099]">
-                      Telefone
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-[#333842]">
-                      {lead.phone}
-                    </dd>
-                  </div>
+              <div>
+                <label
+                  htmlFor="lead-commercial"
+                  className="text-xs font-semibold text-[#6f7680]"
+                >
+                  Comercial
+                </label>
 
-                  <div>
-                    <dt className="text-xs text-[#8a9099]">
-                      Email
-                    </dt>
-                    <dd className="mt-1 break-all text-sm font-medium text-[#333842]">
-                      {lead.email ?? "Não indicado"}
-                    </dd>
-                  </div>
+                <select
+                  id="lead-commercial"
+                  value={commercialId}
+                  disabled={!storeId}
+                  onChange={(event) => {
+                    setCommercialId(event.target.value);
+                    setAssignmentError(null);
+                    setAssignmentSuccess(false);
+                  }}
+                  className="mt-2 h-11 w-full rounded-xl border border-[#dde1e6] bg-white px-3 text-sm text-[#333842] outline-none transition disabled:cursor-not-allowed disabled:bg-[#f4f5f7] disabled:text-[#9ca3af] focus:border-[#ff4b0a] focus:ring-2 focus:ring-orange-100"
+                >
+                  <option value="">
+                    {!storeId
+                      ? "Seleciona uma loja primeiro"
+                      : "Selecionar comercial"}
+                  </option>
 
-                  <div>
-                    <dt className="text-xs text-[#8a9099]">
-                      Data de nascimento
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-[#333842]">
-                      {lead.birthDate ?? "Não indicada"}
-                    </dd>
-                  </div>
-
-                  <div>
-                    <dt className="text-xs text-[#8a9099]">
-                      Código postal
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-[#333842]">
-                      {lead.postalCode ?? "Não indicado"}
-                    </dd>
-                  </div>
-
-                  <div>
-                    <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
-                      <Building2 className="h-3.5 w-3.5" />
-                      Loja
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-[#333842]">
-                      {lead.store}
-                    </dd>
-                  </div>
-
-                  <div>
-                    <dt className="text-xs text-[#8a9099]">
-                      Responsável
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-[#333842]">
-                      {lead.assignedTo ?? "Por atribuir"}
-                    </dd>
-                  </div>
-
-                  <div>
-                    <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
-                      <MapPin className="h-3.5 w-3.5" />
-                      Origem
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium capitalize text-[#333842]">
-                      {lead.source}
-                    </dd>
-                  </div>
-
-                  <div>
-                    <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
-                      <CalendarDays className="h-3.5 w-3.5" />
-                      Data de entrada
-                    </dt>
-                    <dd className="mt-1 text-sm font-medium text-[#333842]">
-                      {formatDate(lead.createdAt)}
-                    </dd>
-                  </div>
-                </dl>
-              </section>
-
-              <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
-                <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
-                  <MessageSquareText className="h-4 w-4 text-[#ff4b0a]" />
-                  Respostas do chatbot
-                </h3>
-
-                <dl className="mt-5 divide-y divide-[#edf0f2]">
-                  {Object.entries(lead.answers).map(
-                    ([question, answer]) => (
-                      <div
-                        key={question}
-                        className="grid gap-1 py-3 sm:grid-cols-[200px_1fr]"
+                  {availableCommercials.map(
+                    (commercial) => (
+                      <option
+                        key={commercial.id}
+                        value={commercial.id}
                       >
-                        <dt className="text-sm text-[#7d848e]">
-                          {question}
-                        </dt>
-                        <dd className="text-sm font-medium text-[#333842]">
-                          {formatAnswer(answer)}
-                        </dd>
-                      </div>
+                        {commercial.full_name}
+                      </option>
                     ),
                   )}
-                </dl>
-              </section>
-
-              <section className="rounded-2xl border border-orange-200 bg-orange-50/60 p-5 shadow-sm">
-                <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
-                  <Bot className="h-5 w-5 text-[#ff4b0a]" />
-                  Recomendações comerciais
-                </h3>
-
-                {lead.recommendations.length > 0 ? (
-                  <div className="mt-4 space-y-3">
-                    {lead.recommendations.map(
-                      (recommendation) => (
-                        <article
-                          key={recommendation.id}
-                          className="rounded-xl border border-orange-100 bg-white p-4"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="font-semibold text-[#20242a]">
-                                {
-                                  recommendation.insuranceType
-                                }
-                              </p>
-                              <p className="mt-1 text-sm leading-6 text-[#656d78]">
-                                {recommendation.reason}
-                              </p>
-                            </div>
-
-                            <span className="shrink-0 rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">
-                              {recommendation.confidence}%
-                            </span>
-                          </div>
-                        </article>
-                      ),
-                    )}
-                  </div>
-                ) : (
-                  <p className="mt-4 text-sm text-[#707782]">
-                    Não existem recomendações para esta lead.
-                  </p>
-                )}
-              </section>
-
-              <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
-                <h3 className="font-semibold text-[#20242a]">
-                  Notas internas
-                </h3>
-
-                <textarea
-                  value={notes}
-                  onChange={(event) =>
-                    setNotes(event.target.value)
-                  }
-                  rows={5}
-                  placeholder="Adiciona informação útil para a equipa..."
-                  className="mt-4 w-full resize-none rounded-xl border border-[#dde1e6] p-3 text-sm outline-none transition focus:border-[#ff4b0a] focus:ring-2 focus:ring-orange-100"
-                />
-
-                <button
-                  type="button"
-                  className="mt-3 inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#242a32] px-4 text-sm font-semibold text-white transition hover:bg-[#171b20]"
-                >
-                  <Save className="h-4 w-4" />
-                  Guardar nota
-                </button>
-              </section>
-
-              <section className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-sm">
-                <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
-                  <Clock3 className="h-4 w-4 text-[#ff4b0a]" />
-                  Histórico
-                </h3>
-
-                <div className="mt-5 space-y-4">
-                  {lead.history.map((item) => (
-                    <div
-                      key={item.id}
-                      className="relative pl-7"
-                    >
-                      <span className="absolute left-0 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-orange-100">
-                        <Check className="h-2.5 w-2.5 text-[#ff4b0a]" />
-                      </span>
-
-                      <p className="text-sm font-semibold text-[#333842]">
-                        {item.title}
-                      </p>
-
-                      {item.description && (
-                        <p className="mt-1 text-sm text-[#737b86]">
-                          {item.description}
-                        </p>
-                      )}
-
-                      <p className="mt-1 text-xs text-[#9aa0a8]">
-                        {formatDate(item.createdAt)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </section>
+                </select>
+              </div>
             </div>
-          </>
-        )}
+
+            {/* SEM COMERCIAIS */}
+
+            {storeId &&
+              availableCommercials.length === 0 && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  Não existem comerciais ativos associados a
+                  esta loja.
+                </div>
+              )}
+
+            {/* ERRO */}
+
+            {assignmentError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {assignmentError}
+              </div>
+            )}
+
+            {/* SUCESSO */}
+
+            {assignmentSuccess && (
+              <div className="mt-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
+                Lead atribuída com sucesso.
+              </div>
+            )}
+
+            {/* BOTÃO */}
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                onClick={handleAssignment}
+                disabled={
+                  saving ||
+                  !storeId ||
+                  !commercialId
+                }
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#ff4b0a] px-5 text-sm font-semibold text-white transition hover:bg-[#e94308] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Save className="h-4 w-4" />
+
+                {saving
+                  ? "A guardar..."
+                  : lead.assigned_to
+                    ? "Alterar atribuição"
+                    : "Atribuir lead"}
+              </button>
+            </div>
+          </section>
+          )}
+        </div>
       </aside>
     </div>
   );
