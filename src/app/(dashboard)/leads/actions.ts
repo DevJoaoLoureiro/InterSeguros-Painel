@@ -418,4 +418,773 @@ export async function updateLeadStatus(
   return {
     success: true,
   };
+
+
+
+
+  
+}
+
+type SubmitConversionRequestResult = {
+  success: boolean;
+};
+
+export async function submitConversionRequest(
+  formData: FormData,
+): Promise<SubmitConversionRequestResult> {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Não autenticado.");
+  }
+
+  const {
+    data: profile,
+    error: profileError,
+  } = await supabase
+    .from("profiles")
+    .select(`
+      id,
+      role,
+      active,
+      store_id
+    `)
+    .eq("id", user.id)
+    .single();
+
+  if (profileError || !profile) {
+    throw new Error("Perfil não encontrado.");
+  }
+
+  if (!profile.active) {
+    throw new Error("Conta desativada.");
+  }
+
+  const leadId = String(
+    formData.get("leadId") ?? "",
+  );
+
+  const company = String(
+    formData.get("company") ?? "",
+  ).trim();
+
+  const premiumValue = String(
+    formData.get("premium") ?? "",
+  )
+    .replace(",", ".")
+    .trim();
+
+  const reference = String(
+    formData.get("reference") ?? "",
+  ).trim();
+
+  const startDate = String(
+    formData.get("startDate") ?? "",
+  ).trim();
+
+  const notes = String(
+    formData.get("notes") ?? "",
+  ).trim();
+
+  const document =
+    formData.get("document");
+
+  if (!leadId) {
+    throw new Error(
+      "Lead inválida.",
+    );
+  }
+
+  if (!company) {
+    throw new Error(
+      "Indica a companhia.",
+    );
+  }
+
+  const premium =
+    Number(premiumValue);
+
+  if (
+    !Number.isFinite(premium) ||
+    premium <= 0
+  ) {
+    throw new Error(
+      "Indica um prémio válido.",
+    );
+  }
+
+  if (!reference) {
+    throw new Error(
+      "Indica a referência da proposta/apólice.",
+    );
+  }
+
+  if (!startDate) {
+    throw new Error(
+      "Indica a data de início.",
+    );
+  }
+
+  if (!(document instanceof File)) {
+    throw new Error(
+      "É obrigatório anexar um comprovativo.",
+    );
+  }
+
+  if (document.size === 0) {
+    throw new Error(
+      "O ficheiro está vazio.",
+    );
+  }
+
+  // Para já limitamos a 6 MB.
+  const maxFileSize =
+    6 * 1024 * 1024;
+
+  if (document.size > maxFileSize) {
+    throw new Error(
+      "O comprovativo não pode ultrapassar 6 MB.",
+    );
+  }
+
+  const allowedTypes = [
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+  ];
+
+  if (
+    !allowedTypes.includes(
+      document.type,
+    )
+  ) {
+    throw new Error(
+      "Só são permitidos ficheiros PDF, JPG ou PNG.",
+    );
+  }
+
+  const admin =
+    createAdminClient();
+
+  // =====================================
+  // VALIDAR LEAD
+  // =====================================
+
+  const {
+    data: lead,
+    error: leadError,
+  } = await admin
+    .from("leads")
+    .select(`
+      id,
+      status,
+      store_id,
+      assigned_user_id
+    `)
+    .eq("id", leadId)
+    .single();
+
+  if (leadError || !lead) {
+    throw new Error(
+      "Lead não encontrada.",
+    );
+  }
+
+  // Só se pode submeter uma lead
+  // que esteja efetivamente em proposta.
+  if (lead.status !== "proposta") {
+    throw new Error(
+      "Só uma lead em Proposta pode ser submetida para validação.",
+    );
+  }
+
+  // =====================================
+  // PERMISSÕES
+  // =====================================
+
+  if (
+    profile.role === "COMERCIAL"
+  ) {
+    if (
+      lead.assigned_user_id !==
+      user.id
+    ) {
+      throw new Error(
+        "Esta lead não está atribuída a ti.",
+      );
+    }
+  } else if (
+    profile.role ===
+    "GESTOR_LOJA"
+  ) {
+    if (
+      !profile.store_id ||
+      lead.store_id !==
+        profile.store_id
+    ) {
+      throw new Error(
+        "Esta lead não pertence à tua loja.",
+      );
+    }
+  } else if (
+    profile.role !== "OWNER" &&
+    profile.role !== "ADMIN"
+  ) {
+    throw new Error(
+      "Não tens permissão para submeter esta lead.",
+    );
+  }
+
+  // =====================================
+  // GARANTIR QUE NÃO EXISTE
+  // PEDIDO PENDENTE
+  // =====================================
+
+  const {
+    data: pendingRequest,
+    error: pendingRequestError,
+  } = await admin
+    .from(
+      "lead_conversion_requests",
+    )
+    .select("id")
+    .eq("lead_id", leadId)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (pendingRequestError) {
+    throw new Error(
+      pendingRequestError.message,
+    );
+  }
+
+  if (pendingRequest) {
+    throw new Error(
+      "Esta lead já tem um pedido de validação pendente.",
+    );
+  }
+
+  // =====================================
+  // UPLOAD DO DOCUMENTO
+  // =====================================
+
+  const extension =
+    document.name
+      .split(".")
+      .pop()
+      ?.toLowerCase() ?? "file";
+
+  const documentId =
+    crypto.randomUUID();
+
+  const documentPath =
+    `${leadId}/${documentId}.${extension}`;
+
+  const arrayBuffer =
+    await document.arrayBuffer();
+
+  const fileBuffer =
+    Buffer.from(arrayBuffer);
+
+  const {
+    error: uploadError,
+  } = await admin.storage
+    .from("lead-documents")
+    .upload(
+      documentPath,
+      fileBuffer,
+      {
+        contentType:
+          document.type,
+        upsert: false,
+      },
+    );
+
+  if (uploadError) {
+    throw new Error(
+      `Erro ao carregar comprovativo: ${uploadError.message}`,
+    );
+  }
+
+  // =====================================
+  // CRIAR PEDIDO DE VALIDAÇÃO
+  // =====================================
+
+  const {
+    error: insertError,
+  } = await admin
+    .from(
+      "lead_conversion_requests",
+    )
+    .insert({
+      lead_id: leadId,
+      submitted_by: user.id,
+
+      company,
+      premium,
+      reference,
+      start_date: startDate,
+
+      document_path:
+        documentPath,
+
+      notes:
+        notes || null,
+
+      status: "pending",
+    });
+
+  if (insertError) {
+    // Se a BD falhar, removemos o
+    // ficheiro para não deixar lixo.
+    await admin.storage
+      .from("lead-documents")
+      .remove([
+        documentPath,
+      ]);
+
+    throw new Error(
+      insertError.message,
+    );
+  }
+
+  // =====================================
+  // PROPOSTA -> GANHA
+  // "GANHA" = POR VALIDAR
+  // =====================================
+
+  const {
+    error: leadUpdateError,
+  } = await admin
+    .from("leads")
+    .update({
+      status: "ganha",
+      updated_at:
+        new Date().toISOString(),
+    })
+    .eq("id", leadId)
+    .eq("status", "proposta");
+
+  if (leadUpdateError) {
+    // Não queremos um pedido pendente
+    // sem a lead ficar em "ganha".
+    //
+    // Por enquanto reportamos o erro.
+    // Depois podemos tornar isto
+    // transacional via função SQL/RPC.
+    throw new Error(
+      leadUpdateError.message,
+    );
+  }
+
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+
+  return {
+    success: true,
+  };
+}
+
+
+type ConversionReviewRequest = {
+  id: string;
+  lead_id: string;
+  company: string;
+  premium: number;
+  reference: string;
+  start_date: string;
+  document_path: string;
+  notes: string | null;
+  status: "pending" | "approved" | "rejected";
+  submitted_by: string;
+  created_at: string;
+};
+
+async function requireManagementUser() {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Não autenticado.");
+  }
+
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select(`
+      id,
+      role,
+      active,
+      store_id
+    `)
+    .eq("id", user.id)
+    .single();
+
+  if (error || !profile) {
+    throw new Error("Perfil não encontrado.");
+  }
+
+  if (!profile.active) {
+    throw new Error("Conta desativada.");
+  }
+
+  const allowedRoles = [
+    "OWNER",
+    "ADMIN",
+    "GESTOR_LOJA",
+  ];
+
+  if (!allowedRoles.includes(profile.role)) {
+    throw new Error(
+      "Não tens permissão para validar conversões.",
+    );
+  }
+
+  return {
+    user,
+    profile,
+  };
+}
+
+export async function getPendingConversionRequest(
+  leadId: string,
+) {
+  const { profile } =
+    await requireManagementUser();
+
+  const admin = createAdminClient();
+
+  const { data: lead, error: leadError } =
+    await admin
+      .from("leads")
+      .select(`
+        id,
+        name,
+        store_id,
+        assigned_user_id,
+        status
+      `)
+      .eq("id", leadId)
+      .single();
+
+  if (leadError || !lead) {
+    throw new Error("Lead não encontrada.");
+  }
+
+  if (
+    profile.role === "GESTOR_LOJA" &&
+    lead.store_id !== profile.store_id
+  ) {
+    throw new Error(
+      "Esta lead não pertence à tua loja.",
+    );
+  }
+
+  const {
+    data: request,
+    error: requestError,
+  } = await admin
+    .from("lead_conversion_requests")
+    .select(`
+      id,
+      lead_id,
+      company,
+      premium,
+      reference,
+      start_date,
+      document_path,
+      notes,
+      status,
+      submitted_by,
+      created_at
+    `)
+    .eq("lead_id", leadId)
+    .eq("status", "pending")
+    .maybeSingle();
+
+  if (requestError) {
+    throw new Error(requestError.message);
+  }
+
+  if (!request) {
+    return null;
+  }
+
+  const {
+    data: submittedBy,
+  } = await admin
+    .from("profiles")
+    .select("full_name")
+    .eq("id", request.submitted_by)
+    .maybeSingle();
+
+  const {
+    data: signedUrlData,
+    error: signedUrlError,
+  } = await admin.storage
+    .from("lead-documents")
+    .createSignedUrl(
+      request.document_path,
+      60 * 10,
+    );
+
+  if (signedUrlError) {
+    throw new Error(
+      `Não foi possível abrir o comprovativo: ${signedUrlError.message}`,
+    );
+  }
+
+  return {
+    ...(request as ConversionReviewRequest),
+
+    submitted_by_name:
+      submittedBy?.full_name ??
+      "Utilizador",
+
+    document_url:
+      signedUrlData.signedUrl,
+  };
+}
+
+export async function approveConversionRequest(
+  requestId: string,
+) {
+  const { user, profile } =
+    await requireManagementUser();
+
+  const admin = createAdminClient();
+
+  const {
+    data: request,
+    error: requestError,
+  } = await admin
+    .from("lead_conversion_requests")
+    .select(`
+      id,
+      lead_id,
+      status
+    `)
+    .eq("id", requestId)
+    .single();
+
+  if (
+    requestError ||
+    !request
+  ) {
+    throw new Error(
+      "Pedido de validação não encontrado.",
+    );
+  }
+
+  if (request.status !== "pending") {
+    throw new Error(
+      "Este pedido já foi processado.",
+    );
+  }
+
+  const {
+    data: lead,
+    error: leadError,
+  } = await admin
+    .from("leads")
+    .select(`
+      id,
+      status,
+      store_id
+    `)
+    .eq("id", request.lead_id)
+    .single();
+
+  if (leadError || !lead) {
+    throw new Error("Lead não encontrada.");
+  }
+
+  if (
+    profile.role === "GESTOR_LOJA" &&
+    lead.store_id !== profile.store_id
+  ) {
+    throw new Error(
+      "Esta lead não pertence à tua loja.",
+    );
+  }
+
+  if (lead.status !== "ganha") {
+    throw new Error(
+      "A lead já não está por validar.",
+    );
+  }
+
+  const now = new Date().toISOString();
+
+  const { error: leadUpdateError } =
+    await admin
+      .from("leads")
+      .update({
+        status: "convertida",
+        converted_at: now,
+        updated_at: now,
+      })
+      .eq("id", lead.id)
+      .eq("status", "ganha");
+
+  if (leadUpdateError) {
+    throw new Error(
+      leadUpdateError.message,
+    );
+  }
+
+  const { error: requestUpdateError } =
+    await admin
+      .from("lead_conversion_requests")
+      .update({
+        status: "approved",
+        reviewed_by: user.id,
+        reviewed_at: now,
+        updated_at: now,
+      })
+      .eq("id", request.id)
+      .eq("status", "pending");
+
+  if (requestUpdateError) {
+    throw new Error(
+      requestUpdateError.message,
+    );
+  }
+
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+
+  return {
+    success: true,
+  };
+}
+
+export async function rejectConversionRequest(
+  requestId: string,
+  reason: string,
+) {
+  const { user, profile } =
+    await requireManagementUser();
+
+  const rejectionReason =
+    reason.trim();
+
+  if (!rejectionReason) {
+    throw new Error(
+      "Indica o motivo da rejeição.",
+    );
+  }
+
+  const admin = createAdminClient();
+
+  const {
+    data: request,
+    error: requestError,
+  } = await admin
+    .from("lead_conversion_requests")
+    .select(`
+      id,
+      lead_id,
+      status
+    `)
+    .eq("id", requestId)
+    .single();
+
+  if (
+    requestError ||
+    !request
+  ) {
+    throw new Error(
+      "Pedido de validação não encontrado.",
+    );
+  }
+
+  if (request.status !== "pending") {
+    throw new Error(
+      "Este pedido já foi processado.",
+    );
+  }
+
+  const {
+    data: lead,
+    error: leadError,
+  } = await admin
+    .from("leads")
+    .select(`
+      id,
+      status,
+      store_id
+    `)
+    .eq("id", request.lead_id)
+    .single();
+
+  if (leadError || !lead) {
+    throw new Error("Lead não encontrada.");
+  }
+
+  if (
+    profile.role === "GESTOR_LOJA" &&
+    lead.store_id !== profile.store_id
+  ) {
+    throw new Error(
+      "Esta lead não pertence à tua loja.",
+    );
+  }
+
+  if (lead.status !== "ganha") {
+    throw new Error(
+      "A lead já não está por validar.",
+    );
+  }
+
+  const now = new Date().toISOString();
+
+  const { error: leadUpdateError } =
+    await admin
+      .from("leads")
+      .update({
+        status: "proposta",
+        updated_at: now,
+      })
+      .eq("id", lead.id)
+      .eq("status", "ganha");
+
+  if (leadUpdateError) {
+    throw new Error(
+      leadUpdateError.message,
+    );
+  }
+
+  const { error: requestUpdateError } =
+    await admin
+      .from("lead_conversion_requests")
+      .update({
+        status: "rejected",
+        reviewed_by: user.id,
+        reviewed_at: now,
+        rejection_reason:
+          rejectionReason,
+        updated_at: now,
+      })
+      .eq("id", request.id)
+      .eq("status", "pending");
+
+  if (requestUpdateError) {
+    throw new Error(
+      requestUpdateError.message,
+    );
+  }
+
+  revalidatePath("/leads");
+  revalidatePath("/dashboard");
+
+  return {
+    success: true,
+  };
 }

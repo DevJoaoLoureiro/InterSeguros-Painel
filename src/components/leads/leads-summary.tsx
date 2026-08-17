@@ -27,6 +27,11 @@ const cards: Array<{
     accentClassName: "bg-amber-500",
   },
   {
+    label: "Por validar",
+    status: "ganha",
+    accentClassName: "bg-violet-500",
+  },
+  {
     label: "Convertidas",
     status: "convertida",
     accentClassName: "bg-green-500",
@@ -44,20 +49,25 @@ export function LeadsSummary({
   onStatusChange,
 }: LeadsSummaryProps) {
   return (
-    <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+    <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
       {cards.map((card) => {
         const total = leads.filter(
           (lead) => lead.status === card.status,
         ).length;
 
-        const isSelected = selectedStatus === card.status;
+        const isSelected =
+          selectedStatus === card.status;
 
         return (
           <button
             key={card.status}
             type="button"
             onClick={() =>
-              onStatusChange(isSelected ? "todos" : card.status)
+              onStatusChange(
+                isSelected
+                  ? "todos"
+                  : card.status,
+              )
             }
             className={[
               "relative overflow-hidden rounded-2xl border bg-white p-5 text-left shadow-[0_2px_10px_rgba(20,25,35,0.04)] transition",
