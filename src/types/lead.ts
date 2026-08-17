@@ -1,19 +1,18 @@
 export type LeadStatus =
   | "nova"
   | "em_contacto"
+  | "a_aguardar"
+  | "simulacao_enviada"
   | "proposta"
   | "ganha"
+  | "convertida"
   | "perdida";
 
 export type LeadPriority =
   | "baixa"
   | "media"
-  | "alta";
-
-export type LeadAnswers = {
-  registration?: string;
-  [key: string]: string | undefined;
-};
+  | "alta"
+  | "urgente";
 
 export type Lead = {
   id: string;
@@ -29,7 +28,7 @@ export type Lead = {
   source: string | null;
   source_reference: string | null;
 
-  answers: LeadAnswers | null;
+  answers: Record<string, string> | null;
 
   store_id: string | null;
   assigned_to: string | null;

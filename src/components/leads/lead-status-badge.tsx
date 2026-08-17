@@ -1,5 +1,9 @@
 import type { LeadStatus } from "@/types/lead";
 
+type LeadStatusBadgeProps = {
+  status: LeadStatus;
+};
+
 const statusConfig: Record<
   LeadStatus,
   {
@@ -9,32 +13,43 @@ const statusConfig: Record<
 > = {
   nova: {
     label: "Nova",
-    className: "bg-orange-100 text-orange-700",
+    className: "bg-blue-50 text-blue-700",
   },
+
   em_contacto: {
     label: "Em contacto",
-    className: "bg-blue-100 text-blue-700",
+    className: "bg-amber-50 text-amber-700",
   },
+
   a_aguardar: {
     label: "A aguardar",
-    className: "bg-amber-100 text-amber-700",
+    className: "bg-yellow-50 text-yellow-700",
   },
+
   simulacao_enviada: {
     label: "Simulação enviada",
-    className: "bg-purple-100 text-purple-700",
+    className: "bg-violet-50 text-violet-700",
   },
+
+  proposta: {
+    label: "Proposta",
+    className: "bg-purple-50 text-purple-700",
+  },
+
+  ganha: {
+    label: "Ganha",
+    className: "bg-emerald-50 text-emerald-700",
+  },
+
   convertida: {
     label: "Convertida",
-    className: "bg-green-100 text-green-700",
+    className: "bg-green-50 text-green-700",
   },
+
   perdida: {
     label: "Perdida",
-    className: "bg-red-100 text-red-700",
+    className: "bg-red-50 text-red-700",
   },
-};
-
-type LeadStatusBadgeProps = {
-  status: LeadStatus;
 };
 
 export function LeadStatusBadge({
@@ -44,7 +59,10 @@ export function LeadStatusBadge({
 
   return (
     <span
-      className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${config.className}`}
+      className={[
+        "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold",
+        config.className,
+      ].join(" ")}
     >
       {config.label}
     </span>

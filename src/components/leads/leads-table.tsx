@@ -20,8 +20,11 @@ type LeadsTableProps = {
 const statusLabels: Record<LeadStatus, string> = {
   nova: "Nova",
   em_contacto: "Em contacto",
+  a_aguardar: "A aguardar",
+  simulacao_enviada: "Simulação enviada",
   proposta: "Proposta",
   ganha: "Ganha",
+  convertida: "Convertida",
   perdida: "Perdida",
 };
 
@@ -29,6 +32,7 @@ const priorityLabels: Record<LeadPriority, string> = {
   baixa: "Baixa",
   media: "Média",
   alta: "Alta",
+  urgente: "Urgente",
 };
 
 function formatDate(
@@ -53,7 +57,9 @@ function formatDate(
   }).format(parsedDate);
 }
 
-function getStatusClasses(status: LeadStatus) {
+function getStatusClasses(
+  status: LeadStatus,
+) {
   switch (status) {
     case "nova":
       return "bg-blue-50 text-blue-700 ring-blue-600/10";
@@ -61,11 +67,20 @@ function getStatusClasses(status: LeadStatus) {
     case "em_contacto":
       return "bg-amber-50 text-amber-700 ring-amber-600/10";
 
-    case "proposta":
+    case "a_aguardar":
+      return "bg-yellow-50 text-yellow-700 ring-yellow-600/10";
+
+    case "simulacao_enviada":
       return "bg-violet-50 text-violet-700 ring-violet-600/10";
+
+    case "proposta":
+      return "bg-purple-50 text-purple-700 ring-purple-600/10";
 
     case "ganha":
       return "bg-emerald-50 text-emerald-700 ring-emerald-600/10";
+
+    case "convertida":
+      return "bg-green-50 text-green-700 ring-green-600/10";
 
     case "perdida":
       return "bg-red-50 text-red-700 ring-red-600/10";
@@ -76,6 +91,9 @@ function getPriorityClasses(
   priority: LeadPriority,
 ) {
   switch (priority) {
+    case "urgente":
+      return "bg-red-100 text-red-800";
+
     case "alta":
       return "bg-red-50 text-red-700";
 
@@ -86,7 +104,6 @@ function getPriorityClasses(
       return "bg-slate-100 text-slate-600";
   }
 }
-
 export function LeadsTable({
   leads,
   onSelectLead,
