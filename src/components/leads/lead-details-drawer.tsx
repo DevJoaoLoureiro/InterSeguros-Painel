@@ -24,7 +24,7 @@ import {
 import {
   approveConversionRequest,
   assignLead,
-  getPendingConversionRequest,
+  getConversionRequest,
   reassignLead,
   rejectConversionRequest,
   submitConversionRequest,
@@ -387,25 +387,20 @@ export function LeadDetailsDrawer({
   // ========================================
 
   useEffect(() => {
-  if (
-    !lead ||
-    lead.status !== "ganha"
-  ) {
-    setPendingConversion(null);
+      if (
+      !lead ||
+      (
+        lead.status !== "ganha" &&
+        lead.status !== "convertida"
+      )
+    ) {
+      setPendingConversion(null);
 
-    return;
-  }
+      return;
+    }
 
   const leadId = lead.id;
 
-  const canReview =
-    currentUserRole === "OWNER" ||
-    currentUserRole === "ADMIN" ||
-    currentUserRole === "GESTOR_LOJA";
-
-  if (!canReview) {
-    return;
-  }
 
   let cancelled = false;
 
@@ -415,7 +410,7 @@ export function LeadDetailsDrawer({
       setReviewError(null);
 
       const request =
-        await getPendingConversionRequest(
+        await getConversionRequest(
           leadId,
         );
 
@@ -1060,8 +1055,10 @@ export function LeadDetailsDrawer({
                   Perdida
                 </option>
 
-                {lead.status ===
-                  "ganha" && (
+                {(
+                  lead.status === "ganha" ||
+                  lead.status === "convertida"
+                ) && (
                   <option value="ganha">
                     Por validar
                   </option>
@@ -1349,8 +1346,10 @@ export function LeadDetailsDrawer({
           {/* POR VALIDAR                            */}
           {/* ====================================== */}
 
-          {lead.status ===
-            "ganha" && (
+          {(
+            lead.status === "ganha" ||
+            lead.status === "convertida"
+          ) && (
             <section className="rounded-2xl border border-violet-200 bg-white p-5 shadow-sm">
               <div className="flex items-start gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100">
@@ -1358,26 +1357,27 @@ export function LeadDetailsDrawer({
                 </div>
 
                 <div>
-                  <h3 className="font-semibold text-[#20242a]">
-                    Negócio por
-                    validar
-                  </h3>
+                    <h3 className="font-semibold text-[#20242a]">
+                      {lead.status === "convertida"
+                        ? "Negócio convertido"
+                        : "Negócio por validar"}
+                    </h3>
 
                   <p className="mt-1 text-sm text-[#7d848e]">
-                    Esta conversão está
-                    à espera de
-                    validação pela
-                    gestão.
-                  </p>
+                        {lead.status === "convertida"
+                          ? "Conversão validada pela gestão. Os dados e o comprovativo ficam disponíveis para consulta."
+                          : "Esta conversão está à espera de validação pela gestão."}
+                      </p>
                 </div>
               </div>
 
-              {!canReviewConversion && (
-                <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-700">
-                  O pedido foi enviado
-                  para validação.
-                </div>
-              )}
+            {!canReviewConversion && (
+              <div className="mt-5 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-700">
+                {lead.status === "convertida"
+                  ? "Lead convertida."
+                  : "O pedido foi enviado para validação."}
+              </div>
+            )}
 
               {canReviewConversion &&
                 loadingConversionReview && (
@@ -1405,8 +1405,7 @@ export function LeadDetailsDrawer({
                   </div>
                 )}
 
-              {canReviewConversion &&
-                pendingConversion && (
+              {pendingConversion && (
                   <>
                     <div className="mt-5 grid gap-5 rounded-xl border border-[#e5e8ec] bg-[#fafbfc] p-4 sm:grid-cols-2">
                       <div>
@@ -1535,8 +1534,10 @@ export function LeadDetailsDrawer({
                       </div>
                     )}
 
-                    <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                      {!showRejectForm ? (
+                     {canReviewConversion &&
+                      lead.status === "ganha" && (
+                      <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                         {!showRejectForm ? (
                         <button
                           type="button"
                           disabled={
@@ -1613,7 +1614,8 @@ export function LeadDetailsDrawer({
                             : "Confirmar conversão"}
                         </button>
                       )}
-                    </div>
+                      </div>
+                    )}
                   </>
                 )}
             </section>

@@ -852,39 +852,96 @@ async function requireManagementUser() {
   };
 }
 
-export async function getPendingConversionRequest(
+export async function getConversionRequest(
   leadId: string,
 ) {
-  const { profile } =
-    await requireManagementUser();
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !user) {
+    throw new Error("Não autenticado.");
+  }
 
   const admin = createAdminClient();
 
-  const { data: lead, error: leadError } =
-    await admin
-      .from("leads")
-      .select(`
-        id,
-        name,
-        store_id,
-        assigned_user_id,
-        status
-      `)
-      .eq("id", leadId)
-      .single();
+  // Buscar perfil do utilizador atual
+  const {
+    data: profile,
+    error: profileError,
+  } = await admin
+    .from("profiles")
+    .select(`
+      id,
+      role,
+      store_id
+    `)
+    .eq("id", user.id)
+    .single();
+
+  if (profileError || !profile) {
+    throw new Error(
+      "Perfil do utilizador não encontrado.",
+    );
+  }
+
+  // Buscar a lead
+  const {
+    data: lead,
+    error: leadError,
+  } = await admin
+    .from("leads")
+    .select(`
+      id,
+      name,
+      store_id,
+      assigned_user_id,
+      status
+    `)
+    .eq("id", leadId)
+    .single();
 
   if (leadError || !lead) {
     throw new Error("Lead não encontrada.");
   }
 
-  if (
+  // ========================================
+  // PERMISSÕES
+  // ========================================
+
+  const isManagement =
+    profile.role === "OWNER" ||
+    profile.role === "ADMIN";
+
+  const isStoreManager =
     profile.role === "GESTOR_LOJA" &&
-    lead.store_id !== profile.store_id
+    lead.store_id === profile.store_id;
+
+  const isAssignedCommercial =
+    profile.role === "COMERCIAL" &&
+    lead.assigned_user_id === profile.id;
+
+  if (
+    !isManagement &&
+    !isStoreManager &&
+    !isAssignedCommercial
   ) {
     throw new Error(
-      "Esta lead não pertence à tua loja.",
+      "Não tens permissão para consultar esta conversão.",
     );
   }
+
+  // ========================================
+  // PEDIDO A PROCURAR
+  // ========================================
+
+  const allowedRequestStatuses =
+    lead.status === "convertida"
+      ? ["approved"]
+      : ["pending"];
 
   const {
     data: request,
@@ -905,24 +962,56 @@ export async function getPendingConversionRequest(
       created_at
     `)
     .eq("lead_id", leadId)
-    .eq("status", "pending")
+    .in(
+      "status",
+      allowedRequestStatuses,
+    )
+    .order("created_at", {
+      ascending: false,
+    })
+    .limit(1)
     .maybeSingle();
 
   if (requestError) {
-    throw new Error(requestError.message);
+    throw new Error(
+      requestError.message,
+    );
   }
 
   if (!request) {
     return null;
   }
 
+  // Segurança extra:
+  // comercial só pode ver o pedido
+  // que ele próprio submeteu.
+  if (
+    profile.role === "COMERCIAL" &&
+    request.submitted_by !== profile.id
+  ) {
+    throw new Error(
+      "Não tens permissão para consultar este pedido.",
+    );
+  }
+
+  // ========================================
+  // NOME DE QUEM SUBMETEU
+  // ========================================
+
   const {
     data: submittedBy,
   } = await admin
     .from("profiles")
     .select("full_name")
-    .eq("id", request.submitted_by)
+    .eq(
+      "id",
+      request.submitted_by,
+    )
     .maybeSingle();
+
+  // ========================================
+  // URL TEMPORÁRIA DO DOCUMENTO
+  // ========================================
 
   const {
     data: signedUrlData,
