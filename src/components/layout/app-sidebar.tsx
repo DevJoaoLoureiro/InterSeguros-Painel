@@ -1,0 +1,280 @@
+﻿"use client";
+
+import type { ElementType } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  BarChart3,
+  Building2,
+  CalendarDays,
+  ChevronDown,
+  CircleUserRound,
+  FileText,
+  Gauge,
+  MessageCircle,
+  Settings,
+  Target,
+  Users,
+} from "lucide-react";
+
+import { LogoutButton } from "@/components/auth/logout-button";
+
+type SidebarProfile = {
+  full_name: string;
+  role: string;
+  email?: string;
+  store:
+    | {
+        id: string;
+        name: string;
+        code: string;
+      }
+    | null;
+};
+
+type AppSidebarProps = {
+  mobile?: boolean;
+  profile: SidebarProfile;
+};
+
+type MenuItem = {
+  label: string;
+  href: string;
+  icon: ElementType;
+  badge?: number;
+};
+
+type MenuGroup = {
+  title?: string;
+  items: MenuItem[];
+};
+
+const menuGroups: MenuGroup[] = [
+  {
+    items: [
+      {
+        label: "Dashboard",
+        href: "/dashboard",
+        icon: Gauge,
+      },
+    ],
+  },
+  {
+    title: "LEADS",
+    items: [
+      {
+        label: "Leads (Chat)",
+        href: "/leads",
+        icon: MessageCircle,
+      },
+    ],
+  },
+  {
+    title: "CARTEIRA",
+    items: [
+      {
+        label: "Clientes (Importação)",
+        href: "/clientes",
+        icon: Users,
+      },
+      {
+        label: "Vencimentos",
+        href: "/vencimentos",
+        icon: CalendarDays,
+        badge: 32,
+      },
+    ],
+  },
+  {
+    title: "ATIVIDADES",
+    items: [
+      {
+        label: "Tarefas",
+        href: "/tarefas",
+        icon: FileText,
+      },
+      {
+        label: "Oportunidades",
+        href: "/oportunidades",
+        icon: Target,
+      },
+    ],
+  },
+  {
+    title: "ANÁLISES",
+    items: [
+      {
+        label: "Estatísticas",
+        href: "/estatisticas",
+        icon: BarChart3,
+      },
+    ],
+  },
+  {
+    title: "GESTÃO",
+    items: [
+      {
+        label: "Lojas",
+        href: "/lojas",
+        icon: Building2,
+      },
+      {
+        label: "Utilizadores",
+        href: "/utilizadores",
+        icon: CircleUserRound,
+      },
+      {
+        label: "Configurações",
+        href: "/configuracoes",
+        icon: Settings,
+      },
+    ],
+  },
+];
+
+function getInitials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+}
+
+function formatRole(role: string) {
+  switch (role) {
+    case "ADMIN":
+      return "Administrador";
+    case "GESTOR_LOJA":
+      return "Gestor de Loja";
+    case "COMERCIAL":
+      return "Comercial";
+    default:
+      return role;
+  }
+}
+
+export function AppSidebar({
+  mobile = false,
+  profile,
+}: AppSidebarProps) {
+  const pathname = usePathname();
+
+  const initials = getInitials(profile.full_name);
+  const storeName = profile.store?.name ?? "Sem loja atribuída";
+
+  return (
+    <aside
+      className={[
+        "flex h-dvh shrink-0 flex-col bg-white",
+        mobile
+          ? "w-full border-r-0"
+          : "w-[270px] border-r border-[#e8eaed]",
+      ].join(" ")}
+    >
+      <div className="flex h-[94px] shrink-0 items-center border-b border-[#e8eaed] px-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-[#ff4b0a] to-[#8f2c0b] text-xl font-bold text-white">
+            IS
+          </div>
+
+          <div className="leading-tight">
+            <p className="text-xl font-semibold tracking-wide text-[#e7430a]">
+              INTER
+            </p>
+            <p className="text-base font-medium text-[#292929]">
+              SEGUROS
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-5">
+        {menuGroups.map((group, groupIndex) => (
+          <div
+            key={group.title ?? groupIndex}
+            className={groupIndex === 0 ? "mb-5" : "mb-6"}
+          >
+            {group.title && (
+              <p className="mb-2 px-3 text-[11px] font-semibold tracking-wide text-[#7a8390]">
+                {group.title}
+              </p>
+            )}
+
+            <div className="space-y-1">
+              {group.items.map((item) => {
+                const isActive =
+                  pathname === item.href ||
+                  pathname.startsWith(`${item.href}/`);
+
+                const Icon = item.icon;
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={[
+                      "flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-[#ff4b0a] text-white shadow-sm"
+                        : "text-[#31363f] hover:bg-[#f4f5f7]",
+                    ].join(" ")}
+                  >
+                    <Icon className="h-[18px] w-[18px] shrink-0" />
+
+                    <span className="min-w-0 flex-1 truncate">
+                      {item.label}
+                    </span>
+
+                    {item.badge !== undefined && (
+                      <span
+                        className={[
+                          "flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold",
+                          isActive
+                            ? "bg-white/20 text-white"
+                            : "bg-red-500 text-white",
+                        ].join(" ")}
+                      >
+                        {item.badge}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </nav>
+
+      <div className="shrink-0 border-t border-[#e8eaed] p-3">
+        <button
+          type="button"
+          className="mb-2 flex w-full items-center gap-3 rounded-xl border border-[#e8eaed] p-3 text-left transition-colors hover:bg-[#f7f8fa]"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#242a32] text-sm font-semibold text-white">
+            {initials}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-[#24272d]">
+              {profile.full_name}
+            </p>
+
+            <p className="truncate text-xs text-[#707782]">
+              {storeName}
+            </p>
+
+            <p className="mt-0.5 truncate text-[11px] text-[#9aa0a8]">
+              {formatRole(profile.role)}
+            </p>
+          </div>
+
+          <ChevronDown className="h-4 w-4 shrink-0 text-[#707782]" />
+        </button>
+
+        <LogoutButton />
+      </div>
+    </aside>
+  );
+}
