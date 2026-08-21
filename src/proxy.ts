@@ -2,6 +2,65 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function proxy(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  // =====================================================
+  // ROTAS PÚBLICAS
+  // =====================================================
+
+  if (pathname.startsWith("/api/public/leads")) {
+    return NextResponse.next();
+  }
+
+  // =====================================================
+  // CRON LIBAX
+  // =====================================================
+
+  const isCronRoute =
+    pathname.startsWith("/api/cron/");
+
+  const isLibaxImport =
+    pathname === "/api/libax/import";
+
+  if (isCronRoute || isLibaxImport) {
+    const authorization =
+      request.headers.get("authorization");
+
+    const cronSecret =
+      process.env.CRON_SECRET;
+
+    // Pedido interno autorizado pelo CRON_SECRET
+    if (
+      cronSecret &&
+      authorization === `Bearer ${cronSecret}`
+    ) {
+      return NextResponse.next();
+    }
+
+    // /api/cron nunca pode ser chamada
+    // publicamente sem o secret.
+    if (isCronRoute) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Unauthorized",
+        },
+        {
+          status: 401,
+        },
+      );
+    }
+
+    // /api/libax/import sem CRON_SECRET
+    // continua para a autenticação Supabase.
+    // Assim continua possível importar manualmente
+    // estando autenticado no painel.
+  }
+
+  // =====================================================
+  // SUPABASE AUTH
+  // =====================================================
+
   let response = NextResponse.next({
     request,
   });
@@ -24,9 +83,15 @@ export async function proxy(request: NextRequest) {
             request,
           });
 
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set(name, value, options);
-          });
+          cookiesToSet.forEach(
+            ({ name, value, options }) => {
+              response.cookies.set(
+                name,
+                value,
+                options,
+              );
+            },
+          );
         },
       },
     },
@@ -36,23 +101,26 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const pathname = request.nextUrl.pathname;
-  
-  if (pathname.startsWith("/api/public/leads")) {
-  return NextResponse.next();
-}
+  // =====================================================
+  // LOGIN
+  // =====================================================
 
-  const isLoginPage = pathname === "/login";
+  const isLoginPage =
+    pathname === "/login";
 
   if (!user && !isLoginPage) {
-    const url = request.nextUrl.clone();
+    const url =
+      request.nextUrl.clone();
+
     url.pathname = "/login";
 
     return NextResponse.redirect(url);
   }
 
   if (user && isLoginPage) {
-    const url = request.nextUrl.clone();
+    const url =
+      request.nextUrl.clone();
+
     url.pathname = "/dashboard";
 
     return NextResponse.redirect(url);
