@@ -56,6 +56,29 @@ export type LibaxContract = {
   lastDocumentAmount: number;
 
   officeId: number | null;
+
+  sellers?: Array<{
+  sellerId: number;
+  sellerType: number;
+}>;
+};
+
+export type LibaxBusinessSeller = {
+  sellerId: number;
+  number?: number;
+  name?: string | null;
+
+  libaxUserId?: number | null;
+  officeId?: number | null;
+  entityId?: number | null;
+
+  isActive?: boolean;
+
+  contact?: {
+    phone?: string | null;
+    mobile?: string | null;
+    email?: string | null;
+  } | null;
 };
 
 export type LibaxEntity = {
@@ -783,4 +806,20 @@ const line =
   }
 
   return results;
+}
+
+export async function getLibaxContract(
+  contractId: number,
+) {
+  return segurosGet<LibaxContract>(
+    `/Contracts/${contractId}`,
+  );
+}
+
+export async function getLibaxBusinessSeller(
+  sellerId: number,
+) {
+  return businessGet<LibaxBusinessSeller>(
+    `/Sellers/${sellerId}`,
+  );
 }

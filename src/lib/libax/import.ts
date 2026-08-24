@@ -1,5 +1,7 @@
 import {
   getIssuedContractsWithDetails,
+  getLibaxContract,
+  getLibaxBusinessSeller,
 } from "@/lib/libax/client";
 
 import {
@@ -7,6 +9,10 @@ import {
 } from "@/lib/supabase/admin";
 
 export async function runLibaxImport() {
+  // ==========================================
+  // DATA ATUAL EM PORTUGAL
+  // ==========================================
+
   const today =
     new Intl.DateTimeFormat(
       "en-CA",
@@ -17,6 +23,10 @@ export async function runLibaxImport() {
         day: "2-digit",
       },
     ).format(new Date());
+
+  // ==========================================
+  // OBTER CONTRATOS EMITIDOS HOJE
+  // ==========================================
 
   const contracts =
     await getIssuedContractsWithDetails(
@@ -29,7 +39,15 @@ export async function runLibaxImport() {
   let clientsImported = 0;
   let policiesImported = 0;
 
+  // ==========================================
+  // IMPORTAR CLIENTES + APÓLICES
+  // ==========================================
+
   for (const contract of contracts) {
+    // ------------------------------------------
+    // CLIENTE
+    // ------------------------------------------
+
     const {
       data: client,
       error: clientError,
@@ -38,23 +56,33 @@ export async function runLibaxImport() {
       .upsert(
         {
           source: "libax",
-          external_id: String(
-            contract.client.id,
-          ),
+
+          external_id:
+            String(
+              contract.client.id,
+            ),
+
           name:
             contract.client.name,
+
           nif:
             contract.client.nif,
+
           email:
             contract.client.email,
+
           phone:
             contract.client.phone,
+
           birth_date:
             contract.client.birthDate,
+
           city:
             contract.client.city,
+
           street:
             contract.client.street,
+
           last_synced_at:
             new Date().toISOString(),
         },
@@ -80,6 +108,10 @@ export async function runLibaxImport() {
 
     clientsImported++;
 
+    // ------------------------------------------
+    // APÓLICE
+    // ------------------------------------------
+
     const {
       error: policyError,
     } = await supabase
@@ -87,9 +119,11 @@ export async function runLibaxImport() {
       .upsert(
         {
           source: "libax",
-          external_id: String(
-            contract.contractId,
-          ),
+
+          external_id:
+            String(
+              contract.contractId,
+            ),
 
           client_id:
             client.id,
@@ -160,12 +194,224 @@ export async function runLibaxImport() {
     policiesImported++;
   }
 
+  // ==========================================
+  // PROCURAR APÓLICES SEM RESPONSÁVEL
+  // ==========================================
+
+  const {
+    data: pendingPolicies,
+    error: pendingError,
+  } = await supabase
+    .from("policies")
+    .select(`
+      id,
+      external_id,
+      policy_number
+    `)
+    .eq(
+      "source",
+      "libax",
+    )
+    .eq(
+      "responsible_pending",
+      true,
+    )
+    .limit(50);
+
+  if (pendingError) {
+    throw new Error(
+      `Erro ao carregar apólices pendentes: ${pendingError.message}`,
+    );
+  }
+
+  let responsibleChecked = 0;
+  let responsibleUpdated = 0;
+
+  // ==========================================
+  // VERIFICAR RESPONSÁVEIS NA LIBAX
+  // ==========================================
+
+  for (
+    const policy
+    of pendingPolicies ?? []
+  ) {
+    responsibleChecked++;
+
+    try {
+      // ----------------------------------------
+      // OBTER CONTRATO COMPLETO
+      // ----------------------------------------
+
+      const contract =
+        await getLibaxContract(
+          Number(
+            policy.external_id,
+          ),
+        );
+
+      // ----------------------------------------
+      // RESPONSÁVEL = COMMERCIAL (TYPE 2)
+      // ----------------------------------------
+
+      const commercial =
+        contract.sellers?.find(
+          (seller) =>
+            seller.sellerType === 2 &&
+            seller.sellerId != null,
+        );
+
+      // ----------------------------------------
+      // AINDA NÃO TEM RESPONSÁVEL
+      // ----------------------------------------
+
+      if (
+        !commercial?.sellerId
+      ) {
+        const {
+          error: checkError,
+        } = await supabase
+          .from("policies")
+          .update({
+            responsible_last_checked_at:
+              new Date().toISOString(),
+          })
+          .eq(
+            "id",
+            policy.id,
+          );
+
+        if (checkError) {
+          console.error(
+            `Erro ao atualizar verificação da apólice ${policy.policy_number}:`,
+            checkError,
+          );
+        }
+
+        continue;
+      }
+
+      // ----------------------------------------
+      // OBTER NOME DO SELLER NA BUSINESS API
+      // ----------------------------------------
+
+      const seller =
+        await getLibaxBusinessSeller(
+          commercial.sellerId,
+        );
+
+      // ----------------------------------------
+      // PROCURAR MAPPING SELLER → USER CRM
+      // ----------------------------------------
+
+      const {
+        data: mapping,
+        error: mappingError,
+      } = await supabase
+        .from(
+          "libax_seller_mappings",
+        )
+        .select(
+          "user_id",
+        )
+        .eq(
+          "libax_seller_id",
+          commercial.sellerId,
+        )
+        .eq(
+          "active",
+          true,
+        )
+        .maybeSingle();
+
+      if (mappingError) {
+        console.error(
+          `Erro ao procurar mapping do seller ${commercial.sellerId}:`,
+          mappingError,
+        );
+      }
+
+      // ----------------------------------------
+      // ATUALIZAR APÓLICE
+      // ----------------------------------------
+
+      const {
+        error: updateError,
+      } = await supabase
+        .from("policies")
+        .update({
+          libax_seller_id:
+            commercial.sellerId,
+
+          responsible_name:
+            seller.name ?? null,
+
+          assigned_user_id:
+            mapping?.user_id ??
+            null,
+
+          responsible_pending:
+            false,
+
+          responsible_last_checked_at:
+            new Date().toISOString(),
+        })
+        .eq(
+          "id",
+          policy.id,
+        );
+
+      if (updateError) {
+        throw new Error(
+          `Erro ao atualizar responsável da apólice ${policy.policy_number}: ${updateError.message}`,
+        );
+      }
+
+      responsibleUpdated++;
+
+      console.log(
+        `Responsável atualizado: ${policy.policy_number} → ${seller.name ?? "Sem nome"} (${commercial.sellerId})`,
+      );
+    } catch (error) {
+      // Uma apólice com problema não deve
+      // parar a importação das restantes.
+
+      console.error(
+        `Erro ao sincronizar responsável da apólice ${policy.policy_number}:`,
+        error,
+      );
+
+      await supabase
+        .from("policies")
+        .update({
+          responsible_last_checked_at:
+            new Date().toISOString(),
+        })
+        .eq(
+          "id",
+          policy.id,
+        );
+    }
+  }
+
+  // ==========================================
+  // RESULTADO
+  // ==========================================
+
   return {
     success: true,
-    date: today,
+
+    date:
+      today,
+
     found:
       contracts.length,
+
     clientsImported,
+
     policiesImported,
+
+    responsibleChecked,
+
+    responsibleUpdated,
   };
 }

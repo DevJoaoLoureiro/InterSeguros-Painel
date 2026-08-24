@@ -5,18 +5,25 @@ type LeadsFiltersProps = {
   status: string;
   insuranceType: string;
   store: string;
+  stores: StoreOption[];
   onSearchChange: (value: string) => void;
   onStatusChange: (value: string) => void;
   onInsuranceTypeChange: (value: string) => void;
   onStoreChange: (value: string) => void;
   onClear: () => void;
 };
+type StoreOption = {
+  id: string;
+  name: string;
+};
+
 
 export function LeadsFilters({
   search,
   status,
   insuranceType,
   store,
+  stores,
   onSearchChange,
   onStatusChange,
   onInsuranceTypeChange,
@@ -84,17 +91,26 @@ export function LeadsFilters({
           </option>
         </select>
 
-        <select
-          value={store}
-          onChange={(event) =>
-            onStoreChange(event.target.value)
-          }
-          className="h-11 min-w-0 rounded-xl border border-[#e1e4e8] bg-white px-3 text-sm outline-none focus:border-[#ff4b0a]"
-        >
-          <option value="todas">Todas as lojas</option>
-          <option value="Braga">Braga</option>
-          <option value="Vila Verde">Vila Verde</option>
-        </select>
+          <select
+        value={store}
+        onChange={(event) =>
+          onStoreChange(event.target.value)
+        }
+        className="h-11 min-w-0 rounded-xl border border-[#e1e4e8] bg-white px-3 text-sm outline-none focus:border-[#ff4b0a]"
+      >
+        <option value="todas">
+          Todas as lojas
+        </option>
+
+        {stores.map((storeItem) => (
+          <option
+            key={storeItem.id}
+            value={storeItem.id}
+          >
+            {storeItem.name}
+          </option>
+        ))}
+      </select>
 
         <button
           type="button"

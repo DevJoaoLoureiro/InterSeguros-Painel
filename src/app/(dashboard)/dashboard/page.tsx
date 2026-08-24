@@ -15,6 +15,8 @@ import {
   createAdminClient,
 } from "@/lib/supabase/admin";
 
+import { cookies } from "next/headers";
+
 type LeadRow = {
   id: string;
   name: string;
@@ -23,6 +25,7 @@ type LeadRow = {
   source: string | null;
   created_at: string;
   converted_at: string | null;
+  store_id: string | null;
 };
 
 type ClientRow = {
@@ -47,6 +50,10 @@ type PolicyRow = {
   premium: number | string | null;
 
   created_at: string;
+
+  responsible_name: string | null;
+  assigned_user_id: string | null;
+  store_id: string | null;
 };
 
 function getPortugalDateKey(
@@ -97,28 +104,89 @@ function formatDate(
 }
 
 export default async function DashboardPage() {
+  const cookieStore =
+    await cookies();
+
+  const selectedStoreId =
+    cookieStore.get(
+      "selected_store_id",
+    )?.value ?? "all";
+
   const supabase =
     createAdminClient();
+
+  // ========================================
+  // QUERIES BASE
+  // ========================================
+
+  let leadsQuery = supabase
+    .from("leads")
+    .select(`
+      id,
+      name,
+      insurance_type,
+      status,
+      source,
+      store_id,
+      created_at,
+      converted_at
+    `);
+
+  let policiesQuery = supabase
+    .from("policies")
+    .select(`
+      id,
+      client_id,
+      policy_number,
+      company_name,
+      product_name,
+      line_name,
+      issue_date,
+      start_date,
+      renew_date,
+      premium,
+      responsible_name,
+      assigned_user_id,
+      store_id,
+      created_at
+    `);
+
+  // ========================================
+  // FILTRO POR LOJA
+  // ========================================
+
+  if (
+    selectedStoreId &&
+    selectedStoreId !== "all"
+  ) {
+    leadsQuery =
+      leadsQuery.eq(
+        "store_id",
+        selectedStoreId,
+      );
+
+    policiesQuery =
+      policiesQuery.eq(
+        "store_id",
+        selectedStoreId,
+      );
+  }
+
+  // ========================================
+  // CARREGAR DADOS
+  // ========================================
 
   const [
     leadsResult,
     clientsResult,
     policiesResult,
   ] = await Promise.all([
-    supabase
-      .from("leads")
-      .select(`
-        id,
-        name,
-        insurance_type,
-        status,
-        source,
-        created_at,
-        converted_at
-      `)
-      .order("created_at", {
+    leadsQuery.order(
+      "created_at",
+      {
         ascending: false,
-      }),
+      },
+    ),
 
     supabase
       .from("clients")
@@ -127,28 +195,19 @@ export default async function DashboardPage() {
         name,
         created_at
       `)
-      .order("created_at", {
-        ascending: false,
-      }),
+      .order(
+        "created_at",
+        {
+          ascending: false,
+        },
+      ),
 
-    supabase
-      .from("policies")
-      .select(`
-        id,
-        client_id,
-        policy_number,
-        company_name,
-        product_name,
-        line_name,
-        issue_date,
-        start_date,
-        renew_date,
-        premium,
-        created_at
-      `)
-      .order("issue_date", {
+    policiesQuery.order(
+      "issue_date",
+      {
         ascending: false,
-      }),
+      },
+    ),
   ]);
 
   if (leadsResult.error) {
@@ -170,19 +229,40 @@ export default async function DashboardPage() {
   }
 
   const leads =
-    (leadsResult.data ??
-      []) as LeadRow[];
+    (leadsResult.data ?? []) as LeadRow[];
 
-  const clients =
-    (clientsResult.data ??
-      []) as ClientRow[];
+  const allClients =
+    (clientsResult.data ?? []) as ClientRow[];
 
   const policies =
-    (policiesResult.data ??
-      []) as PolicyRow[];
+    (policiesResult.data ?? []) as PolicyRow[];
+
+  // ========================================
+  // CLIENTES VISÍVEIS DA LOJA
+  // ========================================
+
+  const visibleClientIds =
+    new Set(
+      policies.map(
+        (policy) =>
+          policy.client_id,
+      ),
+    );
+
+  const clients =
+    selectedStoreId === "all"
+      ? allClients
+      : allClients.filter(
+          (client) =>
+            visibleClientIds.has(
+              client.id,
+            ),
+        );
 
   const today =
     getPortugalDateKey();
+
+
 
   // ========================================
   // MÉTRICAS

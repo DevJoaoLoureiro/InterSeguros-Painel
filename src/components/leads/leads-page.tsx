@@ -108,6 +108,7 @@ export function LeadsPage({
           status={status}
           insuranceType={insuranceType}
           store={store}
+          stores={stores}
           onSearchChange={setSearch}
           onStatusChange={setStatus}
           onInsuranceTypeChange={

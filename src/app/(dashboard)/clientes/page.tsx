@@ -9,7 +9,13 @@ import {
   Users,
 } from "lucide-react";
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  createAdminClient,
+} from "@/lib/supabase/admin";
+
+import { cookies } from "next/headers";
+
+
 
 type ClientRow = {
   id: string;
@@ -31,6 +37,10 @@ type PolicyRow = {
   source: string;
   external_id: string;
   client_id: string;
+
+  responsible_name: string | null;
+  assigned_user_id: string | null;
+  store_id: string | null;
 
   policy_number: string;
 
@@ -57,6 +67,12 @@ type PolicyRow = {
   created_at: string;
 };
 
+type ProfileRow = {
+  id: string;
+  full_name: string;
+  store_id: string | null;
+};
+
 function formatDate(
   value: string | null | undefined,
 ) {
@@ -64,9 +80,10 @@ function formatDate(
     return "—";
   }
 
-  const date = new Date(
-    `${value.slice(0, 10)}T12:00:00`,
-  );
+  const date =
+    new Date(
+      `${value.slice(0, 10)}T12:00:00`,
+    );
 
   if (
     Number.isNaN(
@@ -133,51 +150,125 @@ function getFractionLabel(
 }
 
 export default async function ClientsPage() {
+
+  
+  const cookieStore =
+  await cookies();
+
+const selectedStoreId =
+  cookieStore.get(
+    "selected_store_id",
+  )?.value ?? null;
+
   const supabase =
     createAdminClient();
+let policiesQuery = supabase
+  .from("policies")
+  .select("*");
 
-  const {
-    data: clientsData,
-    error: clientsError,
-  } = await supabase
+if (
+  selectedStoreId &&
+  selectedStoreId !== "all"
+) {
+  policiesQuery =
+    policiesQuery.eq(
+      "store_id",
+      selectedStoreId,
+    );
+}
+
+const [
+  clientsResult,
+  policiesResult,
+  profilesResult,
+] = await Promise.all([
+  supabase
     .from("clients")
     .select("*")
-    .order("name", {
-      ascending: true,
-    });
+    .order(
+      "name",
+      {
+        ascending: true,
+      },
+    ),
 
-  if (clientsError) {
+  policiesQuery.order(
+    "issue_date",
+    {
+      ascending: false,
+    },
+  ),
+
+  supabase
+    .from("profiles")
+    .select(`
+      id,
+      full_name,
+      store_id
+    `)
+    .order(
+      "full_name",
+      {
+        ascending: true,
+      },
+    ),
+]);
+
+  if (clientsResult.error) {
     throw new Error(
-      `Erro ao carregar clientes: ${clientsError.message}`,
+      `Erro ao carregar clientes: ${clientsResult.error.message}`,
     );
   }
 
-  const {
-    data: policiesData,
-    error: policiesError,
-  } = await supabase
-    .from("policies")
-    .select("*")
-    .order(
-      "issue_date",
-      {
-        ascending: false,
-      },
-    );
-
-  if (policiesError) {
+  if (policiesResult.error) {
     throw new Error(
-      `Erro ao carregar apólices: ${policiesError.message}`,
+      `Erro ao carregar apólices: ${policiesResult.error.message}`,
+    );
+  }
+
+  if (profilesResult.error) {
+    throw new Error(
+      `Erro ao carregar utilizadores: ${profilesResult.error.message}`,
     );
   }
 
   const clients =
-    (clientsData ??
+    (clientsResult.data ??
       []) as ClientRow[];
 
   const policies =
-    (policiesData ??
+    (policiesResult.data ??
       []) as PolicyRow[];
+
+  const profiles =
+    (profilesResult.data ??
+      []) as ProfileRow[];
+
+  const profilesById =
+    new Map(
+      profiles.map(
+        (profile) => [
+          profile.id,
+          profile,
+        ],
+      ),
+    );
+
+    const visibleClientIds =
+  new Set(
+    policies.map(
+      (policy) =>
+        policy.client_id,
+    ),
+  );
+
+const visibleClients =
+  clients.filter(
+    (client) =>
+      visibleClientIds.has(
+        client.id,
+      ),
+  );
 
   const policiesByClient =
     new Map<
@@ -289,7 +380,7 @@ export default async function ClientsPage() {
           </div>
 
           <p className="mt-4 text-3xl font-semibold tracking-tight text-[#17191d]">
-            {clients.length}
+            {visibleClients.length}
           </p>
 
           <p className="mt-1 text-xs text-[#8a9099]">
@@ -362,7 +453,7 @@ export default async function ClientsPage() {
         </div>
       </section>
 
-      {/* TABELA / LISTA */}
+      {/* CARTEIRA */}
 
       <section className="overflow-hidden rounded-2xl border border-[#e5e8ec] bg-white shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
         <div className="flex items-center justify-between border-b border-[#edf0f2] px-5 py-4">
@@ -385,7 +476,7 @@ export default async function ClientsPage() {
           </div>
         </div>
 
-        {clients.length ===
+        {visibleClients.length ===
         0 ? (
           <div className="px-5 py-16 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#f5f6f7]">
@@ -405,7 +496,7 @@ export default async function ClientsPage() {
           </div>
         ) : (
           <div className="divide-y divide-[#edf0f2]">
-            {clients.map(
+            {visibleClients.map(
               (client) => {
                 const clientPolicies =
                   policiesByClient.get(
@@ -460,98 +551,153 @@ export default async function ClientsPage() {
                             {clientPolicies.map(
                               (
                                 policy,
-                              ) => (
-                                <div
-                                  key={
-                                    policy.id
-                                  }
-                                  className="grid gap-4 rounded-xl border border-[#e8eaed] bg-[#fafbfc] p-4 md:grid-cols-2 xl:grid-cols-[1.2fr_1.2fr_0.8fr_0.9fr]"
-                                >
-                                  {/* COMPANHIA */}
+                              ) => {
+                                const assignedProfile =
+                                  policy.assigned_user_id
+                                    ? profilesById.get(
+                                        policy.assigned_user_id,
+                                      )
+                                    : undefined;
 
-                                  <div>
-                                    <div className="flex items-center gap-2 text-xs font-medium text-[#8a9099]">
-                                      <Building2 className="h-3.5 w-3.5" />
+                                return (
+                                  <div
+                                    key={
+                                      policy.id
+                                    }
+                                    className="grid gap-4 rounded-xl border border-[#e8eaed] bg-[#fafbfc] p-4 md:grid-cols-2 xl:grid-cols-[1.2fr_1.2fr_0.8fr_0.9fr_1fr]"
+                                  >
+                                    {/* COMPANHIA */}
 
-                                      Companhia
+                                    <div>
+                                      <div className="flex items-center gap-2 text-xs font-medium text-[#8a9099]">
+                                        <Building2 className="h-3.5 w-3.5" />
+
+                                        Companhia
+                                      </div>
+
+                                      <p className="mt-1 text-sm font-semibold text-[#20242a]">
+                                        {policy.company_name ??
+                                          "—"}
+                                      </p>
+
+                                      <p className="mt-1 text-xs text-[#7d848e]">
+                                        Apólice{" "}
+                                        {
+                                          policy.policy_number
+                                        }
+                                      </p>
                                     </div>
 
-                                    <p className="mt-1 text-sm font-semibold text-[#20242a]">
-                                      {policy.company_name ??
-                                        "—"}
-                                    </p>
+                                    {/* PRODUTO */}
 
-                                    <p className="mt-1 text-xs text-[#7d848e]">
-                                      Apólice{" "}
-                                      {
-                                        policy.policy_number
-                                      }
-                                    </p>
-                                  </div>
+                                    <div>
+                                      <div className="flex items-center gap-2 text-xs font-medium text-[#8a9099]">
+                                        <Car className="h-3.5 w-3.5" />
 
-                                  {/* PRODUTO */}
+                                        Seguro
+                                      </div>
 
-                                  <div>
-                                    <div className="flex items-center gap-2 text-xs font-medium text-[#8a9099]">
-                                      <Car className="h-3.5 w-3.5" />
+                                      <p className="mt-1 text-sm font-semibold text-[#20242a]">
+                                        {policy.line_name ??
+                                          policy.product_name ??
+                                          "—"}
+                                      </p>
 
-                                      Seguro
+                                      <p className="mt-1 truncate text-xs text-[#7d848e]">
+                                        {policy.product_name ??
+                                          "—"}
+                                      </p>
                                     </div>
 
-                                    <p className="mt-1 text-sm font-semibold text-[#20242a]">
-                                      {policy.line_name ??
-                                        policy.product_name ??
-                                        "—"}
-                                    </p>
+                                    {/* PRÉMIO */}
 
-                                    <p className="mt-1 truncate text-xs text-[#7d848e]">
-                                      {policy.product_name ??
-                                        "—"}
-                                    </p>
+                                    <div>
+                                      <p className="text-xs font-medium text-[#8a9099]">
+                                        Prémio
+                                      </p>
+
+                                      <p className="mt-1 text-sm font-semibold text-[#20242a]">
+                                        {formatCurrency(
+                                          policy.premium,
+                                        )}
+                                      </p>
+
+                                      <p className="mt-1 text-xs text-[#7d848e]">
+                                        {getFractionLabel(
+                                          policy.fraction_type,
+                                        )}
+                                      </p>
+                                    </div>
+
+                                    {/* DATAS */}
+
+                                    <div>
+                                      <p className="text-xs font-medium text-[#8a9099]">
+                                        Emissão
+                                      </p>
+
+                                      <p className="mt-1 text-sm font-semibold text-[#20242a]">
+                                        {formatDate(
+                                          policy.issue_date,
+                                        )}
+                                      </p>
+
+                                      <p className="mt-1 text-xs text-[#7d848e]">
+                                        Renova{" "}
+                                        {formatDate(
+                                          policy.renew_date,
+                                        )}
+                                      </p>
+                                    </div>
+
+                                    {/* RESPONSÁVEL */}
+
+                                    <div>
+                                      <p className="text-xs font-medium text-[#8a9099]">
+                                        Responsável
+                                      </p>
+
+                                      {assignedProfile ? (
+                                        <>
+                                          <p className="mt-1 text-sm font-semibold text-[#20242a]">
+                                            {
+                                              assignedProfile.full_name
+                                            }
+                                          </p>
+
+                                          <p className="mt-1 text-xs text-[#7d848e]">
+                                            {policy.responsible_name
+                                              ? `${policy.responsible_name} · Libax`
+                                              : "Associado ao painel"}
+                                          </p>
+                                        </>
+                                      ) : policy.responsible_name ? (
+                                        <>
+                                          <p className="mt-1 text-sm font-semibold text-amber-700">
+                                            {
+                                              policy.responsible_name
+                                            }
+                                          </p>
+
+                                          <p className="mt-1 text-xs font-medium text-amber-600">
+                                            Por associar ao painel
+                                          </p>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <p className="mt-1 text-sm font-semibold text-[#20242a]">
+                                            Sem responsável
+                                          </p>
+
+                                          <p className="mt-1 text-xs text-[#7d848e]">
+                                            Não definido na Libax
+                                          </p>
+                                        </>
+                                      )}
+                                    </div>
                                   </div>
-
-                                  {/* PRÉMIO */}
-
-                                  <div>
-                                    <p className="text-xs font-medium text-[#8a9099]">
-                                      Prémio
-                                    </p>
-
-                                    <p className="mt-1 text-sm font-semibold text-[#20242a]">
-                                      {formatCurrency(
-                                        policy.premium,
-                                      )}
-                                    </p>
-
-                                    <p className="mt-1 text-xs text-[#7d848e]">
-                                      {getFractionLabel(
-                                        policy.fraction_type,
-                                      )}
-                                    </p>
-                                  </div>
-
-                                  {/* DATAS */}
-
-                                  <div>
-                                    <p className="text-xs font-medium text-[#8a9099]">
-                                      Emissão
-                                    </p>
-
-                                    <p className="mt-1 text-sm font-semibold text-[#20242a]">
-                                      {formatDate(
-                                        policy.issue_date,
-                                      )}
-                                    </p>
-
-                                    <p className="mt-1 text-xs text-[#7d848e]">
-                                      Renova{" "}
-                                      {formatDate(
-                                        policy.renew_date,
-                                      )}
-                                    </p>
-                                  </div>
-                                </div>
-                              ),
+                                );
+                              },
                             )}
                           </div>
                         ) : (

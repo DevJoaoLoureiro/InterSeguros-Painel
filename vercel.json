@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/libax-import",
-      "schedule": "0 22 * * *"
+      "schedule": "*/30 * * * *"
     }
   ]
 }
