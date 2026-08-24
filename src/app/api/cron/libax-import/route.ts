@@ -129,6 +129,8 @@ export async function GET(request: Request) {
     const text =
       await response.text();
 
+      console.log("Importador resposta:", text);
+
     let data;
 
     try {
