@@ -4,18 +4,22 @@
   CircleUserRound,
   FileCheck2,
   Users,
-  WalletCards,
 } from "lucide-react";
+
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 
 import {
   DashboardCharts,
 } from "@/components/dashboard/dashboard-charts";
 
 import {
+  getCurrentProfile,
+} from "@/lib/auth/get-current-profile";
+
+import {
   createAdminClient,
 } from "@/lib/supabase/admin";
-
-import { cookies } from "next/headers";
 
 type LeadRow = {
   id: string;
@@ -104,13 +108,52 @@ function formatDate(
 }
 
 export default async function DashboardPage() {
+  // ========================================
+  // UTILIZADOR ATUAL
+  // ========================================
+
+  const profile =
+    await getCurrentProfile();
+
+  if (!profile) {
+    redirect("/login");
+  }
+
+  // ========================================
+  // LOJA ATIVA
+  // ========================================
+
   const cookieStore =
     await cookies();
 
-  const selectedStoreId =
+  const cookieStoreId =
     cookieStore.get(
       "selected_store_id",
     )?.value ?? "all";
+
+  const canAccessAllStores =
+    profile.role === "OWNER" ||
+    profile.role === "ADMIN";
+
+  // OWNER / ADMIN:
+  // usa a loja selecionada no header.
+  //
+  // GESTOR / COMERCIAL:
+  // ignora totalmente o cookie e usa
+  // obrigatoriamente a sua própria loja.
+  const selectedStoreId =
+    canAccessAllStores
+      ? cookieStoreId
+      : profile.store?.id ?? null;
+
+  if (
+    !canAccessAllStores &&
+    !selectedStoreId
+  ) {
+    throw new Error(
+      "O utilizador não tem uma loja associada.",
+    );
+  }
 
   const supabase =
     createAdminClient();
@@ -229,16 +272,19 @@ export default async function DashboardPage() {
   }
 
   const leads =
-    (leadsResult.data ?? []) as LeadRow[];
+    (leadsResult.data ??
+      []) as LeadRow[];
 
   const allClients =
-    (clientsResult.data ?? []) as ClientRow[];
+    (clientsResult.data ??
+      []) as ClientRow[];
 
   const policies =
-    (policiesResult.data ?? []) as PolicyRow[];
+    (policiesResult.data ??
+      []) as PolicyRow[];
 
   // ========================================
-  // CLIENTES VISÍVEIS DA LOJA
+  // CLIENTES VISÍVEIS
   // ========================================
 
   const visibleClientIds =
@@ -261,8 +307,6 @@ export default async function DashboardPage() {
 
   const today =
     getPortugalDateKey();
-
-
 
   // ========================================
   // MÉTRICAS
@@ -330,7 +374,12 @@ export default async function DashboardPage() {
   // ÚLTIMOS 30 DIAS
   // ========================================
 
-  const last30Days = [];
+  const last30Days: {
+    date: string;
+    label: string;
+    policies: number;
+    premium: number;
+  }[] = [];
 
   for (
     let i = 29;
@@ -351,6 +400,7 @@ export default async function DashboardPage() {
 
     last30Days.push({
       date: key,
+
       label:
         new Intl.DateTimeFormat(
           "pt-PT",
@@ -480,7 +530,7 @@ export default async function DashboardPage() {
     );
 
   // ========================================
-  // RAMOS
+  // CARTEIRA POR RAMO
   // ========================================
 
   const lineMap =
@@ -499,8 +549,9 @@ export default async function DashboardPage() {
 
     lineMap.set(
       line,
-      (lineMap.get(line) ??
-        0) + 1,
+      (lineMap.get(
+        line,
+      ) ?? 0) + 1,
     );
   }
 
@@ -516,11 +567,12 @@ export default async function DashboardPage() {
       )
       .sort(
         (a, b) =>
-          b.value - a.value,
+          b.value -
+          a.value,
       );
 
   // ========================================
-  // CLIENTES PARA APÓLICES RECENTES
+  // CLIENTES DAS APÓLICES RECENTES
   // ========================================
 
   const clientMap =
@@ -548,6 +600,10 @@ export default async function DashboardPage() {
         }),
       );
 
+  // ========================================
+  // RENDER
+  // ========================================
+
   return (
     <div className="space-y-6">
       {/* HEADER */}
@@ -562,9 +618,8 @@ export default async function DashboardPage() {
         </h1>
 
         <p className="mt-1 text-sm text-[#737a84]">
-          Dados comerciais,
-          produção e carteira em
-          tempo real.
+          Dados comerciais, produção
+          e carteira em tempo real.
         </p>
       </div>
 
@@ -656,7 +711,9 @@ export default async function DashboardPage() {
               leadStatuses={
                 leadStatuses
               }
-              lines={lines}
+              lines={
+                lines
+              }
               mode="production"
             />
           </div>
@@ -683,7 +740,9 @@ export default async function DashboardPage() {
               leadStatuses={
                 leadStatuses
               }
-              lines={lines}
+              lines={
+                lines
+              }
               mode="companies"
             />
           </div>
@@ -714,7 +773,9 @@ export default async function DashboardPage() {
               leadStatuses={
                 leadStatuses
               }
-              lines={lines}
+              lines={
+                lines
+              }
               mode="leads"
             />
           </div>
@@ -726,9 +787,8 @@ export default async function DashboardPage() {
           </h2>
 
           <p className="mt-1 text-sm text-[#7d848e]">
-            Distribuição das
-            apólices por tipo de
-            seguro.
+            Distribuição das apólices
+            por tipo de seguro.
           </p>
 
           <div className="mt-6">
@@ -742,7 +802,9 @@ export default async function DashboardPage() {
               leadStatuses={
                 leadStatuses
               }
-              lines={lines}
+              lines={
+                lines
+              }
               mode="lines"
             />
           </div>

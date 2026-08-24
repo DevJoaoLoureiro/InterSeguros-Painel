@@ -10,12 +10,20 @@ import {
 } from "lucide-react";
 
 import {
+  cookies,
+} from "next/headers";
+
+import {
+  redirect,
+} from "next/navigation";
+
+import {
+  getCurrentProfile,
+} from "@/lib/auth/get-current-profile";
+
+import {
   createAdminClient,
 } from "@/lib/supabase/admin";
-
-import { cookies } from "next/headers";
-
-
 
 type ClientRow = {
   id: string;
@@ -150,69 +158,121 @@ function getFractionLabel(
 }
 
 export default async function ClientsPage() {
+  // ==========================================
+  // UTILIZADOR ATUAL
+  // ==========================================
 
-  
+  const profile =
+    await getCurrentProfile();
+
+  if (!profile) {
+    redirect("/login");
+  }
+
+  // ==========================================
+  // PERMISSÕES DE LOJA
+  // ==========================================
+
+  const canAccessAllStores =
+    profile.role === "OWNER" ||
+    profile.role === "ADMIN";
+
   const cookieStore =
-  await cookies();
+    await cookies();
 
-const selectedStoreId =
-  cookieStore.get(
-    "selected_store_id",
-  )?.value ?? null;
+  const cookieStoreId =
+    cookieStore.get(
+      "selected_store_id",
+    )?.value ?? "all";
+
+  // OWNER / ADMIN:
+  // usa a loja escolhida no header.
+  //
+  // GESTOR / COMERCIAL:
+  // ignora o cookie e usa SEMPRE
+  // a loja associada ao próprio perfil.
+  const selectedStoreId =
+    canAccessAllStores
+      ? cookieStoreId
+      : profile.store?.id ?? null;
+
+  if (
+    !canAccessAllStores &&
+    !selectedStoreId
+  ) {
+    throw new Error(
+      "O utilizador não tem uma loja associada.",
+    );
+  }
 
   const supabase =
     createAdminClient();
-let policiesQuery = supabase
-  .from("policies")
-  .select("*");
 
-if (
-  selectedStoreId &&
-  selectedStoreId !== "all"
-) {
-  policiesQuery =
-    policiesQuery.eq(
-      "store_id",
-      selectedStoreId,
-    );
-}
+  // ==========================================
+  // QUERY DAS APÓLICES
+  // ==========================================
 
-const [
-  clientsResult,
-  policiesResult,
-  profilesResult,
-] = await Promise.all([
-  supabase
-    .from("clients")
-    .select("*")
-    .order(
-      "name",
+  let policiesQuery =
+    supabase
+      .from("policies")
+      .select("*");
+
+  // Só OWNER / ADMIN em "Todas as lojas"
+  // ficam sem filtro.
+  //
+  // Qualquer loja específica — incluindo
+  // COMERCIAL / GESTOR — filtra pelo store_id.
+  if (
+    selectedStoreId &&
+    selectedStoreId !== "all"
+  ) {
+    policiesQuery =
+      policiesQuery.eq(
+        "store_id",
+        selectedStoreId,
+      );
+  }
+
+  // ==========================================
+  // CARREGAR DADOS
+  // ==========================================
+
+  const [
+    clientsResult,
+    policiesResult,
+    profilesResult,
+  ] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("*")
+      .order(
+        "name",
+        {
+          ascending: true,
+        },
+      ),
+
+    policiesQuery.order(
+      "issue_date",
       {
-        ascending: true,
+        ascending: false,
       },
     ),
 
-  policiesQuery.order(
-    "issue_date",
-    {
-      ascending: false,
-    },
-  ),
-
-  supabase
-    .from("profiles")
-    .select(`
-      id,
-      full_name,
-      store_id
-    `)
-    .order(
-      "full_name",
-      {
-        ascending: true,
-      },
-    ),
-]);
+    supabase
+      .from("profiles")
+      .select(`
+        id,
+        full_name,
+        store_id
+      `)
+      .order(
+        "full_name",
+        {
+          ascending: true,
+        },
+      ),
+  ]);
 
   if (clientsResult.error) {
     throw new Error(
@@ -232,7 +292,7 @@ const [
     );
   }
 
-  const clients =
+  const allClients =
     (clientsResult.data ??
       []) as ClientRow[];
 
@@ -244,31 +304,54 @@ const [
     (profilesResult.data ??
       []) as ProfileRow[];
 
+  // ==========================================
+  // MAPA DE UTILIZADORES
+  // ==========================================
+
   const profilesById =
     new Map(
       profiles.map(
-        (profile) => [
-          profile.id,
-          profile,
+        (profileItem) => [
+          profileItem.id,
+          profileItem,
         ],
       ),
     );
 
-    const visibleClientIds =
-  new Set(
-    policies.map(
-      (policy) =>
-        policy.client_id,
-    ),
-  );
+  // ==========================================
+  // CLIENTES VISÍVEIS
+  // ==========================================
+  //
+  // Um cliente só aparece se tiver pelo menos
+  // uma apólice dentro da loja atualmente visível.
+  //
+  // Exemplo:
+  // Comercial Loja Braga
+  // → policies já só contém store_id = Braga
+  // → visibleClientIds só contém clientes de Braga
+  // → outras lojas desaparecem completamente.
 
-const visibleClients =
-  clients.filter(
-    (client) =>
-      visibleClientIds.has(
-        client.id,
+  const visibleClientIds =
+    new Set(
+      policies.map(
+        (policy) =>
+          policy.client_id,
       ),
-  );
+    );
+
+  const visibleClients =
+    selectedStoreId === "all"
+      ? allClients
+      : allClients.filter(
+          (client) =>
+            visibleClientIds.has(
+              client.id,
+            ),
+        );
+
+  // ==========================================
+  // APÓLICES AGRUPADAS POR CLIENTE
+  // ==========================================
 
   const policiesByClient =
     new Map<
@@ -285,13 +368,19 @@ const visibleClients =
         policy.client_id,
       ) ?? [];
 
-    current.push(policy);
+    current.push(
+      policy,
+    );
 
     policiesByClient.set(
       policy.client_id,
       current,
     );
   }
+
+  // ==========================================
+  // MÉTRICAS
+  // ==========================================
 
   const totalPremium =
     policies.reduce(
@@ -312,6 +401,7 @@ const visibleClients =
       {
         timeZone:
           "Europe/Lisbon",
+
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
@@ -336,6 +426,10 @@ const visibleClients =
         )
         .filter(Boolean),
     );
+
+  // ==========================================
+  // RENDER
+  // ==========================================
 
   return (
     <div className="space-y-6">
@@ -368,6 +462,8 @@ const visibleClients =
       {/* CARDS */}
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {/* CLIENTES */}
+
         <div className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
           <div className="flex items-center justify-between">
             <p className="text-sm font-medium text-[#737a84]">
@@ -380,13 +476,17 @@ const visibleClients =
           </div>
 
           <p className="mt-4 text-3xl font-semibold tracking-tight text-[#17191d]">
-            {visibleClients.length}
+            {
+              visibleClients.length
+            }
           </p>
 
           <p className="mt-1 text-xs text-[#8a9099]">
             Na carteira
           </p>
         </div>
+
+        {/* APÓLICES */}
 
         <div className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
           <div className="flex items-center justify-between">
@@ -400,13 +500,17 @@ const visibleClients =
           </div>
 
           <p className="mt-4 text-3xl font-semibold tracking-tight text-[#17191d]">
-            {policies.length}
+            {
+              policies.length
+            }
           </p>
 
           <p className="mt-1 text-xs text-[#8a9099]">
             Importadas
           </p>
         </div>
+
+        {/* EMITIDAS HOJE */}
 
         <div className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
           <div className="flex items-center justify-between">
@@ -429,6 +533,8 @@ const visibleClients =
             Produção de hoje
           </p>
         </div>
+
+        {/* PRÉMIO */}
 
         <div className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
           <div className="flex items-center justify-between">
