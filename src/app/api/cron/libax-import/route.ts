@@ -1,28 +1,120 @@
 import { NextResponse } from "next/server";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
   try {
-    // ==========================================
-    // 1. VALIDAR CRON_SECRET
-    // ==========================================
-
-    const authHeader =
-      request.headers.get("authorization");
-
-    const cronSecret =
-      process.env.CRON_SECRET;
+    const cronSecret = process.env.CRON_SECRET;
 
     if (!cronSecret) {
-      console.error(
-        "CRON_SECRET não está configurado.",
-      );
-
       return NextResponse.json(
         {
           success: false,
           error: "CRON_SECRET não configurado.",
+        },
+        { status: 500 },
+      );
+    }
+
+    // =========================================
+    // Validar pedido recebido pelo Cron
+    // =========================================
+
+    const authorization =
+      request.headers.get("authorization");
+
+    if (authorization !== `Bearer ${cronSecret}`) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Unauthorized",
+        },
+        { status: 401 },
+      );
+    }
+
+    // =========================================
+    // Descobrir URL da própria aplicação
+    // =========================================
+
+    const url = new URL(request.url);
+
+    const importUrl =
+      `${url.origin}/api/libax/import`;
+
+    console.log(
+      "Cron Libax → chamar:",
+      importUrl,
+    );
+
+    // =========================================
+    // Executar importador
+    // =========================================
+
+    const response = await fetch(importUrl, {
+      method: "POST",
+
+      headers: {
+        Authorization:
+          `Bearer ${cronSecret}`,
+
+        "Content-Type":
+          "application/json",
+      },
+
+      cache: "no-store",
+
+      redirect: "manual",
+    });
+
+    // =========================================
+    // DEBUG
+    // =========================================
+
+    const contentType =
+      response.headers.get(
+        "content-type",
+      );
+
+    const location =
+      response.headers.get(
+        "location",
+      );
+
+    console.log(
+      "Importador status:",
+      response.status,
+    );
+
+    console.log(
+      "Importador content-type:",
+      contentType,
+    );
+
+    console.log(
+      "Importador location:",
+      location,
+    );
+
+    // Se houver redirect, queremos vê-lo
+    // em vez de seguir até ao HTML do login.
+
+    if (
+      response.status >= 300 &&
+      response.status < 400
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+
+          error:
+            "O importador foi redirecionado.",
+
+          status:
+            response.status,
+
+          location,
         },
         {
           status: 500,
@@ -30,85 +122,60 @@ export async function GET(request: Request) {
       );
     }
 
-    if (
-      authHeader !==
-      `Bearer ${cronSecret}`
-    ) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Unauthorized",
-        },
-        {
-          status: 401,
-        },
-      );
-    }
-
-    // ==========================================
-    // 2. DESCOBRIR URL DA APLICAÇÃO
-    // ==========================================
-
-    const url =
-      new URL(request.url);
-
-    const baseUrl =
-      url.origin;
-
-    // ==========================================
-    // 3. CHAMAR IMPORTADOR LIBAX
-    // ==========================================
-
-    const response =
-      await fetch(
-        `${baseUrl}/api/libax/import`,
-        {
-          method: "POST",
-
-          headers: {
-            Authorization:
-              `Bearer ${cronSecret}`,
-          },
-
-          cache: "no-store",
-        },
-      );
+    // =========================================
+    // LER RESPOSTA
+    // =========================================
 
     const text =
       await response.text();
 
-    let result: unknown;
+    let data;
 
     try {
-      result =
+      data =
         JSON.parse(text);
     } catch {
       throw new Error(
-        `O importador não devolveu JSON. Resposta: ${text.slice(
-          0,
-          300,
-        )}`,
+        `O importador não devolveu JSON. ` +
+          `Status: ${response.status}. ` +
+          `Content-Type: ${contentType}. ` +
+          `Resposta: ${text.slice(0, 500)}`,
       );
     }
+
+    // =========================================
+    // IMPORTADOR DEVOLVEU ERRO
+    // =========================================
 
     if (!response.ok) {
-      throw new Error(
-        `Importação Libax falhou (${response.status}): ${JSON.stringify(
-          result,
-        )}`,
+      return NextResponse.json(
+        {
+          success: false,
+
+          error:
+            "Erro ao executar importador.",
+
+          status:
+            response.status,
+
+          import: data,
+        },
+        {
+          status: response.status,
+        },
       );
     }
 
-    // ==========================================
-    // 4. RESULTADO
-    // ==========================================
+    // =========================================
+    // SUCESSO
+    // =========================================
 
     return NextResponse.json({
       success: true,
       cron: true,
       executedAt:
         new Date().toISOString(),
-      import: result,
+      import: data,
     });
   } catch (error) {
     console.error(
