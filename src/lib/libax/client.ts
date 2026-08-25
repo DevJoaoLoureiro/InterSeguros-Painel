@@ -11,6 +11,59 @@ const LIBAX_BUSINESS_BASE_URL =
 // TIPOS
 // ==========================================
 
+export type LibaxDocument = {
+  documentId: number;
+  saleId: number | null;
+
+  companyId: number;
+  companyName: string | null;
+
+  contractId: number;
+  contractNativeCode: string | null;
+
+  productId: number;
+  productNativeCode: string | null;
+
+  lineId: number;
+  productName: string | null;
+
+  nativeCode: string | null;
+
+  entityId: number;
+
+  type: number;
+
+  issueDate: string | null;
+
+  startDateCoverage: string | null;
+  endDateCoverage: string | null;
+  dueDate: string | null;
+
+  statusDate: string | null;
+
+  billingMethod: number;
+
+  totalAmount: number;
+  pendingAmount: number;
+  commissionAmount: number;
+  commercialAmount: number;
+
+  isCanceled: boolean;
+  companyStatus: number;
+  newProduction: boolean;
+
+  creationDate: string | null;
+  modifiedDate: string | null;
+  registerDate: string | null;
+
+  sellers?: Array<{
+    sellerId: number;
+    sellerType: number;
+  }>;
+};
+
+
+
 type LibaxTokenResponse = {
   access_token: string;
   expires_in: number;
@@ -452,6 +505,41 @@ export async function getLibaxContractsPage(
   );
 }
 
+
+// ==========================================
+// DOCUMENTS
+// ==========================================
+
+export async function getLibaxDocumentsPage(
+  skip = 0,
+  take = 400,
+) {
+  const params =
+    new URLSearchParams();
+
+  params.set(
+    "Take",
+    String(take),
+  );
+
+  params.set(
+    "Skip",
+    String(skip),
+  );
+
+  params.set(
+    "fixedSellerList",
+    "false",
+  );
+
+  return segurosGet<
+    LibaxPagedResponse<LibaxDocument>
+  >(
+    "/Documents",
+    params,
+  );
+}
+
 // ==========================================
 // ENTITY / TOMADOR
 // ==========================================
@@ -517,36 +605,37 @@ function toDateKey(
   return value.slice(0, 10);
 }
 
+
 // ==========================================
-// APÓLICES EMITIDAS NUM DIA
+// DOCUMENTOS / RECIBOS EMITIDOS NUM DIA
 // ==========================================
 
-export async function getContractsIssuedOn(
+export async function getDocumentsIssuedOn(
   targetDate: string,
 ) {
   const take = 400;
 
   let skip = 0;
 
-  const contracts:
-    LibaxContract[] = [];
+  const documents:
+    LibaxDocument[] = [];
 
   while (true) {
     const page =
-      await getLibaxContractsPage(
+      await getLibaxDocumentsPage(
         skip,
         take,
       );
 
     const matches =
       page.results.filter(
-        (contract) =>
+        (document) =>
           toDateKey(
-            contract.issueDate,
+            document.issueDate,
           ) === targetDate,
       );
 
-    contracts.push(
+    documents.push(
       ...matches,
     );
 
@@ -561,18 +650,20 @@ export async function getContractsIssuedOn(
     }
   }
 
-  return contracts;
+  return documents;
 }
 
+
+
 // ==========================================
-// APÓLICES DO DIA ENRIQUECIDAS
+// DOCUMENTOS EMITIDOS + CONTRATOS COMPLETOS
 // ==========================================
 
-export async function getIssuedContractsWithDetails(
+export async function getIssuedDocumentsWithDetails(
   targetDate: string,
 ) {
-  const contracts =
-    await getContractsIssuedOn(
+  const documents =
+    await getDocumentsIssuedOn(
       targetDate,
     );
 
@@ -587,6 +678,34 @@ export async function getIssuedContractsWithDetails(
 
   const lineCache =
     new Map<number, LibaxProductLine>();
+
+  const contractCache =
+    new Map<number, LibaxContract>();
+
+  async function getContract(
+    contractId: number,
+  ) {
+    const cached =
+      contractCache.get(
+        contractId,
+      );
+
+    if (cached) {
+      return cached;
+    }
+
+    const contract =
+      await getLibaxContract(
+        contractId,
+      );
+
+    contractCache.set(
+      contractId,
+      contract,
+    );
+
+    return contract;
+  }
 
   async function getClient(
     entityId: number,
@@ -682,28 +801,66 @@ export async function getIssuedContractsWithDetails(
 
   const results = [];
 
-  for (const contract of contracts) {
-const client =
-  await getClient(
-    contract.policyHolderId,
-  );
+  for (const document of documents) {
+    // DOCUMENT → CONTRACT
+    const contract =
+      await getContract(
+        document.contractId,
+      );
 
-const company =
-  await getCompany(
-    contract.companyId,
-  );
+    const client =
+      await getClient(
+        contract.policyHolderId,
+      );
 
-const product =
-  await getProduct(
-    contract.productId,
-  );
+    const company =
+      await getCompany(
+        contract.companyId,
+      );
 
-const line =
-  await getLine(
-    contract.lineId,
-  );
+    const product =
+      await getProduct(
+        contract.productId,
+      );
+
+    const line =
+      await getLine(
+        contract.lineId,
+      );
 
     results.push({
+      // ======================================
+      // DOCUMENTO / RECIBO
+      // ======================================
+
+      documentId:
+        document.documentId,
+
+      receiptNumber:
+        document.nativeCode,
+
+      documentIssueDate:
+        document.issueDate,
+
+      documentStartDate:
+        document.startDateCoverage,
+
+      documentEndDate:
+        document.endDateCoverage,
+
+      documentDueDate:
+        document.dueDate,
+
+      documentAmount:
+        document.totalAmount,
+
+      newProduction:
+        document.newProduction,
+
+      // ======================================
+      // CONTRATO / APÓLICE
+      // ======================================
+
       contractId:
         contract.contractId,
 
@@ -730,6 +887,17 @@ const line =
 
       status:
         contract.status,
+
+      // Podemos aproveitar os sellers
+      // diretamente do documento.
+      sellers:
+        document.sellers ??
+        contract.sellers ??
+        [],
+
+      // ======================================
+      // CLIENTE
+      // ======================================
 
       client: {
         id:
@@ -764,12 +932,17 @@ const line =
           null,
       },
 
+      // ======================================
+      // COMPANHIA
+      // ======================================
+
       company: {
         id:
           contract.companyId,
 
         name:
           company.name ??
+          document.companyName ??
           null,
 
         nativeCode:
@@ -777,18 +950,27 @@ const line =
           null,
       },
 
+      // ======================================
+      // PRODUTO
+      // ======================================
+
       product: {
         id:
           contract.productId,
 
         name:
           product.name ??
+          document.productName ??
           null,
 
         nativeCode:
           product.nativeCode ??
           null,
       },
+
+      // ======================================
+      // RAMO
+      // ======================================
 
       line: {
         id:
@@ -807,6 +989,11 @@ const line =
 
   return results;
 }
+
+// ==========================================
+// APÓLICES DO DIA ENRIQUECIDAS
+// ==========================================
+
 
 export async function getLibaxContract(
   contractId: number,

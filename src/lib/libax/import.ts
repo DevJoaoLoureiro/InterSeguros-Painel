@@ -1,5 +1,5 @@
 import {
-  getIssuedContractsWithDetails,
+  getIssuedDocumentsWithDetails,
   getLibaxContract,
   getLibaxBusinessSeller,
 } from "@/lib/libax/client";
@@ -25,11 +25,17 @@ export async function runLibaxImport() {
     ).format(new Date());
 
   // ==========================================
-  // OBTER CONTRATOS EMITIDOS HOJE
+  // OBTER DOCUMENTOS / RECIBOS EMITIDOS HOJE
+  //
+  // A descoberta é feita por:
+  // Documents.issueDate
+  //
+  // Depois:
+  // Document.contractId → Contract
   // ==========================================
 
   const contracts =
-    await getIssuedContractsWithDetails(
+    await getIssuedDocumentsWithDetails(
       today,
     );
 
@@ -39,11 +45,33 @@ export async function runLibaxImport() {
   let clientsImported = 0;
   let policiesImported = 0;
 
+  // Evita processar a mesma apólice
+  // várias vezes caso tenha vários
+  // documentos emitidos no mesmo dia.
+  const processedContracts =
+    new Set<number>();
+
   // ==========================================
   // IMPORTAR CLIENTES + APÓLICES
   // ==========================================
 
   for (const contract of contracts) {
+    // ------------------------------------------
+    // EVITAR CONTRATO DUPLICADO
+    // ------------------------------------------
+
+    if (
+      processedContracts.has(
+        contract.contractId,
+      )
+    ) {
+      continue;
+    }
+
+    processedContracts.add(
+      contract.contractId,
+    );
+
     // ------------------------------------------
     // CLIENTE
     // ------------------------------------------
@@ -111,6 +139,15 @@ export async function runLibaxImport() {
     // ------------------------------------------
     // APÓLICE
     // ------------------------------------------
+    //
+    // IMPORTANTE:
+    //
+    // issue_date = emissão da APÓLICE
+    //
+    // documentIssueDate foi usada apenas
+    // para descobrir que este contrato
+    // devia ser importado neste dia.
+    // ------------------------------------------
 
     const {
       error: policyError,
@@ -155,6 +192,7 @@ export async function runLibaxImport() {
           line_name:
             contract.line.name,
 
+          // Emissão da APÓLICE
           issue_date:
             contract.issueDate,
 
@@ -228,7 +266,7 @@ export async function runLibaxImport() {
   let responsibleUpdated = 0;
 
   // ==========================================
-  // VERIFICAR RESPONSÁVEIS NA LIBAX
+  // VERIFICAR GESTORES NA LIBAX
   // ==========================================
 
   for (
@@ -250,22 +288,30 @@ export async function runLibaxImport() {
         );
 
       // ----------------------------------------
-      // RESPONSÁVEL = COMMERCIAL (TYPE 2)
+      // GESTOR = MANAGER
+      //
+      // Libax SellerType:
+      //
+      // 0 = Seller
+      // 1 = Mediation
+      // 2 = Commercial
+      // 3 = Manager       <-- QUEREMOS ESTE
+      // 4 = Source
       // ----------------------------------------
 
-      const commercial =
+      const manager =
         contract.sellers?.find(
           (seller) =>
-            seller.sellerType === 2 &&
+            seller.sellerType === 3 &&
             seller.sellerId != null,
         );
 
       // ----------------------------------------
-      // AINDA NÃO TEM RESPONSÁVEL
+      // CONTRATO AINDA NÃO TEM GESTOR
       // ----------------------------------------
 
       if (
-        !commercial?.sellerId
+        !manager?.sellerId
       ) {
         const {
           error: checkError,
@@ -291,16 +337,18 @@ export async function runLibaxImport() {
       }
 
       // ----------------------------------------
-      // OBTER NOME DO SELLER NA BUSINESS API
+      // OBTER DADOS DO GESTOR NA BUSINESS API
       // ----------------------------------------
 
       const seller =
         await getLibaxBusinessSeller(
-          commercial.sellerId,
+          manager.sellerId,
         );
 
       // ----------------------------------------
-      // PROCURAR MAPPING SELLER → USER CRM
+      // PROCURAR MAPPING
+      //
+      // LIBAX MANAGER → USER CRM
       // ----------------------------------------
 
       const {
@@ -315,7 +363,7 @@ export async function runLibaxImport() {
         )
         .eq(
           "libax_seller_id",
-          commercial.sellerId,
+          manager.sellerId,
         )
         .eq(
           "active",
@@ -325,9 +373,43 @@ export async function runLibaxImport() {
 
       if (mappingError) {
         console.error(
-          `Erro ao procurar mapping do seller ${commercial.sellerId}:`,
+          `Erro ao procurar mapping do gestor ${manager.sellerId}:`,
           mappingError,
         );
+      }
+
+      // ----------------------------------------
+      // DESCOBRIR LOJA DO USER CRM
+      // ----------------------------------------
+
+      let mappedStoreId:
+        string | null = null;
+
+      if (mapping?.user_id) {
+        const {
+          data: mappedProfile,
+          error: profileError,
+        } = await supabase
+          .from("profiles")
+          .select(
+            "store_id",
+          )
+          .eq(
+            "id",
+            mapping.user_id,
+          )
+          .maybeSingle();
+
+        if (profileError) {
+          console.error(
+            `Erro ao procurar loja do utilizador ${mapping.user_id}:`,
+            profileError,
+          );
+        }
+
+        mappedStoreId =
+          mappedProfile?.store_id ??
+          null;
       }
 
       // ----------------------------------------
@@ -339,15 +421,23 @@ export async function runLibaxImport() {
       } = await supabase
         .from("policies")
         .update({
+          // ID do MANAGER na Libax
           libax_seller_id:
-            commercial.sellerId,
+            manager.sellerId,
 
+          // Nome do MANAGER
           responsible_name:
-            seller.name ?? null,
+            seller.name ??
+            null,
 
+          // Utilizador CRM correspondente
           assigned_user_id:
             mapping?.user_id ??
             null,
+
+          // Loja desse utilizador
+          store_id:
+            mappedStoreId,
 
           responsible_pending:
             false,
@@ -362,21 +452,24 @@ export async function runLibaxImport() {
 
       if (updateError) {
         throw new Error(
-          `Erro ao atualizar responsável da apólice ${policy.policy_number}: ${updateError.message}`,
+          `Erro ao atualizar gestor da apólice ${policy.policy_number}: ${updateError.message}`,
         );
       }
 
       responsibleUpdated++;
 
       console.log(
-        `Responsável atualizado: ${policy.policy_number} → ${seller.name ?? "Sem nome"} (${commercial.sellerId})`,
+        `Gestor atualizado: ${policy.policy_number} → ${
+          seller.name ??
+          "Sem nome"
+        } (${manager.sellerId})`,
       );
     } catch (error) {
       // Uma apólice com problema não deve
       // parar a importação das restantes.
 
       console.error(
-        `Erro ao sincronizar responsável da apólice ${policy.policy_number}:`,
+        `Erro ao sincronizar gestor da apólice ${policy.policy_number}:`,
         error,
       );
 
@@ -403,8 +496,11 @@ export async function runLibaxImport() {
     date:
       today,
 
-    found:
+    documentsFound:
       contracts.length,
+
+    uniqueContracts:
+      processedContracts.size,
 
     clientsImported,
 

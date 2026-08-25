@@ -13,9 +13,6 @@ import { StoresTable } from "@/components/stores/stores-table";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-import {
-  CreateOpportunityDialog,
-} from "@/components/opportunities/create-opportunity-dialog";
 
 export default async function StoresPage() {
   const profile = await getCurrentProfile();
