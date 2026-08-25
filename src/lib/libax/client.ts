@@ -84,7 +84,7 @@ export type LibaxContract = {
   productId: number;
   productNativeCode: string | null;
 
-  lineId: number;
+  lineId: number | null;
 
   companyId: number;
   policyHolderId: number;
@@ -386,40 +386,134 @@ export async function authenticateLibaxBusiness() {
   return businessToken;
 }
 
-// ==========================================
-// FETCH SEGUROS
-// ==========================================
+
+const LIBAX_REQUEST_GAP_MS = 400;
+const LIBAX_MAX_ATTEMPTS = 6;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function getRetryAfterMs(
+  value: string | null,
+  attempt: number,
+) {
+  if (!value) {
+    return Math.min(
+      30_000,
+      1_500 * attempt,
+    );
+  }
+
+  const seconds =
+    Number(value);
+
+  if (
+    Number.isFinite(seconds)
+  ) {
+    return Math.max(
+      1000,
+      seconds * 1000,
+    );
+  }
+
+  const date =
+    Date.parse(value);
+
+  if (
+    Number.isFinite(date)
+  ) {
+    return Math.max(
+      1000,
+      date - Date.now(),
+    );
+  }
+
+  return Math.min(
+    30_000,
+    1_500 * attempt,
+  );
+}
 
 async function segurosGet<T>(
   path: string,
   params?: URLSearchParams,
 ): Promise<T> {
-  const token =
-    await authenticateLibaxSeguros();
+  for (
+    let attempt = 1;
+    attempt <= LIBAX_MAX_ATTEMPTS;
+    attempt++
+  ) {
+    const token =
+      await authenticateLibaxSeguros();
 
-  const query =
-    params?.toString()
-      ? `?${params.toString()}`
-      : "";
+    const query =
+      params?.toString()
+        ? `?${params.toString()}`
+        : "";
 
-  const response = await fetch(
-    `${LIBAX_SEGUROS_BASE_URL}${path}${query}`,
-    {
-      method: "GET",
+    const response =
+      await fetch(
+        `${LIBAX_SEGUROS_BASE_URL}${path}${query}`,
+        {
+          method: "GET",
 
-      headers: {
-        Authorization:
-          `Bearer ${token}`,
+          headers: {
+            Authorization:
+              `Bearer ${token}`,
 
-        Accept:
-          "application/json",
-      },
+            Accept:
+              "application/json",
+          },
 
-      cache: "no-store",
-    },
-  );
+          cache:
+            "no-store",
+        },
+      );
 
-  if (!response.ok) {
+    if (response.ok) {
+      const data =
+        (await response.json()) as T;
+
+      await sleep(
+        LIBAX_REQUEST_GAP_MS,
+      );
+
+      return data;
+    }
+
+    if (
+      response.status === 429 ||
+      response.status === 502 ||
+      response.status === 503 ||
+      response.status === 504
+    ) {
+      const waitMs =
+        response.status === 429
+          ? getRetryAfterMs(
+              response.headers.get(
+                "retry-after",
+              ),
+              attempt,
+            )
+          : Math.min(
+              30_000,
+              1500 * attempt,
+            );
+
+      console.warn(
+        `[LIBAX] ${response.status} em ${path}. ` +
+          `Tentativa ${attempt}/${LIBAX_MAX_ATTEMPTS}. ` +
+          `A aguardar ${waitMs}ms.`,
+      );
+
+      await sleep(waitMs);
+
+      continue;
+    }
+
     const text =
       await response.text();
 
@@ -428,43 +522,88 @@ async function segurosGet<T>(
     );
   }
 
-  return response.json();
+  throw new Error(
+    `Erro Libax Seguros ${path}: número máximo de tentativas excedido.`,
+  );
 }
-
-// ==========================================
-// FETCH BUSINESS
-// ==========================================
 
 async function businessGet<T>(
   path: string,
   params?: URLSearchParams,
 ): Promise<T> {
-  const token =
-    await authenticateLibaxBusiness();
+  for (
+    let attempt = 1;
+    attempt <= LIBAX_MAX_ATTEMPTS;
+    attempt++
+  ) {
+    const token =
+      await authenticateLibaxBusiness();
 
-  const query =
-    params?.toString()
-      ? `?${params.toString()}`
-      : "";
+    const query =
+      params?.toString()
+        ? `?${params.toString()}`
+        : "";
 
-  const response = await fetch(
-    `${LIBAX_BUSINESS_BASE_URL}${path}${query}`,
-    {
-      method: "GET",
+    const response =
+      await fetch(
+        `${LIBAX_BUSINESS_BASE_URL}${path}${query}`,
+        {
+          method: "GET",
 
-      headers: {
-        Authorization:
-          `Bearer ${token}`,
+          headers: {
+            Authorization:
+              `Bearer ${token}`,
 
-        Accept:
-          "application/json",
-      },
+            Accept:
+              "application/json",
+          },
 
-      cache: "no-store",
-    },
-  );
+          cache:
+            "no-store",
+        },
+      );
 
-  if (!response.ok) {
+    if (response.ok) {
+      const data =
+        (await response.json()) as T;
+
+      await sleep(
+        LIBAX_REQUEST_GAP_MS,
+      );
+
+      return data;
+    }
+
+    if (
+      response.status === 429 ||
+      response.status === 502 ||
+      response.status === 503 ||
+      response.status === 504
+    ) {
+      const waitMs =
+        response.status === 429
+          ? getRetryAfterMs(
+              response.headers.get(
+                "retry-after",
+              ),
+              attempt,
+            )
+          : Math.min(
+              30_000,
+              1500 * attempt,
+            );
+
+      console.warn(
+        `[LIBAX BUSINESS] ${response.status} em ${path}. ` +
+          `Tentativa ${attempt}/${LIBAX_MAX_ATTEMPTS}. ` +
+          `A aguardar ${waitMs}ms.`,
+      );
+
+      await sleep(waitMs);
+
+      continue;
+    }
+
     const text =
       await response.text();
 
@@ -473,9 +612,10 @@ async function businessGet<T>(
     );
   }
 
-  return response.json();
+  throw new Error(
+    `Erro Libax Business ${path}: número máximo de tentativas excedido.`,
+  );
 }
-
 // ==========================================
 // CONTRACTS
 // ==========================================
@@ -588,85 +728,14 @@ export async function getLibaxProductLine(
   );
 }
 
+
 // ==========================================
-// DATAS
+// ENRIQUECER DOCUMENTOS COM CONTRATOS
 // ==========================================
 
-function toDateKey(
-  value:
-    | string
-    | null
-    | undefined,
+export async function enrichLibaxDocuments(
+  documents: LibaxDocument[],
 ) {
-  if (!value) {
-    return null;
-  }
-
-  return value.slice(0, 10);
-}
-
-
-// ==========================================
-// DOCUMENTOS / RECIBOS EMITIDOS NUM DIA
-// ==========================================
-
-export async function getDocumentsIssuedOn(
-  targetDate: string,
-) {
-  const take = 400;
-
-  let skip = 0;
-
-  const documents:
-    LibaxDocument[] = [];
-
-  while (true) {
-    const page =
-      await getLibaxDocumentsPage(
-        skip,
-        take,
-      );
-
-    const matches =
-      page.results.filter(
-        (document) =>
-          toDateKey(
-            document.issueDate,
-          ) === targetDate,
-      );
-
-    documents.push(
-      ...matches,
-    );
-
-    skip +=
-      page.results.length;
-
-    if (
-      page.results.length === 0 ||
-      skip >= page.total
-    ) {
-      break;
-    }
-  }
-
-  return documents;
-}
-
-
-
-// ==========================================
-// DOCUMENTOS EMITIDOS + CONTRATOS COMPLETOS
-// ==========================================
-
-export async function getIssuedDocumentsWithDetails(
-  targetDate: string,
-) {
-  const documents =
-    await getDocumentsIssuedOn(
-      targetDate,
-    );
-
   const clientCache =
     new Map<number, LibaxEntity>();
 
@@ -711,7 +780,9 @@ export async function getIssuedDocumentsWithDetails(
     entityId: number,
   ) {
     const cached =
-      clientCache.get(entityId);
+      clientCache.get(
+        entityId,
+      );
 
     if (cached) {
       return cached;
@@ -734,7 +805,9 @@ export async function getIssuedDocumentsWithDetails(
     companyId: number,
   ) {
     const cached =
-      companyCache.get(companyId);
+      companyCache.get(
+        companyId,
+      );
 
     if (cached) {
       return cached;
@@ -757,7 +830,9 @@ export async function getIssuedDocumentsWithDetails(
     productId: number,
   ) {
     const cached =
-      productCache.get(productId);
+      productCache.get(
+        productId,
+      );
 
     if (cached) {
       return cached;
@@ -780,7 +855,9 @@ export async function getIssuedDocumentsWithDetails(
     lineId: number,
   ) {
     const cached =
-      lineCache.get(lineId);
+      lineCache.get(
+        lineId,
+      );
 
     if (cached) {
       return cached;
@@ -802,7 +879,10 @@ export async function getIssuedDocumentsWithDetails(
   const results = [];
 
   for (const document of documents) {
+    // ------------------------------------------
     // DOCUMENT → CONTRACT
+    // ------------------------------------------
+
     const contract =
       await getContract(
         document.contractId,
@@ -823,11 +903,12 @@ export async function getIssuedDocumentsWithDetails(
         contract.productId,
       );
 
-    const line =
-      await getLine(
+const line =
+  contract.lineId != null
+    ? await getLine(
         contract.lineId,
-      );
-
+      )
+    : null;
     results.push({
       // ======================================
       // DOCUMENTO / RECIBO
@@ -888,8 +969,6 @@ export async function getIssuedDocumentsWithDetails(
       status:
         contract.status,
 
-      // Podemos aproveitar os sellers
-      // diretamente do documento.
       sellers:
         document.sellers ??
         contract.sellers ??
@@ -977,11 +1056,11 @@ export async function getIssuedDocumentsWithDetails(
           contract.lineId,
 
         name:
-          line.name ??
+          line?.name ??
           null,
 
         nativeCode:
-          line.nativeCode ??
+          line?.nativeCode ??
           null,
       },
     });
@@ -990,8 +1069,10 @@ export async function getIssuedDocumentsWithDetails(
   return results;
 }
 
+
+
 // ==========================================
-// APÓLICES DO DIA ENRIQUECIDAS
+// CONTRACT BY ID
 // ==========================================
 
 
@@ -1001,6 +1082,69 @@ export async function getLibaxContract(
   return segurosGet<LibaxContract>(
     `/Contracts/${contractId}`,
   );
+}
+
+
+export async function getLibaxDocumentsRange(
+  startSkip: number,
+  endExclusive: number,
+) {
+  const maxTake = 400;
+
+  let skip =
+    Math.max(
+      0,
+      startSkip,
+    );
+
+  const end =
+    Math.max(
+      skip,
+      endExclusive,
+    );
+
+  const documents:
+    LibaxDocument[] = [];
+
+  let total = end;
+
+  while (skip < end) {
+    const remaining =
+      end - skip;
+
+    const take =
+      Math.min(
+        maxTake,
+        remaining,
+      );
+
+    const page =
+      await getLibaxDocumentsPage(
+        skip,
+        take,
+      );
+
+    total =
+      page.total;
+
+    if (
+      page.results.length === 0
+    ) {
+      break;
+    }
+
+    documents.push(
+      ...page.results,
+    );
+
+    skip +=
+      page.results.length;
+  }
+
+  return {
+    documents,
+    total,
+  };
 }
 
 export async function getLibaxBusinessSeller(
