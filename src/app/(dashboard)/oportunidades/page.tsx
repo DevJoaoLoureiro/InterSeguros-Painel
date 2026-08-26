@@ -9,6 +9,8 @@ import {
   cookies,
 } from "next/headers";
 
+import Link from "next/link";
+
 import {
   redirect,
 } from "next/navigation";
@@ -26,35 +28,8 @@ import {
 } from "@/lib/auth/get-current-profile";
 
 import {
-  createAdminClient,
-} from "@/lib/supabase/admin";
-
-import type {
-  OpportunityStatus,
+  getOpportunitiesData,
 } from "./action";
-
-import {
-  updateOpportunityStatus,
-} from "./action";
-
-type OpportunityRow = {
-  id: string;
-  title: string;
-  insurance_type: string | null;
-  status: OpportunityStatus;
-  estimated_value: number | null;
-  assigned_user_id: string | null;
-  store_id: string | null;
-  company_name: string | null;
-  expected_close_date: string | null;
-  created_at: string;
-};
-
-type ProfileRow = {
-  id: string;
-  full_name: string;
-  store_id: string | null;
-};
 
 function formatCurrency(
   value: number,
@@ -68,7 +43,13 @@ function formatCurrency(
   ).format(value);
 }
 
-export default async function OpportunitiesPage() {
+export default async function OpportunitiesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    closedPage?: string;
+  }>;
+}) {
   const profile =
     await getCurrentProfile();
 
@@ -102,177 +83,28 @@ export default async function OpportunitiesPage() {
     );
   }
 
-  const supabase =
-    createAdminClient();
+  const params =
+    await searchParams;
 
-  let opportunitiesQuery =
-    supabase
-      .from("opportunities")
-      .select(`
-        id,
-        title,
-        insurance_type,
-        status,
-        estimated_value,
-        assigned_user_id,
-        store_id,
-        company_name,
-        expected_close_date,
-        created_at
-      `)
-      .order(
-        "created_at",
-        {
-          ascending: false,
-        },
-      );
+  const closedPage =
+    Number(
+      params.closedPage ?? "1",
+    ) || 1;
 
-  if (
-    selectedStoreId &&
-    selectedStoreId !== "all"
-  ) {
-    opportunitiesQuery =
-      opportunitiesQuery.eq(
-        "store_id",
-        selectedStoreId,
-      );
-  }
-
-  // Comercial/Gestor vê apenas
-  // oportunidades em seu próprio nome.
-  if (!canAssignOthers) {
-    opportunitiesQuery =
-      opportunitiesQuery.eq(
-        "assigned_user_id",
-        profile.id,
-      );
-  }
-
-  let profilesQuery =
-    supabase
-      .from("profiles")
-      .select(`
-        id,
-        full_name,
-        store_id
-      `)
-      .eq(
-        "active",
-        true,
-      )
-      .not(
-        "store_id",
-        "is",
-        null,
-      )
-      .order(
-        "full_name",
-        {
-          ascending: true,
-        },
-      );
-
-  if (!canAssignOthers) {
-    profilesQuery =
-      profilesQuery.eq(
-        "id",
-        profile.id,
-      );
-  }
-
-  const [
-    opportunitiesResult,
-    profilesResult,
-  ] = await Promise.all([
-    opportunitiesQuery,
-    profilesQuery,
-  ]);
-
-  if (
-    opportunitiesResult.error
-  ) {
-    throw new Error(
-      `Erro ao carregar oportunidades: ${opportunitiesResult.error.message}`,
-    );
-  }
-
-  if (profilesResult.error) {
-    throw new Error(
-      `Erro ao carregar utilizadores: ${profilesResult.error.message}`,
-    );
-  }
-
-  const opportunities =
-    (opportunitiesResult.data ??
-      []) as OpportunityRow[];
-
-  const profiles =
-    (profilesResult.data ??
-      []) as ProfileRow[];
-
-  const openOpportunities =
-    opportunities.filter(
-      (opportunity) =>
-        opportunity.status !==
-          "ganha" &&
-        opportunity.status !==
-          "perdida",
-    );
-
-  const wonOpportunities =
-    opportunities.filter(
-      (opportunity) =>
-        opportunity.status ===
-        "ganha",
-    );
-
-  const lostOpportunities =
-    opportunities.filter(
-      (opportunity) =>
-        opportunity.status ===
-        "perdida",
-    );
-
-  const pipelineValue =
-    openOpportunities.reduce(
-      (
-        total,
-        opportunity,
-      ) =>
-        total +
-        Number(
-          opportunity.estimated_value ??
-            0,
-        ),
-      0,
-    );
-
-  const wonValue =
-    wonOpportunities.reduce(
-      (
-        total,
-        opportunity,
-      ) =>
-        total +
-        Number(
-          opportunity.estimated_value ??
-            0,
-        ),
-      0,
-    );
-
-  const decided =
-    wonOpportunities.length +
-    lostOpportunities.length;
-
-  const conversionRate =
-    decided > 0
-      ? (
-          wonOpportunities.length /
-          decided
-        ) *
-        100
-      : 0;
+  const {
+    stats,
+    conversionRate,
+    openOpportunities,
+    closedOpportunities,
+    closedTotal,
+    closedTotalPages,
+    profiles,
+  } = await getOpportunitiesData({
+    selectedStoreId,
+    privileged: canAssignOthers,
+    currentProfileId: profile.id,
+    closedPage,
+  });
 
   return (
     <div className="space-y-6">
@@ -307,7 +139,7 @@ export default async function OpportunitiesPage() {
         <MetricCard
           label="Oportunidades abertas"
           value={String(
-            openOpportunities.length,
+            stats.open_count,
           )}
           icon={
             <BriefcaseBusiness className="h-5 w-5 text-[#ff4b0a]" />
@@ -317,7 +149,7 @@ export default async function OpportunitiesPage() {
         <MetricCard
           label="Valor em pipeline"
           value={formatCurrency(
-            pipelineValue,
+            stats.pipeline_value,
           )}
           icon={
             <CircleDollarSign className="h-5 w-5 text-blue-600" />
@@ -337,7 +169,7 @@ export default async function OpportunitiesPage() {
         <MetricCard
           label="Valor ganho"
           value={formatCurrency(
-            wonValue,
+            stats.won_value,
           )}
           icon={
             <Trophy className="h-5 w-5 text-green-600" />
@@ -362,16 +194,12 @@ export default async function OpportunitiesPage() {
           opportunities={
             openOpportunities
           }
-          profiles={
-            profiles
-          }
+          profiles={profiles}
           canAssignOthers={
             canAssignOthers
           }
         />
       </section>
-
-  
 
       {/* NEGÓCIOS FECHADOS */}
 
@@ -394,12 +222,12 @@ export default async function OpportunitiesPage() {
 
             <div className="mt-2 flex items-end justify-between">
               <p className="text-3xl font-semibold text-green-800">
-                {wonOpportunities.length}
+                {stats.won_count}
               </p>
 
               <span className="text-sm font-semibold text-green-700">
                 {formatCurrency(
-                  wonValue,
+                  stats.won_value,
                 )}
               </span>
             </div>
@@ -411,127 +239,213 @@ export default async function OpportunitiesPage() {
             </p>
 
             <p className="mt-2 text-3xl font-semibold text-red-800">
-              {lostOpportunities.length}
+              {stats.lost_count}
             </p>
           </div>
         </div>
 
-        {wonOpportunities.length === 0 &&
-        lostOpportunities.length === 0 ? (
+        {closedTotal === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[#7d848e]">
             Ainda não existem negócios fechados.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[850px] text-left">
-              <thead className="bg-[#fafbfc]">
-                <tr className="text-xs font-medium uppercase tracking-wide text-[#8a9099]">
-                  <th className="px-5 py-3">
-                    Oportunidade
-                  </th>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[850px] text-left">
+                <thead className="bg-[#fafbfc]">
+                  <tr className="text-xs font-medium uppercase tracking-wide text-[#8a9099]">
+                    <th className="px-5 py-3">
+                      Oportunidade
+                    </th>
 
-                  <th className="px-5 py-3">
-                    Seguro
-                  </th>
+                    <th className="px-5 py-3">
+                      Seguro
+                    </th>
 
-                  <th className="px-5 py-3">
-                    Responsável
-                  </th>
+                    <th className="px-5 py-3">
+                      Responsável
+                    </th>
 
-                  <th className="px-5 py-3">
-                    Valor
-                  </th>
+                    <th className="px-5 py-3">
+                      Valor
+                    </th>
 
-                  <th className="px-5 py-3">
-                    Resultado
-                  </th>
+                    <th className="px-5 py-3">
+                      Resultado
+                    </th>
 
-                  <th className="px-5 py-3">
-                    Ação
-                  </th>
-                </tr>
-              </thead>
+                    <th className="px-5 py-3">
+                      Ação
+                    </th>
+                  </tr>
+                </thead>
 
-              <tbody className="divide-y divide-[#edf0f2]">
-                {[
-                  ...wonOpportunities,
-                  ...lostOpportunities,
-                ].map((opportunity) => {
-                  const responsible =
-                    profiles.find(
-                      (profile) =>
-                        profile.id ===
-                        opportunity.assigned_user_id,
-                    );
+                <tbody className="divide-y divide-[#edf0f2]">
+                  {closedOpportunities.map(
+                    (opportunity) => {
+                      const responsible =
+                        profiles.find(
+                          (p) =>
+                            p.id ===
+                            opportunity.assigned_user_id,
+                        );
 
-                  return (
-                    <tr
-                      key={opportunity.id}
-                      className="text-sm"
-                    >
-                      <td className="px-5 py-4 font-medium text-[#20242a]">
-                        {opportunity.title}
-                      </td>
-
-                      <td className="px-5 py-4 text-[#606771]">
-                        {opportunity.insurance_type ??
-                          "—"}
-                      </td>
-
-                      <td className="px-5 py-4 text-[#606771]">
-                        {responsible?.full_name ??
-                          "Sem responsável"}
-                      </td>
-
-                      <td className="px-5 py-4 font-medium text-[#20242a]">
-                        {formatCurrency(
-                          Number(
-                            opportunity.estimated_value ??
-                              0,
-                          ),
-                        )}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        {opportunity.status ===
-                        "ganha" ? (
-                          <span className="inline-flex rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700">
-                            Ganha
-                          </span>
-                        ) : (
-                          <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
-                            Perdida
-                          </span>
-                        )}
-                      </td>
-
-                      <td className="px-5 py-4">
-                        <form
-                          action={async () => {
-                            "use server";
-
-                            await updateOpportunityStatus(
-                              opportunity.id,
-                              "proposta",
-                            );
-                          }}
+                      return (
+                        <tr
+                          key={
+                            opportunity.id
+                          }
+                          className="text-sm"
                         >
-                          <button
-                            type="submit"
-                            className="rounded-lg border border-[#e1e4e8] px-3 py-1.5 text-xs font-medium text-[#59616d] transition hover:bg-[#f5f6f7]"
-                          >
-                            Reabrir
-                          </button>
-                        </form>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                          <td className="px-5 py-4 font-medium text-[#20242a]">
+                            {
+                              opportunity.title
+                            }
+                          </td>
+
+                          <td className="px-5 py-4 text-[#606771]">
+                            {opportunity.insurance_type ??
+                              "—"}
+                          </td>
+
+                          <td className="px-5 py-4 text-[#606771]">
+                            {responsible?.full_name ??
+                              "Sem responsável"}
+                          </td>
+
+                          <td className="px-5 py-4 font-medium text-[#20242a]">
+                            {formatCurrency(
+                              Number(
+                                opportunity.estimated_value ??
+                                  0,
+                              ),
+                            )}
+                          </td>
+
+                          <td className="px-5 py-4">
+                            {opportunity.status ===
+                            "ganha" ? (
+                              <span className="inline-flex rounded-full bg-green-50 px-2.5 py-1 text-xs font-medium text-green-700">
+                                Ganha
+                              </span>
+                            ) : (
+                              <span className="inline-flex rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                                Perdida
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <ReopenButton
+                              opportunityId={
+                                opportunity.id
+                              }
+                            />
+                          </td>
+                        </tr>
+                      );
+                    },
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <ClosedPagination
+              currentPage={
+                closedPage
+              }
+              totalPages={
+                closedTotalPages
+              }
+            />
+          </>
         )}
       </section>
+    </div>
+  );
+}
+
+function ReopenButton({
+  opportunityId,
+}: {
+  opportunityId: string;
+}) {
+  async function reopen() {
+    "use server";
+
+    const {
+      updateOpportunityStatus,
+    } = await import("./action");
+
+    await updateOpportunityStatus(
+      opportunityId,
+      "proposta",
+    );
+  }
+
+  return (
+    <form action={reopen}>
+      <button
+        type="submit"
+        className="rounded-lg border border-[#e1e4e8] px-3 py-1.5 text-xs font-medium text-[#59616d] transition hover:bg-[#f5f6f7]"
+      >
+        Reabrir
+      </button>
+    </form>
+  );
+}
+
+function ClosedPagination({
+  currentPage,
+  totalPages,
+}: {
+  currentPage: number;
+  totalPages: number;
+}) {
+  if (totalPages <= 1) {
+    return null;
+  }
+
+  const prevPage = Math.max(
+    1,
+    currentPage - 1,
+  );
+
+  const nextPage = Math.min(
+    totalPages,
+    currentPage + 1,
+  );
+
+  return (
+    <div className="flex items-center justify-between border-t border-[#edf0f2] px-5 py-3">
+      <p className="text-xs text-[#8a9099]">
+        Página {currentPage} de{" "}
+        {totalPages}
+      </p>
+
+      <div className="flex gap-2">
+        <Link
+          href={`/oportunidades?closedPage=${prevPage}`}
+          className={`rounded-lg border border-[#e1e4e8] px-3 py-1.5 text-xs font-medium text-[#59616d] transition hover:bg-[#f5f6f7] ${
+            currentPage === 1
+              ? "pointer-events-none opacity-40"
+              : ""
+          }`}
+        >
+          Anterior
+        </Link>
+
+        <Link
+          href={`/oportunidades?closedPage=${nextPage}`}
+          className={`rounded-lg border border-[#e1e4e8] px-3 py-1.5 text-xs font-medium text-[#59616d] transition hover:bg-[#f5f6f7] ${
+            currentPage === totalPages
+              ? "pointer-events-none opacity-40"
+              : ""
+          }`}
+        >
+          Seguinte
+        </Link>
+      </div>
     </div>
   );
 }

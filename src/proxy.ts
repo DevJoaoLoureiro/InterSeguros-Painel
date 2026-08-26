@@ -21,8 +21,10 @@ export async function proxy(request: NextRequest) {
 
   const isLibaxImport =
     pathname === "/api/libax/import";
+  const isLibaxTest =
+  pathname === "/api/libax/test";
 
-  if (isCronRoute || isLibaxImport) {
+  if (isCronRoute || isLibaxImport || isLibaxTest) {
     const authorization =
       request.headers.get("authorization");
 
