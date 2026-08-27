@@ -17,6 +17,12 @@ import {
   createAdminClient,
 } from "@/lib/supabase/admin";
 
+import {
+  AssistantProvider,
+} from "@/components/ai/assistant-provider";
+
+import AssistantPanel from "@/components/ai/assistant-panel";
+
 export default async function DashboardLayout({
   children,
 }: Readonly<{
@@ -83,83 +89,87 @@ export default async function DashboardLayout({
   // LOJAS DISPONÍVEIS POR ROLE
   // ==========================================
 
-// ==========================================
-// LOJAS DISPONÍVEIS POR ROLE
-// ==========================================
+  const canAccessAllStores =
+    profile.role === "ADMIN" ||
+    profile.role === "OWNER";
 
-const canAccessAllStores =
-  profile.role === "ADMIN" ||
-  profile.role === "OWNER";
+  const availableStores =
+    canAccessAllStores
+      ? allStores
+      : profile.store
+        ? [
+            {
+              id: profile.store.id,
+              name: profile.store.name,
+              code: profile.store.code,
+            },
+          ]
+        : [];
 
-const availableStores =
-  canAccessAllStores
-    ? allStores
-    : profile.store
-      ? [
-          {
-            id: profile.store.id,
-            name: profile.store.name,
-            code: profile.store.code,
-          },
-        ]
-      : [];
+  // ==========================================
+  // LOJA ATIVA
+  // ==========================================
 
-// ==========================================
-// LOJA ATIVA
-// ==========================================
+  let selectedStoreId:
+    | string
+    | null = null;
 
-let selectedStoreId:
-  | string
-  | null = null;
+  if (canAccessAllStores) {
+    if (cookieStoreId === "all") {
+      selectedStoreId =
+        "all";
+    } else {
+      const cookieStoreExists =
+        cookieStoreId &&
+        allStores.some(
+          (store) =>
+            store.id ===
+            cookieStoreId,
+        );
 
-if (canAccessAllStores) {
-  if (cookieStoreId === "all") {
-    selectedStoreId = "all";
+      selectedStoreId =
+        cookieStoreExists
+          ? cookieStoreId
+          : "all";
+    }
   } else {
-    const cookieStoreExists =
-      cookieStoreId &&
-      allStores.some(
-        (store) =>
-          store.id === cookieStoreId,
-      );
-
     selectedStoreId =
-      cookieStoreExists
-        ? cookieStoreId
-        : "all";
+      profile.store?.id ??
+      null;
   }
-} else {
-  selectedStoreId =
-    profile.store?.id ?? null;
-}
 
   // ==========================================
   // LAYOUT
   // ==========================================
 
   return (
-    <div className="min-h-dvh w-full overflow-x-clip bg-[#f7f8fc]">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[270px] lg:block">
-        <AppSidebar
-          profile={profile}
-        />
-      </aside>
+    <AssistantProvider>
+      <div className="min-h-dvh w-full overflow-x-clip bg-[#f7f8fc]">
+        <aside className="fixed inset-y-0 left-0 z-40 hidden w-[270px] lg:block">
+          <AppSidebar
+            profile={profile}
+          />
+        </aside>
 
-      <div className="min-w-0 max-w-full lg:pl-[270px]">
-        <DashboardHeader
-          profile={profile}
-          stores={
-            availableStores
-          }
-          selectedStoreId={
-            selectedStoreId
-          }
-        />
+        <div className="min-w-0 max-w-full lg:pl-[270px]">
+          <DashboardHeader
+            profile={profile}
+            stores={
+              availableStores
+            }
+            selectedStoreId={
+              selectedStoreId
+            }
+          />
 
-        <main className="min-w-0 max-w-full overflow-x-clip p-3 sm:p-5 lg:p-7">
-          {children}
-        </main>
+          <main className="min-w-0 max-w-full overflow-x-clip p-3 sm:p-5 lg:p-7">
+            {children}
+          </main>
+        </div>
+
+        {/* ASSISTENTE GLOBAL */}
+        <AssistantPanel />
       </div>
-    </div>
+    </AssistantProvider>
   );
 }

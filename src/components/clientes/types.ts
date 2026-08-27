@@ -48,6 +48,9 @@ export type ProfileRow = {
 export type PortfolioClient = {
   client: ClientRow;
   policies: PolicyRow[];
+
+  opportunity:
+    ClientOpportunitySummary;
 };
 
 export type PortfolioSearchRow = {
@@ -59,12 +62,27 @@ export type PortfolioSearchRow = {
 export const CLIENTS_PAGE_SIZE = 20;
 
 export type PortfolioFilters = {
-  storeId: string | null; // null = todas as lojas
   search: string;
-  from: string; // "" ou "YYYY-MM-DD"
+  from: string;
   to: string;
   company: string;
-  responsible: string; // "" ou profile id
-  sort: "newest" | "oldest";
+  responsible: string;
+  sort:
+    | "newest"
+    | "oldest";
   page: number;
+};
+
+
+export type ClientOpportunitySummary = {
+  hasOpportunity: boolean;
+  count: number;
+  score: number | null;
+  level:
+    | "low"
+    | "medium"
+    | "high"
+    | null;
+  targetLine: string | null;
+  reason: string | null;
 };
