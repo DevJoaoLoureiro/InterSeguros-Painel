@@ -59,7 +59,7 @@ export type PortfolioSearchRow = {
   total_count: number;
 };
 
-export const CLIENTS_PAGE_SIZE = 20;
+export const CLIENTS_PAGE_SIZE = 10;
 
 export type PortfolioFilters = {
   search: string;
