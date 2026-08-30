@@ -227,148 +227,52 @@ export async function getUpcomingReceipts({
   storeId: string | null;
 }): Promise<UpcomingReceiptRow[]> {
   const supabase = createAdminClient();
+
   const { todayKey, fromKey, toKey } = getWindow();
 
-  const { data: receiptsData, error: receiptsError } = await supabase
-    .from("receipts")
-    .select(`
-      id,
-      policy_id,
-      company_id,
-      receipt_number,
-      due_date,
-      commercial_premium,
-      total_premium,
-      status,
-      external_nature,
-      receipt_type
-    `)
-    .eq("status", "PENDING")
-    .not("due_date", "is", null)
-    .gte("due_date", fromKey)
-    .lte("due_date", toKey)
-    .order("due_date", { ascending: true });
+  const { data, error } = await supabase.rpc(
+    "get_upcoming_receipts",
+    {
+      p_store_id:
+        storeId && storeId !== "all"
+          ? storeId
+          : null,
 
-  if (receiptsError) {
+      p_from: fromKey,
+      p_to: toKey,
+    },
+  );
+
+  if (error) {
     throw new Error(
-      `Erro ao carregar recibos a vencer: ${receiptsError.message}`,
+      `Erro ao carregar recibos a vencer: ${error.message}`,
     );
   }
 
-  // Exclui estornos, mesmo que status apareça como PENDING.
-  const receipts = (receiptsData ?? []).filter((receipt) => {
-    const isReversal =
-      receipt.external_nature === "9" ||
-      (receipt.receipt_type ?? "").toUpperCase().includes("ESTORNO") ||
-      (receipt.receipt_type ?? "").toUpperCase().includes("REVERSAL");
+  return (data ?? []).map((row: any) => ({
+    receiptId: row.receipt_id,
+    receiptNumber: row.receipt_number,
 
-    return !isReversal;
-  });
+    policyNumber: row.policy_number,
 
-  if (receipts.length === 0) {
-    return [];
-  }
+    clientName: row.client_name,
+    companyName: row.company_name,
 
-  // ----------------------------------------
-  // Policies relacionadas (cliente, loja, nº apólice)
-  // ----------------------------------------
+    dueDate: row.due_date,
 
-  const policyIds = Array.from(
-    new Set(receipts.map((r) => r.policy_id).filter(Boolean)),
-  );
+    commercialPremium:
+      row.commercial_premium === null
+        ? null
+        : Number(row.commercial_premium),
 
-  const companyIds = Array.from(
-    new Set(receipts.map((r) => r.company_id).filter(Boolean)),
-  );
+    totalPremium:
+      row.total_premium === null
+        ? null
+        : Number(row.total_premium),
 
-  const [policiesResult, companiesResult] = await Promise.all([
-    policyIds.length > 0
-      ? supabase
-          .from("policies")
-          .select("id, client_id, policy_number, issuing_store_id")
-          .in("id", policyIds)
-      : Promise.resolve({ data: [], error: null }),
+    storeId: row.store_id,
+    storeName: row.store_name,
 
-    companyIds.length > 0
-      ? supabase.from("companies").select("id, name").in("id", companyIds)
-      : Promise.resolve({ data: [], error: null }),
-  ]);
-
-  const policyMap = new Map(
-    (policiesResult.data ?? []).map((p) => [p.id, p]),
-  );
-
-  const companyMap = new Map(
-    (companiesResult.data ?? []).map((c) => [c.id, c.name]),
-  );
-
-  // Filtrar por loja aqui, já que receipts não tem issuing_store_id direto
-  const filteredReceipts =
-    storeId && storeId !== "all"
-      ? receipts.filter(
-          (r) => policyMap.get(r.policy_id)?.issuing_store_id === storeId,
-        )
-      : receipts;
-
-  const clientIds = Array.from(
-    new Set(
-      filteredReceipts
-        .map((r) => policyMap.get(r.policy_id)?.client_id)
-        .filter(Boolean) as string[],
-    ),
-  );
-
-  const storeIds = Array.from(
-    new Set(
-      filteredReceipts
-        .map((r) => policyMap.get(r.policy_id)?.issuing_store_id)
-        .filter(Boolean) as string[],
-    ),
-  );
-
-  const [clientsResult, storesResult] = await Promise.all([
-    clientIds.length > 0
-      ? supabase.from("clients").select("id, name").in("id", clientIds)
-      : Promise.resolve({ data: [], error: null }),
-
-    storeIds.length > 0
-      ? supabase.from("stores").select("id, name").in("id", storeIds)
-      : Promise.resolve({ data: [], error: null }),
-  ]);
-
-  const clientMap = new Map(
-    (clientsResult.data ?? []).map((c) => [c.id, c.name]),
-  );
-
-  const storeMap = new Map(
-    (storesResult.data ?? []).map((s) => [s.id, s.name]),
-  );
-
-  return filteredReceipts.map((receipt) => {
-    const policy = policyMap.get(receipt.policy_id);
-
-    return {
-      receiptId: receipt.id,
-      receiptNumber: receipt.receipt_number,
-      policyNumber: policy?.policy_number ?? "—",
-      clientName: policy?.client_id
-        ? clientMap.get(policy.client_id) ?? "Cliente"
-        : "Cliente",
-      companyName: companyMap.get(receipt.company_id) ?? "—",
-      dueDate: receipt.due_date as string,
-      commercialPremium:
-        receipt.commercial_premium === null
-          ? null
-          : Number(receipt.commercial_premium),
-      totalPremium:
-        receipt.total_premium === null
-          ? null
-          : Number(receipt.total_premium),
-      storeId: policy?.issuing_store_id ?? null,
-      storeName: policy?.issuing_store_id
-        ? storeMap.get(policy.issuing_store_id) ?? null
-        : null,
-      overdue: (receipt.due_date as string) < todayKey,
-    };
-  });
+    overdue: row.due_date < todayKey,
+  }));
 }
