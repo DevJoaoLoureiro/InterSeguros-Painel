@@ -65,7 +65,6 @@ type SearchReceiptsRow = {
   store_id: string | null;
   store_name: string | null;
 
-  total_count: number | string;
 };
 
 type ReceiptsStatsRow = {
@@ -84,6 +83,35 @@ type ReceiptsStatsRow = {
   reversals_count: number | string | null;
   reversals_commercial: number | string | null;
   reversals_total: number | string | null;
+};
+
+type ReceiptsPageRpcResult = {
+  stats: {
+    paid: {
+      count: number | string;
+      commercial: number | string;
+      total: number | string;
+    };
+    pending: {
+      count: number | string;
+      commercial: number | string;
+      total: number | string;
+    };
+    returned: {
+      count: number | string;
+      commercial: number | string;
+      total: number | string;
+    };
+    reversals: {
+      count: number | string;
+      commercial: number | string;
+      total: number | string;
+    };
+  };
+
+  total_count: number | string;
+
+  items: SearchReceiptsRow[];
 };
 
 function mapRow(row: SearchReceiptsRow): ReceiptRow {
@@ -194,10 +222,6 @@ const getReceiptCompanies = unstable_cache(
 export async function getReceiptsData(
   filters: ReceiptFilters,
 ): Promise<ReceiptsPageData> {
-  // ==========================================
-  // UTILIZADOR + COOKIE
-  // ==========================================
-
   const [profile, cookieStore] = await Promise.all([
     getCurrentProfile(),
     cookies(),
@@ -231,10 +255,6 @@ export async function getReceiptsData(
       ? selectedStoreId
       : null;
 
-  // ==========================================
-  // FILTROS
-  // ==========================================
-
   const search = toNullable(filters.search);
   const from = toNullable(filters.from);
   const to = toNullable(filters.to);
@@ -250,10 +270,6 @@ export async function getReceiptsData(
     (requestedPage - 1) *
     RECEIPTS_PAGE_SIZE;
 
-  // ==========================================
-  // COMPANHIAS
-  // ==========================================
-
   const companies =
     await getReceiptCompanies();
 
@@ -267,10 +283,6 @@ export async function getReceiptsData(
         item.name === company,
     );
 
-    /*
-     * Se vier um filtro inválido, não queremos
-     * transformar isso em "todas as companhias".
-     */
     if (!selectedCompany) {
       return {
         stats: {
@@ -311,125 +323,34 @@ export async function getReceiptsData(
 
   const admin = createAdminClient();
 
-  // ==========================================
-  // STATS + LISTAGEM EM PARALELO
-  // ==========================================
+  const { data, error } = await admin.rpc(
+    "get_receipts_page",
+    {
+      p_store_id: storeId,
+      p_company_id: companyId,
+      p_status: status,
+      p_from: from,
+      p_to: to,
+      p_search: search,
+      p_limit: RECEIPTS_PAGE_SIZE,
+      p_offset: offset,
+    },
+  );
 
-  const [statsResult, rowsResult] =
-    await Promise.all([
-      admin.rpc(
-        "get_receipts_stats",
-        {
-          p_store_id: storeId,
-          p_company_id: companyId,
-          p_from: from,
-          p_to: to,
-          p_search: search,
-        },
-      ),
-
-      admin.rpc(
-        "search_receipts",
-        {
-          p_store_id: storeId,
-          p_company_id: companyId,
-          p_status: status,
-          p_from: from,
-          p_to: to,
-          p_search: search,
-          p_limit:
-            RECEIPTS_PAGE_SIZE,
-          p_offset: offset,
-        },
-      ),
-    ]);
-
-  // ==========================================
-  // ERROS
-  // ==========================================
-
-  if (statsResult.error) {
+  if (error) {
     throw new Error(
-      `Erro ao calcular estatísticas: ${statsResult.error.message}`,
+      `Erro ao carregar recibos: ${error.message}`,
     );
   }
 
-  if (rowsResult.error) {
-    throw new Error(
-      `Erro ao carregar recibos: ${rowsResult.error.message}`,
-    );
-  }
+  const result =
+    data as unknown as ReceiptsPageRpcResult;
 
-  // ==========================================
-  // ESTATÍSTICAS
-  // ==========================================
+  const rows = result?.items ?? [];
 
-  const statsRow =
-    ((statsResult.data ?? [])[0] ??
-      {}) as Partial<ReceiptsStatsRow>;
-
-  const stats = {
-    paid: {
-      count: Number(
-        statsRow.paid_count ?? 0,
-      ),
-      commercial: Number(
-        statsRow.paid_commercial ?? 0,
-      ),
-      total: Number(
-        statsRow.paid_total ?? 0,
-      ),
-    },
-
-    pending: {
-      count: Number(
-        statsRow.pending_count ?? 0,
-      ),
-      commercial: Number(
-        statsRow.pending_commercial ?? 0,
-      ),
-      total: Number(
-        statsRow.pending_total ?? 0,
-      ),
-    },
-
-    returned: {
-      count: Number(
-        statsRow.returned_count ?? 0,
-      ),
-      commercial: Number(
-        statsRow.returned_commercial ?? 0,
-      ),
-      total: Number(
-        statsRow.returned_total ?? 0,
-      ),
-    },
-
-    reversals: {
-      count: Number(
-        statsRow.reversals_count ?? 0,
-      ),
-      commercial: Number(
-        statsRow.reversals_commercial ?? 0,
-      ),
-      total: Number(
-        statsRow.reversals_total ?? 0,
-      ),
-    },
-  };
-
-  // ==========================================
-  // LISTAGEM
-  // ==========================================
-
-  const rows =
-    (rowsResult.data ??
-      []) as SearchReceiptsRow[];
-
-  const totalCount =
-    rows.length > 0
-      ? Number(rows[0].total_count)
-      : 0;
+  const totalCount = Number(
+    result?.total_count ?? 0,
+  );
 
   const totalPages = Math.max(
     1,
@@ -445,7 +366,55 @@ export async function getReceiptsData(
   );
 
   return {
-    stats,
+    stats: {
+      paid: {
+        count: Number(
+          result?.stats?.paid?.count ?? 0,
+        ),
+        commercial: Number(
+          result?.stats?.paid?.commercial ?? 0,
+        ),
+        total: Number(
+          result?.stats?.paid?.total ?? 0,
+        ),
+      },
+
+      pending: {
+        count: Number(
+          result?.stats?.pending?.count ?? 0,
+        ),
+        commercial: Number(
+          result?.stats?.pending?.commercial ?? 0,
+        ),
+        total: Number(
+          result?.stats?.pending?.total ?? 0,
+        ),
+      },
+
+      returned: {
+        count: Number(
+          result?.stats?.returned?.count ?? 0,
+        ),
+        commercial: Number(
+          result?.stats?.returned?.commercial ?? 0,
+        ),
+        total: Number(
+          result?.stats?.returned?.total ?? 0,
+        ),
+      },
+
+      reversals: {
+        count: Number(
+          result?.stats?.reversals?.count ?? 0,
+        ),
+        commercial: Number(
+          result?.stats?.reversals?.commercial ?? 0,
+        ),
+        total: Number(
+          result?.stats?.reversals?.total ?? 0,
+        ),
+      },
+    },
 
     items: rows.map(mapRow),
 
