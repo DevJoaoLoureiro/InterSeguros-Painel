@@ -1,6 +1,7 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { unstable_cache } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
@@ -52,6 +53,24 @@ type SearchReceiptsRow = {
   total_count: number;
 };
 
+type ReceiptsStatsRow = {
+  paid_count: number | string | null;
+  paid_commercial: number | string | null;
+  paid_total: number | string | null;
+
+  pending_count: number | string | null;
+  pending_commercial: number | string | null;
+  pending_total: number | string | null;
+
+  returned_count: number | string | null;
+  returned_commercial: number | string | null;
+  returned_total: number | string | null;
+
+  reversals_count: number | string | null;
+  reversals_commercial: number | string | null;
+  reversals_total: number | string | null;
+};
+
 function mapRow(row: SearchReceiptsRow): ReceiptRow {
   return {
     id: row.id,
@@ -59,6 +78,7 @@ function mapRow(row: SearchReceiptsRow): ReceiptRow {
     company_id: row.company_id,
 
     external_id: null,
+
     receipt_number: row.receipt_number,
     receipt_type: row.receipt_type,
 
@@ -74,7 +94,9 @@ function mapRow(row: SearchReceiptsRow): ReceiptRow {
         : Number(row.commercial_premium),
 
     total_premium:
-      row.total_premium === null ? null : Number(row.total_premium),
+      row.total_premium === null
+        ? null
+        : Number(row.total_premium),
 
     status: row.status,
 
@@ -117,43 +139,84 @@ function mapRow(row: SearchReceiptsRow): ReceiptRow {
         : null,
 
       issuing_store: row.store_id
-        ? { id: row.store_id, name: row.store_name ?? "" }
+        ? {
+            id: row.store_id,
+            name: row.store_name ?? "",
+          }
         : null,
     },
   };
 }
 
+/*
+ * Companhias mudam muito pouco.
+ *
+ * Evitamos ir ao Supabase em cada carregamento da página.
+ * Cache de 5 minutos.
+ */
+const getReceiptCompanies = unstable_cache(
+  async (): Promise<ReceiptCompany[]> => {
+    const admin = createAdminClient();
+
+    const { data, error } = await admin
+      .from("companies")
+      .select("id, code, name")
+      .eq("active", true)
+      .order("name", { ascending: true });
+
+    if (error) {
+      throw new Error(
+        `Erro ao carregar companhias: ${error.message}`,
+      );
+    }
+
+    return (data ?? []) as ReceiptCompany[];
+  },
+  ["receipt-filter-companies"],
+  {
+    revalidate: 300,
+  },
+);
+
 export async function getReceiptsData(
   filters: ReceiptFilters,
 ): Promise<ReceiptsPageData> {
   // ==========================================
-  // UTILIZADOR + LOJA
+  // UTILIZADOR + COOKIE EM PARALELO
   // ==========================================
 
-  const profile = await getCurrentProfile();
+  const [profile, cookieStore] = await Promise.all([
+    getCurrentProfile(),
+    cookies(),
+  ]);
 
   if (!profile) {
     throw new Error("Não autenticado.");
   }
 
   const canAccessAllStores =
-    profile.role === "OWNER" || profile.role === "ADMIN";
-
-  const cookieStore = await cookies();
+    profile.role === "OWNER" ||
+    profile.role === "ADMIN";
 
   const cookieStoreId =
-    cookieStore.get("selected_store_id")?.value ?? "all";
+    cookieStore.get("selected_store_id")?.value ??
+    "all";
 
   const selectedStoreId = canAccessAllStores
     ? cookieStoreId
     : profile.store?.id ?? null;
 
   if (!canAccessAllStores && !selectedStoreId) {
-    throw new Error("O utilizador não tem uma loja associada.");
+    throw new Error(
+      "O utilizador não tem uma loja associada.",
+    );
   }
 
   const storeId =
-    selectedStoreId && selectedStoreId !== "all" ? selectedStoreId : null;
+    selectedStoreId &&
+    selectedStoreId !== "all"
+      ? selectedStoreId
+      : null;
 
   // ==========================================
   // FILTROS
@@ -165,27 +228,21 @@ export async function getReceiptsData(
   const company = toNullable(filters.company);
   const status = toNullable(filters.status);
 
-  const requestedPage = Math.max(1, filters.page);
+  const requestedPage = Math.max(
+    1,
+    filters.page,
+  );
 
-  const admin = createAdminClient();
+  const offset =
+    (requestedPage - 1) *
+    RECEIPTS_PAGE_SIZE;
 
   // ==========================================
-  // COMPANHIAS (para o dropdown de filtro)
+  // COMPANHIAS
   // ==========================================
 
-  const { data: companiesData, error: companiesError } = await admin
-    .from("companies")
-    .select("id, code, name")
-    .eq("active", true)
-    .order("name", { ascending: true });
-
-  if (companiesError) {
-    throw new Error(
-      `Erro ao carregar companhias: ${companiesError.message}`,
-    );
-  }
-
-  const companies = (companiesData ?? []) as ReceiptCompany[];
+  const companies =
+    await getReceiptCompanies();
 
   let companyId: string | null = null;
 
@@ -197,95 +254,192 @@ export async function getReceiptsData(
         item.name === company,
     );
 
-    companyId = selectedCompany?.id ?? null;
+    /*
+     * Antes:
+     *
+     * company inválida -> null
+     * null -> todas as companhias
+     *
+     * Isso pode devolver resultados errados.
+     */
+    if (!selectedCompany) {
+      return {
+        stats: {
+          paid: {
+            count: 0,
+            commercial: 0,
+            total: 0,
+          },
+          pending: {
+            count: 0,
+            commercial: 0,
+            total: 0,
+          },
+          returned: {
+            count: 0,
+            commercial: 0,
+            total: 0,
+          },
+          reversals: {
+            count: 0,
+            commercial: 0,
+            total: 0,
+          },
+        },
+
+        items: [],
+
+        page: 1,
+        totalPages: 1,
+        totalCount: 0,
+
+        companies,
+      };
+    }
+
+    companyId = selectedCompany.id;
   }
 
+  const admin = createAdminClient();
+
   // ==========================================
-  // ESTATÍSTICAS (RPC, sem trazer linhas)
+  // STATS + LISTA AO MESMO TEMPO
   // ==========================================
 
-  const { data: statsRows, error: statsError } = await admin.rpc(
-    "get_receipts_stats",
-    {
-      p_store_id: storeId,
-      p_company_id: companyId,
-      p_from: from,
-      p_to: to,
-      p_search: search,
-    },
-  );
+  const [statsResult, rowsResult] =
+    await Promise.all([
+      admin.rpc(
+        "get_receipts_stats",
+        {
+          p_store_id: storeId,
+          p_company_id: companyId,
+          p_from: from,
+          p_to: to,
+          p_search: search,
+        },
+      ),
 
-  if (statsError) {
+      admin.rpc(
+        "search_receipts",
+        {
+          p_store_id: storeId,
+          p_company_id: companyId,
+          p_status: status,
+          p_from: from,
+          p_to: to,
+          p_search: search,
+          p_limit:
+            RECEIPTS_PAGE_SIZE,
+          p_offset: offset,
+        },
+      ),
+    ]);
+
+  // ==========================================
+  // ERROS
+  // ==========================================
+
+  if (statsResult.error) {
     throw new Error(
-      `Erro ao calcular estatísticas: ${statsError.message}`,
+      `Erro ao calcular estatísticas: ${statsResult.error.message}`,
     );
   }
 
-  const statsRow = (statsRows as any)?.[0] ?? {};
+  if (rowsResult.error) {
+    throw new Error(
+      `Erro ao carregar recibos: ${rowsResult.error.message}`,
+    );
+  }
+
+  // ==========================================
+  // STATS
+  // ==========================================
+
+  const statsRow =
+    ((statsResult.data ??
+      [])[0] ??
+      {}) as Partial<ReceiptsStatsRow>;
 
   const stats = {
     paid: {
-      count: Number(statsRow.paid_count ?? 0),
-      commercial: Number(statsRow.paid_commercial ?? 0),
-      total: Number(statsRow.paid_total ?? 0),
+      count: Number(
+        statsRow.paid_count ?? 0,
+      ),
+      commercial: Number(
+        statsRow.paid_commercial ?? 0,
+      ),
+      total: Number(
+        statsRow.paid_total ?? 0,
+      ),
     },
+
     pending: {
-      count: Number(statsRow.pending_count ?? 0),
-      commercial: Number(statsRow.pending_commercial ?? 0),
-      total: Number(statsRow.pending_total ?? 0),
+      count: Number(
+        statsRow.pending_count ?? 0,
+      ),
+      commercial: Number(
+        statsRow.pending_commercial ?? 0,
+      ),
+      total: Number(
+        statsRow.pending_total ?? 0,
+      ),
     },
+
     returned: {
-      count: Number(statsRow.returned_count ?? 0),
-      commercial: Number(statsRow.returned_commercial ?? 0),
-      total: Number(statsRow.returned_total ?? 0),
+      count: Number(
+        statsRow.returned_count ?? 0,
+      ),
+      commercial: Number(
+        statsRow.returned_commercial ?? 0,
+      ),
+      total: Number(
+        statsRow.returned_total ?? 0,
+      ),
     },
+
     reversals: {
-      count: Number(statsRow.reversals_count ?? 0),
-      commercial: Number(statsRow.reversals_commercial ?? 0),
-      total: Number(statsRow.reversals_total ?? 0),
+      count: Number(
+        statsRow.reversals_count ?? 0,
+      ),
+      commercial: Number(
+        statsRow.reversals_commercial ?? 0,
+      ),
+      total: Number(
+        statsRow.reversals_total ?? 0,
+      ),
     },
   };
 
   // ==========================================
-  // LISTA PAGINADA (RPC, só as linhas da página)
+  // RESULTADOS
   // ==========================================
 
-  const offset = (requestedPage - 1) * RECEIPTS_PAGE_SIZE;
+  const rows =
+    (rowsResult.data ??
+      []) as SearchReceiptsRow[];
 
-  const { data: rowsData, error: rowsError } = await admin.rpc(
-    "search_receipts",
-    {
-      p_store_id: storeId,
-      p_company_id: companyId,
-      p_status: status,
-      p_from: from,
-      p_to: to,
-      p_search: search,
-      p_limit: RECEIPTS_PAGE_SIZE,
-      p_offset: offset,
-    },
-  );
-
-  if (rowsError) {
-    throw new Error(`Erro ao carregar recibos: ${rowsError.message}`);
-  }
-
-  const rows = (rowsData ?? []) as SearchReceiptsRow[];
-
-  const totalCount = rows.length > 0 ? Number(rows[0].total_count) : 0;
+  const totalCount =
+    rows.length > 0
+      ? Number(rows[0].total_count)
+      : 0;
 
   const totalPages = Math.max(
     1,
-    Math.ceil(totalCount / RECEIPTS_PAGE_SIZE),
+    Math.ceil(
+      totalCount /
+        RECEIPTS_PAGE_SIZE,
+    ),
   );
 
-  const page = Math.min(requestedPage, totalPages);
-
-  const items = rows.map(mapRow);
+  const page = Math.min(
+    requestedPage,
+    totalPages,
+  );
 
   return {
     stats,
-    items,
+
+    items: rows.map(mapRow),
 
     page,
     totalPages,
