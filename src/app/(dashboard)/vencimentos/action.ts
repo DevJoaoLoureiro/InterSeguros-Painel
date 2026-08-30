@@ -70,151 +70,49 @@ export async function getUpcomingRenewals({
   storeId: string | null;
 }): Promise<RenewalRow[]> {
   const supabase = createAdminClient();
+
   const { todayKey, fromKey, toKey } = getWindow();
 
-  // ----------------------------------------
-  // 1. Apólices ativas no âmbito (loja)
-  // ----------------------------------------
-
-  let policiesQuery = supabase
-    .from("policies")
-    .select(`
-      id,
-      client_id,
-      policy_number,
-      annualized_premium,
-      issuing_store_id,
-      status,
-      company:companies ( id, name ),
-      insurance_line:insurance_lines ( id, name )
-    `)
-    .eq("status", "ACTIVE");
-
-  if (storeId && storeId !== "all") {
-    policiesQuery = policiesQuery.eq("issuing_store_id", storeId);
-  }
-
-  const { data: policiesData, error: policiesError } =
-    await policiesQuery;
-
-  if (policiesError) {
-    throw new Error(
-      `Erro ao carregar apólices: ${policiesError.message}`,
-    );
-  }
-
-  const policies = policiesData ?? [];
-
-  if (policies.length === 0) {
-    return [];
-  }
-
-  const policyIds = policies.map((p) => p.id);
-
-  // ----------------------------------------
-  // 2. Renovação calculada na BD (RPC)
-  // ----------------------------------------
-
-  const { data: renewalRows, error: renewalError } = await supabase.rpc(
-    "get_latest_renewal_dates",
-    { p_policy_ids: policyIds },
-  );
-
-  if (renewalError) {
-    throw new Error(
-      `Erro ao calcular renovações: ${renewalError.message}`,
-    );
-  }
-
- const renewalByPolicy = new Map<string, string>((renewalRows ?? []).map((row: any) => [row.policy_id as string, row.renewal_date as string]));
-
-  // ----------------------------------------
-  // 3. Filtrar para a janela de vencimentos
-  // ----------------------------------------
-
-  const policiesInWindow = policies.filter((policy) => {
-    const renewalDate = renewalByPolicy.get(policy.id);
-
-    return (
-      renewalDate !== undefined &&
-      renewalDate >= fromKey &&
-      renewalDate <= toKey
-    );
-  });
-
-  if (policiesInWindow.length === 0) {
-    return [];
-  }
-
-  // ----------------------------------------
-  // Clientes e lojas relacionadas
-  // ----------------------------------------
-
-  const clientIds = Array.from(
-    new Set(
-      policiesInWindow.map((p) => p.client_id).filter(Boolean),
-    ),
-  );
-
-  const storeIds = Array.from(
-    new Set(
-      policiesInWindow
-        .map((p) => p.issuing_store_id)
-        .filter(Boolean),
-    ),
-  );
-
-  const [clientsResult, storesResult] = await Promise.all([
-    clientIds.length > 0
-      ? supabase.from("clients").select("id, name").in("id", clientIds)
-      : Promise.resolve({ data: [], error: null }),
-
-    storeIds.length > 0
-      ? supabase.from("stores").select("id, name").in("id", storeIds)
-      : Promise.resolve({ data: [], error: null }),
-  ]);
-
-  const clientMap = new Map(
-    (clientsResult.data ?? []).map((c) => [c.id, c.name]),
-  );
-
-  const storeMap = new Map(
-    (storesResult.data ?? []).map((s) => [s.id, s.name]),
-  );
-
-  const rows = policiesInWindow
-    .map((policy) => {
-      const company = Array.isArray(policy.company)
-        ? policy.company[0]
-        : policy.company;
-
-      const line = Array.isArray(policy.insurance_line)
-        ? policy.insurance_line[0]
-        : policy.insurance_line;
-
-      const renewalDate = renewalByPolicy.get(policy.id) as string;
-
-      return {
-        policyId: policy.id,
-        policyNumber: policy.policy_number,
-        clientName: clientMap.get(policy.client_id) ?? "Cliente",
-        companyName: company?.name ?? "—",
-        lineName: line?.name ?? null,
-        renewalDate,
-        annualizedPremium:
-          policy.annualized_premium === null
-            ? null
-            : Number(policy.annualized_premium),
-        storeId: policy.issuing_store_id,
-        storeName: policy.issuing_store_id
-          ? storeMap.get(policy.issuing_store_id) ?? null
+  const { data, error } = await supabase.rpc(
+    "get_upcoming_renewals",
+    {
+      p_store_id:
+        storeId && storeId !== "all"
+          ? storeId
           : null,
-        overdue: renewalDate < todayKey,
-      };
-    })
-    .sort((a, b) => a.renewalDate.localeCompare(b.renewalDate));
 
-  return rows;
+      p_from: fromKey,
+      p_to: toKey,
+    },
+  );
+
+  if (error) {
+    throw new Error(
+      `Erro ao carregar renovações: ${error.message}`,
+    );
+  }
+
+  return (data ?? []).map((row: any) => ({
+    policyId: row.policy_id,
+    policyNumber: row.policy_number,
+
+    clientName: row.client_name,
+    companyName: row.company_name,
+
+    lineName: row.line_name,
+
+    renewalDate: row.renewal_date,
+
+    annualizedPremium:
+      row.annualized_premium === null
+        ? null
+        : Number(row.annualized_premium),
+
+    storeId: row.store_id,
+    storeName: row.store_name,
+
+    overdue: row.renewal_date < todayKey,
+  }));
 }
 
 /*
