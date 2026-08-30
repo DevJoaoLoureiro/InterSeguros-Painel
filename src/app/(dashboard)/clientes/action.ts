@@ -186,6 +186,9 @@ export async function getClientsPortfolioData(
 
   const requestedPage = Math.max(1, filters.page);
 
+  const CLIENTS_PAGE_SIZE = 10;
+  const offset = (requestedPage - 1) * CLIENTS_PAGE_SIZE;
+
   const admin = createAdminClient();
 
   // ========================================
@@ -259,43 +262,17 @@ export async function getClientsPortfolioData(
   // ESTATÍSTICAS (RPC)
   // ========================================
 
-  const { data: statsRows, error: statsError } = await admin.rpc(
-    "get_clients_portfolio_stats",
-    {
+  const [statsResult, rowsResult] = await Promise.all([
+    admin.rpc("get_clients_portfolio_stats", {
       p_store_id: storeId,
       p_company_id: companyId,
       p_responsible: responsible,
       p_from: from,
       p_to: to,
       p_search: search,
-    },
-  );
+    }),
 
-  if (statsError) {
-    throw new Error(
-      `Erro ao calcular estatísticas: ${statsError.message}`,
-    );
-  }
-
-  const statsRow = (statsRows as any)?.[0] ?? {};
-
-  const stats = {
-    client_count: Number(statsRow.client_count ?? 0),
-    policy_count: Number(statsRow.policy_count ?? 0),
-    active_policy_count: Number(statsRow.active_policy_count ?? 0),
-    annualized_premium: Number(statsRow.annualized_premium ?? 0),
-  };
-
-  // ========================================
-  // LISTA PAGINADA (RPC)
-  // ========================================
-
-  const CLIENTS_PAGE_SIZE = 10;
-  const offset = (requestedPage - 1) * CLIENTS_PAGE_SIZE;
-
-  const { data: rowsData, error: rowsError } = await admin.rpc(
-    "search_clients_portfolio",
-    {
+    admin.rpc("search_clients_portfolio", {
       p_store_id: storeId,
       p_company_id: companyId,
       p_responsible: responsible,
@@ -305,12 +282,31 @@ export async function getClientsPortfolioData(
       p_sort: filters.sort,
       p_limit: CLIENTS_PAGE_SIZE,
       p_offset: offset,
-    },
-  );
+    }),
+  ]);
+
+  const { data: statsRows, error: statsError } = statsResult;
+  const { data: rowsData, error: rowsError } = rowsResult;
+
+  if (statsError) {
+    throw new Error(`Erro ao calcular estatísticas: ${statsError.message}`);
+  }
 
   if (rowsError) {
     throw new Error(`Erro ao carregar clientes: ${rowsError.message}`);
   }
+
+  const stats = (statsRows?.[0] ?? {
+    client_count: 0,
+    policy_count: 0,
+    active_policy_count: 0,
+    annualized_premium: 0,
+  }) as {
+    client_count: number;
+    policy_count: number;
+    active_policy_count: number;
+    annualized_premium: number;
+  };
 
   const rows = (rowsData ?? []) as PortfolioRpcRow[];
 
