@@ -57,18 +57,21 @@ function statusLabel(
     string
   > = {
     nova: "Nova",
-    contactada: "Contactada",
-    qualificada: "Qualificada",
+    em_contacto: "Em contacto",
+    a_aguardar: "A aguardar",
+    simulacao_enviada:
+      "Simulação enviada",
     proposta: "Proposta",
     ganha: "Por validar",
     convertida: "Convertida",
     perdida: "Perdida",
+
+    // compatibilidade com estados antigos
+    contactada: "Contactada",
+    qualificada: "Qualificada",
   };
 
-  return (
-    labels[status] ??
-    status
-  );
+  return labels[status] ?? status;
 }
 
 export function DashboardCharts({
@@ -78,21 +81,15 @@ export function DashboardCharts({
   lines,
   mode,
 }: Props) {
-  if (
-    mode === "production"
-  ) {
+  if (mode === "production") {
     return (
       <ProductionChart
-        data={
-          dailyProduction
-        }
+        data={dailyProduction}
       />
     );
   }
 
-  if (
-    mode === "companies"
-  ) {
+  if (mode === "companies") {
     return (
       <CompanyChart
         data={companies}
@@ -133,6 +130,10 @@ function ProductionChart({
       1,
     );
 
+  if (data.length === 0) {
+    return <EmptyChart />;
+  }
+
   return (
     <div>
       <div className="flex h-[220px] items-end gap-1.5">
@@ -144,7 +145,7 @@ function ProductionChart({
                   max) *
                   100,
                 item.premium >
-                  0
+                0
                   ? 4
                   : 1,
               );
@@ -165,9 +166,7 @@ function ProductionChart({
 
                 <div className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-lg bg-[#20242a] px-3 py-2 text-xs text-white shadow-lg group-hover:block">
                   <p className="font-medium">
-                    {
-                      item.label
-                    }
+                    {item.label}
                   </p>
 
                   <p>
@@ -242,9 +241,7 @@ function CompanyChart({
   if (
     data.length === 0
   ) {
-    return (
-      <EmptyChart />
-    );
+    return <EmptyChart />;
   }
 
   return (
@@ -320,15 +317,20 @@ function LeadChart({
   if (
     data.length === 0
   ) {
-    return (
-      <EmptyChart />
-    );
+    return <EmptyChart />;
   }
+
+  const sortedData =
+    [...data].sort(
+      (a, b) =>
+        b.count -
+        a.count,
+    );
 
   return (
     <div className="space-y-4">
       <div className="flex h-4 overflow-hidden rounded-full bg-[#f0f1f3]">
-        {data.map(
+        {sortedData.map(
           (item) => {
             const width =
               total > 0
@@ -360,34 +362,28 @@ function LeadChart({
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {data
-          .sort(
-            (a, b) =>
-              b.count -
-              a.count,
-          )
-          .map(
-            (item) => (
-              <div
-                key={
-                  item.status
-                }
-                className="rounded-xl border border-[#edf0f2] bg-[#fafbfc] p-3"
-              >
-                <p className="text-xs text-[#7d848e]">
-                  {statusLabel(
-                    item.status,
-                  )}
-                </p>
+        {sortedData.map(
+          (item) => (
+            <div
+              key={
+                item.status
+              }
+              className="rounded-xl border border-[#edf0f2] bg-[#fafbfc] p-3"
+            >
+              <p className="text-xs text-[#7d848e]">
+                {statusLabel(
+                  item.status,
+                )}
+              </p>
 
-                <p className="mt-1 text-xl font-semibold text-[#20242a]">
-                  {
-                    item.count
-                  }
-                </p>
-              </div>
-            ),
-          )}
+              <p className="mt-1 text-xl font-semibold text-[#20242a]">
+                {
+                  item.count
+                }
+              </p>
+            </div>
+          ),
+        )}
       </div>
     </div>
   );
@@ -416,9 +412,7 @@ function LineChart({
   if (
     data.length === 0
   ) {
-    return (
-      <EmptyChart />
-    );
+    return <EmptyChart />;
   }
 
   return (
@@ -482,6 +476,10 @@ function LineChart({
     </div>
   );
 }
+
+// ========================================
+// EMPTY
+// ========================================
 
 function EmptyChart() {
   return (

@@ -12,6 +12,7 @@ import {
   FileText,
   Gauge,
   MessageCircle,
+  ReceiptText,
   Settings,
   Target,
   Users,
@@ -27,7 +28,7 @@ type SidebarProfile = {
     | {
         id: string;
         name: string;
-        code: string;
+        code: string | null;
       }
     | null;
 };
@@ -73,9 +74,14 @@ const menuGroups: MenuGroup[] = [
     title: "CARTEIRA",
     items: [
       {
-        label: "Clientes (Importação)",
+        label: "Clientes ",
         href: "/clientes",
         icon: Users,
+      },
+            {
+        label: "Recibos ",
+        href: "/recibos",
+        icon: ReceiptText,
       },
       {
         label: "Vencimentos",

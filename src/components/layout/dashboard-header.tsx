@@ -13,7 +13,7 @@ import {
 type HeaderStore = {
   id: string;
   name: string;
-  code: string;
+  code: string | null;
 };
 
 type HeaderProfile = {

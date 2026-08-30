@@ -12,26 +12,26 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+    // =====================================================
+  // CRON
   // =====================================================
-  // CRON LIBAX
+  //
+  // Qualquer rota debaixo de /api/cron/ é protegida
+  // exclusivamente por CRON_SECRET, nunca por sessão.
+  //
+  // Usada por crons externos (ex: sync de seguradoras).
   // =====================================================
 
   const isCronRoute =
     pathname.startsWith("/api/cron/");
 
-  const isLibaxImport =
-    pathname === "/api/libax/import";
-  const isLibaxTest =
-  pathname === "/api/libax/test";
-
-  if (isCronRoute || isLibaxImport || isLibaxTest) {
+  if (isCronRoute) {
     const authorization =
       request.headers.get("authorization");
 
     const cronSecret =
       process.env.CRON_SECRET;
 
-    // Pedido interno autorizado pelo CRON_SECRET
     if (
       cronSecret &&
       authorization === `Bearer ${cronSecret}`
@@ -39,24 +39,15 @@ export async function proxy(request: NextRequest) {
       return NextResponse.next();
     }
 
-    // /api/cron nunca pode ser chamada
-    // publicamente sem o secret.
-    if (isCronRoute) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Unauthorized",
-        },
-        {
-          status: 401,
-        },
-      );
-    }
-
-    // /api/libax/import sem CRON_SECRET
-    // continua para a autenticação Supabase.
-    // Assim continua possível importar manualmente
-    // estando autenticado no painel.
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Unauthorized",
+      },
+      {
+        status: 401,
+      },
+    );
   }
 
   // =====================================================
