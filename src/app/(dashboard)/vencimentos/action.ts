@@ -55,9 +55,14 @@ export type UpcomingReceiptRow = {
 /*
  * Apólices a renovar: calculado a partir do
  * period_end do último recibo não-estorno de
- * cada apólice ativa, já que a API da Prévoir
- * não fornece uma data de renovação explícita
- * ao nível da apólice.
+ * cada apólice ativa.
+ *
+ * O cálculo do "último recibo por apólice" é
+ * feito dentro da base de dados (função SQL
+ * get_latest_renewal_dates), em vez de trazer
+ * milhares de linhas de recibos para o Node.js
+ * só para reduzir aqui — isso era a causa da
+ * lentidão desta página.
  */
 export async function getUpcomingRenewals({
   storeId,
@@ -107,58 +112,24 @@ export async function getUpcomingRenewals({
   const policyIds = policies.map((p) => p.id);
 
   // ----------------------------------------
-  // 2. Recibos com period_end, dessas apólices
-  //    (exclui estornos, mesmo ordenação para
-  //    encontrar o mais recente por apólice)
+  // 2. Renovação calculada na BD (RPC)
   // ----------------------------------------
 
-  const { data: receiptsData, error: receiptsError } = await supabase
-    .from("receipts")
-    .select(`
-      policy_id,
-      period_end,
-      external_nature,
-      receipt_type
-    `)
-    .in("policy_id", policyIds)
-    .not("period_end", "is", null)
-    .order("period_end", { ascending: false });
+  const { data: renewalRows, error: renewalError } = await supabase.rpc(
+    "get_latest_renewal_dates",
+    { p_policy_ids: policyIds },
+  );
 
-  if (receiptsError) {
+  if (renewalError) {
     throw new Error(
-      `Erro ao carregar recibos para calcular renovações: ${receiptsError.message}`,
+      `Erro ao calcular renovações: ${renewalError.message}`,
     );
   }
 
-  // ----------------------------------------
-  // 3. Último period_end (não-estorno) por apólice
-  //
-  // Como já vem ordenado por period_end desc,
-  // a primeira ocorrência de cada policy_id é
-  // a mais recente.
-  // ----------------------------------------
-
-  const renewalByPolicy = new Map<string, string>();
-
-  for (const receipt of receiptsData ?? []) {
-    if (renewalByPolicy.has(receipt.policy_id)) {
-      continue;
-    }
-
-    const isReversal =
-      receipt.external_nature === "9" ||
-      (receipt.receipt_type ?? "").toUpperCase().includes("ESTORNO") ||
-      (receipt.receipt_type ?? "").toUpperCase().includes("REVERSAL");
-
-    if (isReversal) {
-      continue;
-    }
-
-    renewalByPolicy.set(receipt.policy_id, receipt.period_end as string);
-  }
+ const renewalByPolicy = new Map<string, string>((renewalRows ?? []).map((row: any) => [row.policy_id as string, row.renewal_date as string]));
 
   // ----------------------------------------
-  // 4. Filtrar para a janela de vencimentos
+  // 3. Filtrar para a janela de vencimentos
   // ----------------------------------------
 
   const policiesInWindow = policies.filter((policy) => {
@@ -245,7 +216,6 @@ export async function getUpcomingRenewals({
 
   return rows;
 }
-
 
 /*
  * Recibos a vencer: due_date dentro da janela,
