@@ -23,34 +23,49 @@ type SearchReceiptsRow = {
   id: string;
   policy_id: string;
   company_id: string;
+
   receipt_number: string | null;
   receipt_type: string | null;
+
   period_start: string | null;
   period_end: string | null;
+
   issue_date: string | null;
   due_date: string | null;
+
   commercial_premium: number | string | null;
   total_premium: number | string | null;
+
   status: string;
+
   payment_date: string | null;
   payment_method: string | null;
+
   situation_date: string | null;
+
   cancellation_date: string | null;
   cancellation_reason: string | null;
+
   external_nature: string | null;
   external_payment_method: string | null;
+
   policy_number: string;
   product_code: string | null;
   product_name: string | null;
+
   client_name: string;
   client_nif: string | null;
+
   company_code: string;
   company_name: string;
+
   line_code: string | null;
   line_name: string | null;
+
   store_id: string | null;
   store_name: string | null;
-  total_count: number;
+
+  total_count: number | string;
 };
 
 type ReceiptsStatsRow = {
@@ -149,10 +164,8 @@ function mapRow(row: SearchReceiptsRow): ReceiptRow {
 }
 
 /*
- * Companhias mudam muito pouco.
- *
- * Evitamos ir ao Supabase em cada carregamento da página.
- * Cache de 5 minutos.
+ * Metadata pouco variável.
+ * Evita consultar companies em cada navegação/filtro.
  */
 const getReceiptCompanies = unstable_cache(
   async (): Promise<ReceiptCompany[]> => {
@@ -182,7 +195,7 @@ export async function getReceiptsData(
   filters: ReceiptFilters,
 ): Promise<ReceiptsPageData> {
   // ==========================================
-  // UTILIZADOR + COOKIE EM PARALELO
+  // UTILIZADOR + COOKIE
   // ==========================================
 
   const [profile, cookieStore] = await Promise.all([
@@ -255,12 +268,8 @@ export async function getReceiptsData(
     );
 
     /*
-     * Antes:
-     *
-     * company inválida -> null
-     * null -> todas as companhias
-     *
-     * Isso pode devolver resultados errados.
+     * Se vier um filtro inválido, não queremos
+     * transformar isso em "todas as companhias".
      */
     if (!selectedCompany) {
       return {
@@ -303,7 +312,7 @@ export async function getReceiptsData(
   const admin = createAdminClient();
 
   // ==========================================
-  // STATS + LISTA AO MESMO TEMPO
+  // STATS + LISTAGEM EM PARALELO
   // ==========================================
 
   const [statsResult, rowsResult] =
@@ -352,12 +361,11 @@ export async function getReceiptsData(
   }
 
   // ==========================================
-  // STATS
+  // ESTATÍSTICAS
   // ==========================================
 
   const statsRow =
-    ((statsResult.data ??
-      [])[0] ??
+    ((statsResult.data ?? [])[0] ??
       {}) as Partial<ReceiptsStatsRow>;
 
   const stats = {
@@ -411,7 +419,7 @@ export async function getReceiptsData(
   };
 
   // ==========================================
-  // RESULTADOS
+  // LISTAGEM
   // ==========================================
 
   const rows =
