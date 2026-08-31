@@ -1,87 +1,109 @@
-import type {
-  AiUserContext,
-} from "@/lib/ai/context";
+import type { AiUserContext } from "@/lib/ai/context";
 
-type PolicyFilters = {
-  from?: string | null;
-  to?: string | null;
-  company?: string | null;
-  responsibleId?: string | null;
-  clientId?: string | null;
-  status?: number | null;
-};
+const POLICY_SELECT = `
+  id,
+  client_id,
+  policy_number,
+  product_name,
+  issue_date,
+  start_date,
+  end_date,
+  renewal_date,
+  annualized_premium,
+  payment_frequency,
+  status,
+  commercial_user_id,
+  issuing_store_id,
+  company:companies ( name ),
+  insurance_line:insurance_lines ( name ),
+  commercial_user:profiles!policies_commercial_user_id_fkey ( full_name )
+`;
 
-function applyPolicyVisibility(
-  query: any,
-  context: AiUserContext,
-) {
+function applyPolicyVisibility(query: any, context: AiUserContext) {
   if (context.storeId) {
-    query = query.eq(
-      "store_id",
-      context.storeId,
-    );
+    query = query.eq("issuing_store_id", context.storeId);
   }
 
   return query;
 }
 
-export async function getPoliciesByDate(
+/*
+ * Resolve o id da companhia a partir de um nome/código
+ * fornecido pelo agente. Não assume — se não encontrar,
+ * devolve null e a tool simplesmente não filtra por
+ * companhia (evita filtrar por um id inexistente).
+ */
+async function resolveCompanyId(
   context: AiUserContext,
-  args: {
-    date: string;
-  },
-) {
-  let query =
-    context.supabase
-      .from("policies")
-      .select(`
-        id,
-        client_id,
-        policy_number,
-        company_name,
-        product_name,
-        line_name,
-        issue_date,
-        start_date,
-        end_date,
-        renew_date,
-        premium,
-        fraction_type,
-        status,
-        responsible_name,
-        assigned_user_id
-      `)
-      .eq(
-        "issue_date",
-        args.date,
-      );
-
-  query =
-    applyPolicyVisibility(
-      query,
-      context,
-    );
-
-  const {
-    data,
-    error,
-  } = await query;
-
-  if (error) {
-    throw new Error(
-      error.message,
-    );
+  companyName: string | null | undefined,
+): Promise<string | null> {
+  if (!companyName) {
+    return null;
   }
 
+  const { data } = await context.supabase
+    .from("companies")
+    .select("id")
+    .or(`name.ilike.%${companyName}%,code.ilike.%${companyName}%`)
+    .limit(1)
+    .maybeSingle();
+
+  return data?.id ?? null;
+}
+
+function firstRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
+function normalizePolicyRow(row: any) {
+  const company = firstRelation(row.company);
+  const line = firstRelation(row.insurance_line);
+  const commercialUser = firstRelation(row.commercial_user);
+
   return {
-    date:
-      args.date,
+    id: row.id,
+    client_id: row.client_id,
+    policy_number: row.policy_number,
+    company_name: company?.name ?? null,
+    product_name: row.product_name,
+    line_name: line?.name ?? null,
+    issue_date: row.issue_date,
+    start_date: row.start_date,
+    end_date: row.end_date,
+    renewal_date: row.renewal_date,
+    annualized_premium:
+      row.annualized_premium === null ? null : Number(row.annualized_premium),
+    payment_frequency: row.payment_frequency,
+    status: row.status,
+    responsible_name: commercialUser?.full_name ?? null,
+    commercial_user_id: row.commercial_user_id,
+  };
+}
 
-    count:
-      data?.length ?? 0,
+export async function getPoliciesByDate(
+  context: AiUserContext,
+  args: { date: string },
+) {
+  let query = context.supabase
+    .from("policies")
+    .select(POLICY_SELECT)
+    .eq("issue_date", args.date);
 
-    policies:
-      data ?? [],
+  query = applyPolicyVisibility(query, context);
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const policies = (data ?? []).map(normalizePolicyRow);
+
+  return {
+    date: args.date,
+    count: policies.length,
+    policies,
   };
 }
 
@@ -94,203 +116,93 @@ export async function getPoliciesByPeriod(
     responsibleId?: string | null;
   },
 ) {
-  let query =
-    context.supabase
-      .from("policies")
-      .select(`
-        id,
-        client_id,
-        policy_number,
-        company_name,
-        product_name,
-        line_name,
-        issue_date,
-        renew_date,
-        premium,
-        responsible_name,
-        assigned_user_id
-      `)
-      .gte(
-        "issue_date",
-        args.from,
-      )
-      .lte(
-        "issue_date",
-        args.to,
-      );
+  let query = context.supabase
+    .from("policies")
+    .select(POLICY_SELECT)
+    .gte("issue_date", args.from)
+    .lte("issue_date", args.to);
 
-  query =
-    applyPolicyVisibility(
-      query,
-      context,
-    );
+  query = applyPolicyVisibility(query, context);
 
-  if (args.company) {
-    query =
-      query.eq(
-        "company_name",
-        args.company,
-      );
+  const companyId = await resolveCompanyId(context, args.company);
+
+  if (companyId) {
+    query = query.eq("company_id", companyId);
   }
 
   if (args.responsibleId) {
-    query =
-      query.eq(
-        "assigned_user_id",
-        args.responsibleId,
-      );
+    query = query.eq("commercial_user_id", args.responsibleId);
   }
 
-  const {
-    data,
-    error,
-  } = await query;
+  const { data, error } = await query;
 
   if (error) {
-    throw new Error(
-      error.message,
-    );
+    throw new Error(error.message);
   }
 
-  const totalPremium =
-    (data ?? []).reduce(
-      (
-        total,
-        policy,
-      ) =>
-        total +
-        Number(
-          policy.premium ?? 0,
-        ),
-      0,
-    );
+  const policies = (data ?? []).map(normalizePolicyRow);
+
+  const totalPremium = policies.reduce(
+    (total, policy) => total + (policy.annualized_premium ?? 0),
+    0,
+  );
 
   return {
-    from:
-      args.from,
-
-    to:
-      args.to,
-
-    count:
-      data?.length ?? 0,
-
+    from: args.from,
+    to: args.to,
+    count: policies.length,
     totalPremium,
-
-    policies:
-      data ?? [],
+    policies,
   };
 }
 
 export async function getUpcomingRenewals(
   context: AiUserContext,
-  args: {
-    from: string;
-    to: string;
-  },
+  args: { from: string; to: string },
 ) {
-  let query =
-    context.supabase
-      .from("policies")
-      .select(`
-        id,
-        client_id,
-        policy_number,
-        company_name,
-        product_name,
-        renew_date,
-        premium,
-        responsible_name
-      `)
-      .gte(
-        "renew_date",
-        args.from,
-      )
-      .lte(
-        "renew_date",
-        args.to,
-      )
-      .order(
-        "renew_date",
-        {
-          ascending: true,
-        },
-      );
+  let query = context.supabase
+    .from("policies")
+    .select(POLICY_SELECT)
+    .gte("renewal_date", args.from)
+    .lte("renewal_date", args.to)
+    .order("renewal_date", { ascending: true });
 
-  query =
-    applyPolicyVisibility(
-      query,
-      context,
-    );
+  query = applyPolicyVisibility(query, context);
 
-  const {
-    data,
-    error,
-  } = await query;
+  const { data, error } = await query;
 
   if (error) {
-    throw new Error(
-      error.message,
-    );
+    throw new Error(error.message);
   }
 
+  const policies = (data ?? []).map(normalizePolicyRow);
+
   return {
-    from:
-      args.from,
-
-    to:
-      args.to,
-
-    count:
-      data?.length ?? 0,
-
-    policies:
-      data ?? [],
+    from: args.from,
+    to: args.to,
+    count: policies.length,
+    policies,
   };
 }
 
-export async function getUnassignedPolicies(
-  context: AiUserContext,
-) {
-  let query =
-    context.supabase
-      .from("policies")
-      .select(`
-        id,
-        client_id,
-        policy_number,
-        company_name,
-        issue_date,
-        responsible_name,
-        responsible_pending
-      `)
-      .eq(
-        "responsible_pending",
-        true,
-      );
+export async function getUnassignedPolicies(context: AiUserContext) {
+  let query = context.supabase
+    .from("policies")
+    .select(POLICY_SELECT)
+    .is("commercial_user_id", null);
 
-  query =
-    applyPolicyVisibility(
-      query,
-      context,
-    );
+  query = applyPolicyVisibility(query, context);
 
-  const {
-    data,
-    error,
-  } = await query;
+  const { data, error } = await query;
 
   if (error) {
-    throw new Error(
-      error.message,
-    );
+    throw new Error(error.message);
   }
 
-  return {
-    count:
-      data?.length ?? 0,
+  const policies = (data ?? []).map(normalizePolicyRow);
 
-    policies:
-      data ?? [],
+  return {
+    count: policies.length,
+    policies,
   };
 }

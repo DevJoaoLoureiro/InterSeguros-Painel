@@ -23,6 +23,10 @@ import {
 
 import AssistantPanel from "@/components/ai/assistant-panel";
 
+import { getNotifications } from "@/lib/notifications/get-notifications";
+
+import { getOverdueReceiptsCount } from "@/app/(dashboard)/vencimentos/action";
+
 export default async function DashboardLayout({
   children,
 }: Readonly<{
@@ -139,6 +143,21 @@ export default async function DashboardLayout({
   }
 
   // ==========================================
+  // NOTIFICAÇÕES + BADGE DE VENCIMENTOS
+  // ==========================================
+
+  const notifications =
+    await getNotifications();
+
+  const overdueReceiptsCount =
+    await getOverdueReceiptsCount({
+      storeId:
+        selectedStoreId === "all"
+          ? null
+          : selectedStoreId,
+    });
+
+  // ==========================================
   // LAYOUT
   // ==========================================
 
@@ -148,6 +167,9 @@ export default async function DashboardLayout({
         <aside className="fixed inset-y-0 left-0 z-40 hidden w-[270px] lg:block">
           <AppSidebar
             profile={profile}
+            overdueReceiptsCount={
+              overdueReceiptsCount
+            }
           />
         </aside>
 
@@ -159,6 +181,9 @@ export default async function DashboardLayout({
             }
             selectedStoreId={
               selectedStoreId
+            }
+            notifications={
+              notifications
             }
           />
 

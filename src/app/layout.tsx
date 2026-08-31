@@ -1,6 +1,6 @@
 ﻿import { Geist } from "next/font/google";
 import "./globals.css";
-
+import { getNotifications } from "@/lib/notifications/get-notifications";
 const geist = Geist({
   subsets: ["latin"],
 });

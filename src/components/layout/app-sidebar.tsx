@@ -36,6 +36,7 @@ type SidebarProfile = {
 type AppSidebarProps = {
   mobile?: boolean;
   profile: SidebarProfile;
+  overdueReceiptsCount?: number;
 };
 
 type MenuItem = {
@@ -74,12 +75,12 @@ const menuGroups: MenuGroup[] = [
     title: "CARTEIRA",
     items: [
       {
-        label: "Clientes ",
+        label: "Clientes (Importação)",
         href: "/clientes",
         icon: Users,
       },
-            {
-        label: "Recibos ",
+      {
+        label: "Recibos (Importação)",
         href: "/recibos",
         icon: ReceiptText,
       },
@@ -87,7 +88,11 @@ const menuGroups: MenuGroup[] = [
         label: "Vencimentos",
         href: "/vencimentos",
         icon: CalendarDays,
-        badge: 32,
+      },
+      {
+        label: "Carteira por Loja",
+        href: "/carteira",
+        icon: Building2,
       },
     ],
   },
@@ -164,6 +169,7 @@ function formatRole(role: string) {
 export function AppSidebar({
   mobile = false,
   profile,
+  overdueReceiptsCount = 0,
 }: AppSidebarProps) {
   const pathname = usePathname();
 
@@ -216,6 +222,12 @@ export function AppSidebar({
 
                 const Icon = item.icon;
 
+                const dynamicBadge =
+                  item.href === "/vencimentos" &&
+                  overdueReceiptsCount > 0
+                    ? overdueReceiptsCount
+                    : item.badge;
+
                 return (
                   <Link
                     key={item.href}
@@ -233,7 +245,7 @@ export function AppSidebar({
                       {item.label}
                     </span>
 
-                    {item.badge !== undefined && (
+                    {dynamicBadge !== undefined && (
                       <span
                         className={[
                           "flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold",
@@ -242,7 +254,7 @@ export function AppSidebar({
                             : "bg-red-500 text-white",
                         ].join(" ")}
                       >
-                        {item.badge}
+                        {dynamicBadge}
                       </span>
                     )}
                   </Link>

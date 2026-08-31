@@ -1,177 +1,89 @@
-import type {
-  AiUserContext,
-} from "@/lib/ai/context";
+import type { AiUserContext } from "@/lib/ai/context";
+
+function firstRelation<T>(value: T | T[] | null | undefined): T | null {
+  if (!value) return null;
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
 
 export async function getProductionSummary(
   context: AiUserContext,
-  args: {
-    from: string;
-    to: string;
-  },
+  args: { from: string; to: string },
 ) {
-  let query =
-    context.supabase
-      .from("policies")
-      .select(`
-        id,
-        company_name,
-        assigned_user_id,
-        responsible_name,
-        premium,
-        issue_date
-      `)
-      .gte(
-        "issue_date",
-        args.from,
-      )
-      .lte(
-        "issue_date",
-        args.to,
-      );
+  let query = context.supabase
+    .from("policies")
+    .select(`
+      id,
+      annualized_premium,
+      issue_date,
+      company:companies ( name ),
+      commercial_user:profiles!policies_commercial_user_id_fkey ( full_name )
+    `)
+    .gte("issue_date", args.from)
+    .lte("issue_date", args.to);
 
   if (context.storeId) {
-    query =
-      query.eq(
-        "store_id",
-        context.storeId,
-      );
+    query = query.eq("issuing_store_id", context.storeId);
   }
 
-  const {
-    data,
-    error,
-  } = await query;
+  const { data, error } = await query;
 
   if (error) {
-    throw new Error(
-      error.message,
-    );
+    throw new Error(error.message);
   }
 
-  const rows =
-    data ?? [];
+  const rows = data ?? [];
 
-  const byCompany =
-    new Map<
-      string,
-      {
-        count: number;
-        premium: number;
-      }
-    >();
-
-  const byResponsible =
-    new Map<
-      string,
-      {
-        count: number;
-        premium: number;
-      }
-    >();
+  const byCompany = new Map<string, { count: number; premium: number }>();
+  const byResponsible = new Map<
+    string,
+    { count: number; premium: number }
+  >();
 
   let totalPremium = 0;
 
-  for (const row of rows) {
+  for (const row of rows as any[]) {
     const premium =
-      Number(
-        row.premium ?? 0,
-      );
+      row.annualized_premium === null ? 0 : Number(row.annualized_premium);
 
-    totalPremium +=
-      premium;
+    totalPremium += premium;
 
-    const company =
-      row.company_name ??
-      "Sem companhia";
+    const company = firstRelation(row.company)?.name ?? "Sem companhia";
 
-    const currentCompany =
-      byCompany.get(
-        company,
-      ) ?? {
-        count: 0,
-        premium: 0,
-      };
+    const currentCompany = byCompany.get(company) ?? {
+      count: 0,
+      premium: 0,
+    };
 
     currentCompany.count++;
-    currentCompany.premium +=
-      premium;
-
-    byCompany.set(
-      company,
-      currentCompany,
-    );
+    currentCompany.premium += premium;
+    byCompany.set(company, currentCompany);
 
     const responsible =
-      row.responsible_name ??
-      "Sem responsável";
+      firstRelation(row.commercial_user)?.full_name ?? "Sem responsável";
 
-    const currentResponsible =
-      byResponsible.get(
-        responsible,
-      ) ?? {
-        count: 0,
-        premium: 0,
-      };
+    const currentResponsible = byResponsible.get(responsible) ?? {
+      count: 0,
+      premium: 0,
+    };
 
     currentResponsible.count++;
-    currentResponsible.premium +=
-      premium;
-
-    byResponsible.set(
-      responsible,
-      currentResponsible,
-    );
+    currentResponsible.premium += premium;
+    byResponsible.set(responsible, currentResponsible);
   }
 
   return {
-    from:
-      args.from,
-
-    to:
-      args.to,
-
-    policyCount:
-      rows.length,
-
+    from: args.from,
+    to: args.to,
+    policyCount: rows.length,
     totalPremium,
 
-    byCompany:
-      Array.from(
-        byCompany.entries(),
-      )
-        .map(
-          ([
-            name,
-            value,
-          ]) => ({
-            name,
-            ...value,
-          }),
-        )
-        .sort(
-          (a, b) =>
-            b.premium -
-            a.premium,
-        ),
+    byCompany: Array.from(byCompany.entries())
+      .map(([name, value]) => ({ name, ...value }))
+      .sort((a, b) => b.premium - a.premium),
 
-    byResponsible:
-      Array.from(
-        byResponsible.entries(),
-      )
-        .map(
-          ([
-            name,
-            value,
-          ]) => ({
-            name,
-            ...value,
-          }),
-        )
-        .sort(
-          (a, b) =>
-            b.premium -
-            a.premium,
-        ),
+    byResponsible: Array.from(byResponsible.entries())
+      .map(([name, value]) => ({ name, ...value }))
+      .sort((a, b) => b.premium - a.premium),
   };
 }
 
@@ -184,40 +96,22 @@ export async function compareProductionPeriods(
     secondTo: string;
   },
 ) {
-  const first =
-    await getProductionSummary(
-      context,
-      {
-        from:
-          args.firstFrom,
-        to:
-          args.firstTo,
-      },
-    );
+  const first = await getProductionSummary(context, {
+    from: args.firstFrom,
+    to: args.firstTo,
+  });
 
-  const second =
-    await getProductionSummary(
-      context,
-      {
-        from:
-          args.secondFrom,
-        to:
-          args.secondTo,
-      },
-    );
+  const second = await getProductionSummary(context, {
+    from: args.secondFrom,
+    to: args.secondTo,
+  });
 
   return {
     first,
     second,
-
     difference: {
-      policies:
-        first.policyCount -
-        second.policyCount,
-
-      premium:
-        first.totalPremium -
-        second.totalPremium,
+      policies: first.policyCount - second.policyCount,
+      premium: first.totalPremium - second.totalPremium,
     },
   };
 }

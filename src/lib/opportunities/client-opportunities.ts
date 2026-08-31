@@ -35,7 +35,7 @@ const CROSS_SELL_RULES: Record<
     "Vida",
   ],
 
-  "Acidentes de trabalho": [
+  "Acidentes de Trabalho": [
     "Vida",
   ],
 };
