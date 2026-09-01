@@ -75,12 +75,12 @@ const menuGroups: MenuGroup[] = [
     title: "CARTEIRA",
     items: [
       {
-        label: "Clientes (Importação)",
+        label: "Clientes",
         href: "/clientes",
         icon: Users,
       },
       {
-        label: "Recibos (Importação)",
+        label: "Recibos ",
         href: "/recibos",
         icon: ReceiptText,
       },
@@ -185,21 +185,12 @@ export function AppSidebar({
           : "w-[270px] border-r border-[#e8eaed]",
       ].join(" ")}
     >
-      <div className="flex h-[94px] shrink-0 items-center border-b border-[#e8eaed] px-6">
-        <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-[#ff4b0a] to-[#8f2c0b] text-xl font-bold text-white">
-            IS
-          </div>
-
-          <div className="leading-tight">
-            <p className="text-xl font-semibold tracking-wide text-[#e7430a]">
-              INTER
-            </p>
-            <p className="text-base font-medium text-[#292929]">
-              SEGUROS
-            </p>
-          </div>
-        </div>
+     <div className="flex h-[94px] shrink-0 items-center border-b border-[#e8eaed] px-6">
+        <img 
+          src="/interseguroslogo.png" 
+          alt="Inter Seguros Logo" 
+          className="h-15 w-auto object-contain" 
+        />
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-5">

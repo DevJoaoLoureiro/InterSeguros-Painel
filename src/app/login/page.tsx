@@ -10,23 +10,13 @@ export default function LoginPage() {
           <div className="absolute -right-32 -top-32 h-80 w-80 rounded-full bg-[#ff4b0a]/20 blur-3xl" />
           <div className="absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-[#ff4b0a]/10 blur-3xl" />
 
-          <div className="relative z-10">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#ff4b0a] text-lg font-bold">
-                IS
-              </div>
-
-              <div className="leading-tight">
-                <p className="text-xl font-semibold tracking-wide text-[#ff6a2b]">
-                  INTER
-                </p>
-                <p className="text-base font-medium text-white">
-                  SEGUROS
-                </p>
-              </div>
-            </div>
-          </div>
-
+        <div className="relative z-10">
+        <img 
+          src="/interseguroslogo.png" 
+          alt="Inter Seguros Logo" 
+          className="h-15 w-auto object-contain" 
+        />
+      </div>
           <div className="relative z-10 max-w-md">
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/80">
               <ShieldCheck className="h-4 w-4 text-[#ff6a2b]" />
@@ -53,17 +43,14 @@ export default function LoginPage() {
           <div className="w-full max-w-md">
             <div className="mb-8 lg:hidden">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#ff4b0a] font-bold text-white">
-                  IS
-                </div>
+               
 
-                <div className="leading-tight">
-                  <p className="text-lg font-semibold text-[#e7430a]">
-                    INTER
-                  </p>
-                  <p className="text-sm font-medium text-[#292929]">
-                    SEGUROS
-                  </p>
+                <div className="relative z-10">
+                  <img 
+                    src="/interseguroslogo.png" 
+                    alt="Inter Seguros Logo" 
+                    className="h-15 w-auto object-contain" 
+                  />
                 </div>
               </div>
             </div>

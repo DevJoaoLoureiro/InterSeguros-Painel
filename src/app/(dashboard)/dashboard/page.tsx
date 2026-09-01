@@ -315,9 +315,9 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
   );
 
   const premiumToday = policiesToday.reduce(
-    (total, policy) => total + Number(policy.commercial_premium ?? 0),
-    0,
-  );
+  (total, policy) => total + Number(policy.annualized_premium ?? 0),
+  0,
+);
 
   // ========================================
   // PRODUÇÃO MENSAL
@@ -454,11 +454,12 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
   const recentPolicyIds = recentPolicies.map((p) => p.id);
 
   const renewalByPolicy = new Map<string, string>();
+  const latestCommercialByPolicy = new Map<string, number>();
 
   if (recentPolicyIds.length > 0) {
     const { data: recentReceipts } = await supabase
       .from("receipts")
-      .select("policy_id, period_end, external_nature, receipt_type")
+      .select("policy_id, period_end, commercial_premium, external_nature, receipt_type")
       .in("policy_id", recentPolicyIds)
       .not("period_end", "is", null)
       .order("period_end", { ascending: false });
@@ -478,6 +479,16 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
       }
 
       renewalByPolicy.set(receipt.policy_id, receipt.period_end as string);
+
+        if (
+          !latestCommercialByPolicy.has(receipt.policy_id) &&
+          receipt.commercial_premium !== null
+        ) {
+          latestCommercialByPolicy.set(
+            receipt.policy_id,
+            Number(receipt.commercial_premium),
+          );
+        }
     }
   }
 
@@ -779,11 +790,11 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
                       {policy.lineName}
                     </td>
 
-                    <td className="px-5 py-4 font-medium text-[#20242a]">
-                      {formatCurrency(
-                        Number(policy.commercial_premium ?? 0),
-                      )}
-                    </td>
+                 <td className="px-5 py-4 font-medium text-[#20242a]">
+                  {latestCommercialByPolicy.has(policy.id)
+                    ? formatCurrency(latestCommercialByPolicy.get(policy.id)!)
+                    : "—"}
+                </td>
 
                     <td className="px-5 py-4 text-[#606771]">
                       {formatDate(policy.issue_date)}
