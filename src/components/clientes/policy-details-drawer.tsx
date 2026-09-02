@@ -76,6 +76,16 @@ function getFrequencyLabel(value: PolicyRow["payment_frequency"]) {
   }
 }
 
+
+function isPendingRisk(policy: PolicyRow) {
+  if (policy.status !== "ACTIVE" || !policy.start_date) {
+    return false;
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  return policy.start_date > today;
+}
+
 function getStatusLabel(status: PolicyRow["status"]) {
   switch (status) {
     case "ACTIVE":
@@ -393,9 +403,15 @@ const estimatedRenewalDate = latestPeriodEndReceipt?.period_end ?? null;
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <span
-              className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getStatusClasses(activePolicy.status)}`}
+              className={
+                isPendingRisk(activePolicy)
+                  ? "inline-flex rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700"
+                  : `inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getStatusClasses(activePolicy.status)}`
+              }
             >
-              {getStatusLabel(activePolicy.status)}
+              {isPendingRisk(activePolicy)
+                ? "Aguarda início de risco"
+                : getStatusLabel(activePolicy.status)}
             </span>
 
             <span className="text-xs text-[#8a9099]">

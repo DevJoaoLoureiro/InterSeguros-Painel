@@ -310,9 +310,9 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
     (lead) => lead.status === "convertida" || Boolean(lead.converted_at),
   ).length;
 
-  const policiesToday = policies.filter(
-    (policy) => policy.issue_date === today,
-  );
+    const policiesToday = policies.filter(
+      (policy) => policy.issue_date === today,
+    );
 
   const premiumToday = policiesToday.reduce(
   (total, policy) => total + Number(policy.annualized_premium ?? 0),
@@ -323,12 +323,12 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
   // PRODUÇÃO MENSAL
   // ========================================
 
-  const policiesThisMonth = policies.filter(
-    (policy) =>
-      policy.issue_date &&
-      policy.issue_date >= monthStart &&
-      policy.issue_date <= today,
-  );
+const policiesThisMonth = policies.filter(
+  (policy) =>
+    policy.issue_date &&
+    policy.issue_date >= monthStart &&
+    policy.issue_date <= today,
+);
 
   const premiumThisMonth = policiesThisMonth.reduce(
     (total, policy) => total + Number(policy.commercial_premium ?? 0),
@@ -370,12 +370,11 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
 
   const dailyMap = new Map(last30Days.map((day) => [day.date, day]));
 
-  for (const policy of policies) {
-    if (!policy.issue_date) {
-      continue;
-    }
-
-    const day = dailyMap.get(policy.issue_date);
+for (const policy of policies) {
+  if (!policy.issue_date) {
+    continue;
+  }
+  const day = dailyMap.get(policy.issue_date);
 
     if (!day) {
       continue;

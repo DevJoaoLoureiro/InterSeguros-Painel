@@ -127,11 +127,15 @@ export async function getCompaniesOverview(): Promise<CompanyOverview[]> {
     return [];
   }
 
-  let query = admin
-    .from("policies")
-    .select("company_id, annualized_premium")
-    .eq("status", "ACTIVE")
-    .in("issuing_store_id", storeIds);
+const todayKey = new Date().toISOString().slice(0, 10);
+
+let query = admin
+  .from("policies")
+  .select("company_id, annualized_premium")
+  .eq("status", "ACTIVE")
+  .in("issuing_store_id", storeIds)
+  .not("start_date", "is", null)
+  .lte("start_date", todayKey);
 
   const { data: policies, error: policiesError } = await query;
 
@@ -186,18 +190,22 @@ async function fetchActivePolicies(
 ): Promise<RawPolicyRow[]> {
   const admin = createAdminClient();
 
-  let query = admin
-    .from("policies")
-    .select(`
-      product_code,
-      product_name,
-      annualized_premium,
-      issue_date,
-      issuing_store_id,
-      insurance_line:insurance_lines ( plan_type )
-    `)
-    .eq("status", "ACTIVE")
-    .eq("company_id", companyId);
+  const todayKey = new Date().toISOString().slice(0, 10);
+
+let query = admin
+  .from("policies")
+  .select(`
+    product_code,
+    product_name,
+    annualized_premium,
+    start_date,
+    issuing_store_id,
+    insurance_line:insurance_lines ( plan_type )
+  `)
+  .eq("status", "ACTIVE")
+  .eq("company_id", companyId)
+  .not("start_date", "is", null)
+  .lte("start_date", todayKey);
 
   if (storeIds) {
     query = query.in("issuing_store_id", storeIds);

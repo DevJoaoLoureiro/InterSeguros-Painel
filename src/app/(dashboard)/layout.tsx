@@ -146,16 +146,13 @@ export default async function DashboardLayout({
   // NOTIFICAÇÕES + BADGE DE VENCIMENTOS
   // ==========================================
 
-  const notifications =
-    await getNotifications();
 
-  const overdueReceiptsCount =
-    await getOverdueReceiptsCount({
-      storeId:
-        selectedStoreId === "all"
-          ? null
-          : selectedStoreId,
-    });
+ const [notifications, overdueReceiptsCount] = await Promise.all([
+  getNotifications(),
+  getOverdueReceiptsCount({
+    storeId: selectedStoreId === "all" ? null : selectedStoreId,
+  }),
+]);
 
   // ==========================================
   // LAYOUT
