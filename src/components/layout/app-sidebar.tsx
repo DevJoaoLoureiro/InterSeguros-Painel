@@ -80,7 +80,7 @@ const menuGroups: MenuGroup[] = [
         icon: Users,
       },
       {
-        label: "Recibos ",
+        label: "Recibos",
         href: "/recibos",
         icon: ReceiptText,
       },
@@ -155,6 +155,8 @@ function getInitials(name: string) {
 
 function formatRole(role: string) {
   switch (role) {
+    case "OWNER":
+      return "Owner";
     case "ADMIN":
       return "Administrador";
     case "GESTOR_LOJA":
@@ -176,6 +178,9 @@ export function AppSidebar({
   const initials = getInitials(profile.full_name);
   const storeName = profile.store?.name ?? "Sem loja atribuída";
 
+  const isOwnerOrAdmin =
+    profile.role === "OWNER" || profile.role === "ADMIN";
+
   return (
     <aside
       className={[
@@ -185,75 +190,101 @@ export function AppSidebar({
           : "w-[270px] border-r border-[#e8eaed]",
       ].join(" ")}
     >
-     <div className="flex h-[94px] shrink-0 items-center border-b border-[#e8eaed] px-6">
-        <img 
-          src="/interseguroslogo.png" 
-          alt="Inter Seguros Logo" 
-          className="h-15 w-auto object-contain" 
+      <div className="flex h-[94px] shrink-0 items-center border-b border-[#e8eaed] px-6">
+        <img
+          src="/interseguroslogo.png"
+          alt="Inter Seguros Logo"
+          className="h-15 w-auto object-contain"
         />
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-5">
-        {menuGroups.map((group, groupIndex) => (
-          <div
-            key={group.title ?? groupIndex}
-            className={groupIndex === 0 ? "mb-5" : "mb-6"}
-          >
-            {group.title && (
-              <p className="mb-2 px-3 text-[11px] font-semibold tracking-wide text-[#7a8390]">
-                {group.title}
-              </p>
-            )}
+        {menuGroups.map((group, groupIndex) => {
+          // Toda a secção GESTÃO é exclusiva de OWNER e ADMIN
+          if (group.title === "GESTÃO" && !isOwnerOrAdmin) {
+            return null;
+          }
 
-            <div className="space-y-1">
-              {group.items.map((item) => {
-                const isActive =
-                  pathname === item.href ||
-                  pathname.startsWith(`${item.href}/`);
+          const visibleItems = group.items.filter((item) => {
+            // Carteira por Loja e Estatísticas também são
+            // exclusivas de OWNER e ADMIN
+            const restrictedToOwnerAndAdmin =
+              item.href === "/carteira" ||
+              item.href === "/estatisticas";
 
-                const Icon = item.icon;
+            if (restrictedToOwnerAndAdmin) {
+              return isOwnerOrAdmin;
+            }
 
-                const dynamicBadge =
-                  item.href === "/vencimentos" &&
-                  overdueReceiptsCount > 0
-                    ? overdueReceiptsCount
-                    : item.badge;
+            return true;
+          });
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={[
-                      "flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
-                      isActive
-                        ? "bg-[#ff4b0a] text-white shadow-sm"
-                        : "text-[#31363f] hover:bg-[#f4f5f7]",
-                    ].join(" ")}
-                  >
-                    <Icon className="h-[18px] w-[18px] shrink-0" />
+          // Não mostrar grupos que ficaram sem itens
+          if (visibleItems.length === 0) {
+            return null;
+          }
 
-                    <span className="min-w-0 flex-1 truncate">
-                      {item.label}
-                    </span>
+          return (
+            <div
+              key={group.title ?? groupIndex}
+              className={groupIndex === 0 ? "mb-5" : "mb-6"}
+            >
+              {group.title && (
+                <p className="mb-2 px-3 text-[11px] font-semibold tracking-wide text-[#7a8390]">
+                  {group.title}
+                </p>
+              )}
 
-                    {dynamicBadge !== undefined && (
-                      <span
-                        className={[
-                          "flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold",
-                          isActive
-                            ? "bg-white/20 text-white"
-                            : "bg-red-500 text-white",
-                        ].join(" ")}
-                      >
-                        {dynamicBadge}
+              <div className="space-y-1">
+                {visibleItems.map((item) => {
+                  const isActive =
+                    pathname === item.href ||
+                    pathname.startsWith(`${item.href}/`);
+
+                  const Icon = item.icon;
+
+                  const dynamicBadge =
+                    item.href === "/vencimentos" &&
+                    overdueReceiptsCount > 0
+                      ? overdueReceiptsCount
+                      : item.badge;
+
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={[
+                        "flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
+                        isActive
+                          ? "bg-[#ff4b0a] text-white shadow-sm"
+                          : "text-[#31363f] hover:bg-[#f4f5f7]",
+                      ].join(" ")}
+                    >
+                      <Icon className="h-[18px] w-[18px] shrink-0" />
+
+                      <span className="min-w-0 flex-1 truncate">
+                        {item.label}
                       </span>
-                    )}
-                  </Link>
-                );
-              })}
+
+                      {dynamicBadge !== undefined && (
+                        <span
+                          className={[
+                            "flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold",
+                            isActive
+                              ? "bg-white/20 text-white"
+                              : "bg-red-500 text-white",
+                          ].join(" ")}
+                        >
+                          {dynamicBadge}
+                        </span>
+                      )}
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       <div className="shrink-0 border-t border-[#e8eaed] p-3">

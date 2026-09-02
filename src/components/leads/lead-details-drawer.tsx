@@ -376,10 +376,21 @@ export function LeadDetailsDrawer({
     setRejectionReason,
   ] = useState("");
 
-  // ========================================
-  // SINCRONIZAR QUANDO MUDA A LEAD
-  // ========================================
+// ========================================
+// SINCRONIZAR QUANDO MUDA A LEAD
+// ========================================
 
+useEffect(() => {
+  if (!lead) {
+    setStoreId("");
+    setCommercialId("");
+    return;
+  }
+
+  setStoreId(lead.store_id ?? "");
+  setCommercialId(lead.assigned_user_id ?? "");
+  setEditingAssignment(false);
+}, [lead]);
  
   // ========================================
   // CARREGAR PEDIDO PENDENTE

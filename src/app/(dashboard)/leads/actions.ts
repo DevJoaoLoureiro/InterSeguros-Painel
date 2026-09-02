@@ -46,6 +46,15 @@ async function requireOwner() {
   return user;
 }
 
+/*
+ * Responsáveis atribuíveis a leads:
+ * Comerciais e Gestores de Loja.
+ *
+ * Alguns pontos de venda só têm um Gestor de
+ * Loja ativo, sem nenhum Comercial dedicado —
+ * por isso o Gestor também precisa de poder
+ * ser atribuído a leads.
+ */
 async function validateCommercial(
   storeId: string,
   commercialId: string,
@@ -68,9 +77,12 @@ async function validateCommercial(
     throw new Error("Comercial não encontrado.");
   }
 
-  if (commercial.role !== "COMERCIAL") {
+  if (
+    commercial.role !== "COMERCIAL" &&
+    commercial.role !== "GESTOR_LOJA"
+  ) {
     throw new Error(
-      "O utilizador selecionado não é comercial.",
+      "O utilizador selecionado não pode ser responsável por leads.",
     );
   }
 
@@ -418,11 +430,6 @@ export async function updateLeadStatus(
   return {
     success: true,
   };
-
-
-
-
-  
 }
 
 type SubmitConversionRequestResult = {
@@ -788,7 +795,6 @@ export async function submitConversionRequest(
     success: true,
   };
 }
-
 
 type ConversionReviewRequest = {
   id: string;

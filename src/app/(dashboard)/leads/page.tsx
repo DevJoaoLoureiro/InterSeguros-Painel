@@ -37,7 +37,7 @@ export default async function Page() {
 
   // COMERCIAL:
   // só vê leads atribuídas diretamente a ele
-  if (currentProfile.role === "COMERCIAL") {
+  if (currentProfile.role === "COMERCIAL" || currentProfile.role === "GESTOR_COMERCIAL") {
     leadsQuery = leadsQuery.eq(
       "assigned_user_id",
       user.id,
@@ -80,7 +80,7 @@ export default async function Page() {
         role,
         active
       `)
-      .eq("role", "COMERCIAL")
+      .in("role", ["COMERCIAL", "GESTOR_LOJA"])
       .eq("active", true)
       .order("full_name"),
   ]);
