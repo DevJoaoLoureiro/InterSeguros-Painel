@@ -1,4 +1,4 @@
-﻿import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 import {
   getPrevoirPolicies,
@@ -29,6 +29,9 @@ export async function syncPrevoirPolicies(
   const supabase =
     createAdminClient();
 
+  const limit =
+    options.limit ?? 5;
+
   // ========================================
   // COMPANHIA
   // ========================================
@@ -47,7 +50,7 @@ export async function syncPrevoirPolicies(
     !company
   ) {
     throw new Error(
-      `Companhia PREVOIR nÃ£o encontrada: ${
+      `Companhia PREVOIR não encontrada: ${
         companyError?.message ??
         "sem resultado"
       }`,
@@ -136,7 +139,7 @@ export async function syncPrevoirPolicies(
         await getPrevoirPolicies();
     }
 
-    const sortedPolicies =
+    const selectedPolicies =
       [...sourcePolicies]
         .sort((a, b) => {
           const dateA =
@@ -154,15 +157,8 @@ export async function syncPrevoirPolicies(
               : 0;
 
           return dateB - dateA;
-        });
-
-    const selectedPolicies =
-      options.limit
-        ? sortedPolicies.slice(
-            0,
-            options.limit,
-          )
-        : sortedPolicies;
+        })
+        .slice(0, limit);
 
     received =
       selectedPolicies.length;
@@ -280,7 +276,7 @@ export async function syncPrevoirPolicies(
           });
 
         // ----------------------------------
-        // APÃ“LICE
+        // APÓLICE
         // ----------------------------------
 
         const policyResult =
@@ -312,7 +308,7 @@ export async function syncPrevoirPolicies(
         errors.push(message);
 
         console.error(
-          "Erro ao sincronizar apÃ³lice PrÃ©voir:",
+          "Erro ao sincronizar apólice Prévoir:",
           error,
         );
       }
@@ -332,7 +328,7 @@ export async function syncPrevoirPolicies(
           : "ERROR";
 
               // ======================================
-    // ATUALIZAR ESTADO (sÃ³ se correu bem)
+    // ATUALIZAR ESTADO (só se correu bem)
     // ======================================
 
     if (failed === 0) {

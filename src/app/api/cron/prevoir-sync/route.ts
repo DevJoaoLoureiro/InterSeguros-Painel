@@ -50,9 +50,7 @@ export async function POST() {
   // ========================================
 
   try {
-    policiesResult = await syncPrevoirPolicies({
-      limit: 490,
-    });
+    policiesResult = await syncPrevoirPolicies();
   } catch (error) {
     policiesError =
       error instanceof Error ? error.message : String(error);
@@ -72,9 +70,7 @@ export async function POST() {
   // ========================================
 
   try {
-    receiptsResult = await syncPrevoirReceipts({
-      limit: 5343,
-    });
+    receiptsResult = await syncPrevoirReceipts();
   } catch (error) {
     receiptsError =
       error instanceof Error ? error.message : String(error);

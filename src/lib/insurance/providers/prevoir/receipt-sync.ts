@@ -75,8 +75,7 @@ export async function syncPrevoirReceipts(
   const supabase =
     createAdminClient();
 
-  const limit =
-    options.limit ?? 5;
+  
 
   // ========================================
   // COMPANHIA
@@ -210,7 +209,8 @@ export async function syncPrevoirReceipts(
       await getPrevoirReceipts();
 
     const selectedReceipts =
-      [...sourceReceipts]
+  options.limit !== undefined
+    ? [...sourceReceipts]
         .sort(
           (a, b) =>
             getReceiptTimestamp(
@@ -220,13 +220,81 @@ export async function syncPrevoirReceipts(
               a.dataEmissaoRecibo,
             ),
         )
-        .slice(
-          0,
-          limit,
-        );
-
+        .slice(0, options.limit)
+    : sourceReceipts;
     received =
       selectedReceipts.length;
+
+
+      // ======================================
+// DEBUG COMISSÕES PRÉVOIR
+// REMOVER DEPOIS DO TESTE
+// ======================================
+
+const debugPolicies = new Set([
+  "7084",
+  "64813",
+  "64867",
+  "2437",
+  "65774",
+]);
+
+const debugReceipts =
+  sourceReceipts.filter((receipt) =>
+    debugPolicies.has(
+      String(receipt.apolice)
+        .replace(/^0+/, ""),
+    ),
+  );
+
+console.log(
+  "=== PREVOIR DEBUG COMMISSIONS ===",
+);
+
+for (const receipt of debugReceipts) {
+  console.log({
+    recibo: receipt.recibo,
+    apolice: receipt.apolice,
+    modalidade: receipt.modalidade,
+    versao: receipt.versao,
+
+    situacao: receipt.situacao,
+    dataSituacao: receipt.dataSituacao,
+
+    dataEmissaoRecibo:
+      receipt.dataEmissaoRecibo,
+
+    dataInicioRecibo:
+      receipt.dataInicioRecibo,
+
+    dataFimRecibo:
+      receipt.dataFimRecibo,
+
+    premcom: receipt.premcom,
+
+    comtot: receipt.comtot,
+    comang: receipt.comang,
+    comcob: receipt.comcob,
+    comcor: receipt.comcor,
+    comout: receipt.comout,
+
+    natureza: receipt.natureza,
+    tipoComissao:
+      receipt.tipoComissao,
+
+    parceiro: receipt.parceiro,
+
+    dataCancelamento:
+      receipt.dataCancelamento,
+
+    motivoAnulacao:
+      receipt.motivoAnulacao,
+  });
+}
+
+console.log(
+  "=== FIM PREVOIR DEBUG COMMISSIONS ===",
+);
 
     // ======================================
     // NORMALIZAR EM MEMÓRIA

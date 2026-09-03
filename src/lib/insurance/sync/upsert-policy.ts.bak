@@ -1,10 +1,10 @@
-﻿import type {
+import type {
   SupabaseClient,
 } from "@supabase/supabase-js";
 
 import type {
-  NormalizedPolicy,
-} from "@/lib/insurance/types";
+  NormalizedPrevoirPolicy,
+} from "@/lib/insurance/providers/prevoir/mapper";
 
 import {
   resolveProviderStore,
@@ -28,10 +28,10 @@ export async function upsertPolicy({
   insuranceLineId:
     | string
     | null;
-  policy: NormalizedPolicy;
+  policy: NormalizedPrevoirPolicy;
 }): Promise<UpsertPolicyResult> {
   // ========================================
-  // PROCURAR APÃ“LICE EXISTENTE
+  // PROCURAR APÓLICE EXISTENTE
   // ========================================
 
   const {
@@ -56,7 +56,7 @@ export async function upsertPolicy({
 
   if (findError) {
     throw new Error(
-      `Erro ao procurar apÃ³lice: ${findError.message}`,
+      `Erro ao procurar apólice: ${findError.message}`,
     );
   }
 
@@ -74,7 +74,7 @@ export async function upsertPolicy({
   //    -> compatibilidade com eventual
   //       enriquecimento de outras fontes.
   //
-  // Para a PrÃ©voir, neste momento:
+  // Para a Prévoir, neste momento:
   //
   // API oficial:
   //   04931 -> Rio Mau
@@ -86,7 +86,7 @@ export async function upsertPolicy({
   //   10807 -> Inter Seguros / Braga
   //   10808 -> Balazar
   //
-  // Os mappings reais estÃ£o guardados em
+  // Os mappings reais estão guardados em
   // store_external_refs.
   // ========================================
 
@@ -110,8 +110,8 @@ export async function upsertPolicy({
   // PRESERVAR LOJA EXISTENTE
   // ========================================
   //
-  // Se aparecer amanhÃ£ um identificador
-  // desconhecido, nÃ£o apagamos uma loja
+  // Se aparecer amanhã um identificador
+  // desconhecido, não apagamos uma loja
   // anteriormente conhecida.
   // ========================================
 
@@ -126,10 +126,10 @@ export async function upsertPolicy({
   //
   // Preservamos metadata existente.
   //
-  // Isto Ã© particularmente importante
+  // Isto é particularmente importante
   // enquanto ainda temos alguns dados
-  // histÃ³ricos obtidos por enriquecimento
-  // atravÃ©s do portal.
+  // históricos obtidos por enriquecimento
+  // através do portal.
   // ========================================
 
   const providerMetadata = {
@@ -141,10 +141,10 @@ export async function upsertPolicy({
     ...policy.providerMetadata,
 
     /*
-     * SÃ³ escrevemos dados de agente quando
+     * Só escrevemos dados de agente quando
      * realmente existem.
      *
-     * Nunca substituÃ­mos metadata existente
+     * Nunca substituímos metadata existente
      * por null.
      */
     ...(policy.agentCode
@@ -161,12 +161,12 @@ export async function upsertPolicy({
       : {}),
 
     /*
-     * Guardamos tambÃ©m qual foi o cÃ³digo
+     * Guardamos também qual foi o código
      * externo utilizado pelo sync para
      * tentar resolver a loja.
      *
-     * Isto ajuda-nos a auditar novos cÃ³digos
-     * sem alterar a semÃ¢ntica do valor
+     * Isto ajuda-nos a auditar novos códigos
+     * sem alterar a semântica do valor
      * original prevoirUserId.
      */
     ...(policy.storeExternalCode
@@ -257,7 +257,7 @@ export async function upsertPolicy({
 
     if (updateError) {
       throw new Error(
-        `Erro ao atualizar apÃ³lice: ${updateError.message}`,
+        `Erro ao atualizar apólice: ${updateError.message}`,
       );
     }
 
@@ -320,7 +320,7 @@ export async function upsertPolicy({
 
   if (insertError) {
     throw new Error(
-      `Erro ao criar apÃ³lice: ${insertError.message}`,
+      `Erro ao criar apólice: ${insertError.message}`,
     );
   }
 

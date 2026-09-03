@@ -8,6 +8,14 @@ export type NormalizedPrevoirReceipt = {
 
   policyExternalId: string;
 
+
+  commissionTotal: number | null;
+  commissionAcquisition: number | null;
+  commissionCollection: number | null;
+  commissionBrokerage: number | null;
+  commissionOther: number | null;
+  commissionType: string | null;
+
   receiptType: string | null;
 
   periodStart: string | null;
@@ -354,6 +362,13 @@ export function mapPrevoirReceipt(
         ?.trim() || null,
 
     commissions,
+
+    commissionTotal: toNumber(source.comtot),
+  commissionAcquisition: toNumber(source.comang),
+  commissionCollection: toNumber(source.comcob),
+  commissionBrokerage: toNumber(source.comcor),
+  commissionOther: toNumber(source.comout),
+  commissionType: source.tipoComissao?.trim() || null,
 
     providerMetadata: {
       tipo:
