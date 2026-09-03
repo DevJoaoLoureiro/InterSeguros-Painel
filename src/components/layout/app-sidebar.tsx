@@ -216,7 +216,7 @@ export function AppSidebar({
             // exclusivas de OWNER e ADMIN
             const restrictedToOwnerAndAdmin =
               item.href === "/carteira" ||
-              item.href === "/estatisticas";
+              item.href === "/estatisticas"|| item.href === "/comissoes";
 
             if (restrictedToOwnerAndAdmin) {
               return isOwnerOrAdmin;
