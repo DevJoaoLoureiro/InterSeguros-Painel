@@ -268,18 +268,25 @@ export async function getPrevoirPoliciesIncremental(
     )}/${sinceDate}`,
     {
       method: "GET",
-
       headers: {
         Authorization: `Bearer ${login.token}`,
         Accept: "application/json",
       },
-
       cache: "no-store",
     },
   );
 
   if (!response.ok) {
     const body = await response.text();
+
+    // Caso normal: mediador sem apólices alteradas
+    // desde essa data. Não é uma falha, é lista vazia.
+    if (
+      response.status === 400 &&
+      body.includes("Utilizador sem apólices")
+    ) {
+      return [];
+    }
 
     throw new Error(
       `Erro ao obter apólices incrementais Prévoir (${response.status}): ${body.slice(
