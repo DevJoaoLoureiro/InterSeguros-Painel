@@ -17,6 +17,7 @@ import {
   Settings,
   Target,
   Users,
+  
 } from "lucide-react";
 
 import { LogoutButton } from "@/components/auth/logout-button";
@@ -102,21 +103,26 @@ const menuGroups: MenuGroup[] = [
       },
     ],
   },
-  {
-    title: "ATIVIDADES",
-    items: [
-      {
-        label: "Tarefas",
-        href: "/tarefas",
-        icon: FileText,
-      },
-      {
-        label: "Oportunidades",
-        href: "/oportunidades",
-        icon: Target,
-      },
-    ],
-  },
+ {
+  title: "ATIVIDADES",
+  items: [
+    {
+      label: "Tarefas",
+      href: "/tarefas",
+      icon: FileText,
+    },
+    {
+      label: "Oportunidades",
+      href: "/oportunidades",
+      icon: Target,
+    },
+    {
+      label: "Conversas",
+      href: "/conversas",
+      icon: MessageCircle,
+    },
+  ],
+},
   {
     title: "ANÁLISES",
     items: [
