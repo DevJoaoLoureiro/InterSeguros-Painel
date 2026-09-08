@@ -74,6 +74,12 @@ export async function getUpcomingRenewals({
   // ----------------------------------------
   // 1. Apólices ativas no âmbito (loja)
   // ----------------------------------------
+  //
+  // IMPORTANTE: quando filtramos por loja específica, incluímos
+  // também apólices SEM loja atribuída ainda (issuing_store_id
+  // null) — caso típico das apólices Zurich antes de alguém se
+  // "Associar-me". Sem isto, um gestor de loja nunca as via para
+  // as poder reclamar. `.eq()` sozinho excluiria sempre os nulls.
 
   let policiesQuery = supabase
     .from("policies")
@@ -90,7 +96,9 @@ export async function getUpcomingRenewals({
     .eq("status", "ACTIVE");
 
   if (storeId && storeId !== "all") {
-    policiesQuery = policiesQuery.eq("issuing_store_id", storeId);
+    policiesQuery = policiesQuery.or(
+      `issuing_store_id.eq.${storeId},issuing_store_id.is.null`,
+    );
   }
 
   const { data: policiesData, error: policiesError } =
@@ -306,12 +314,16 @@ export async function getUpcomingReceipts({
     (companiesResult.data ?? []).map((c) => [c.id, c.name]),
   );
 
-  // Filtrar por loja aqui, já que receipts não tem issuing_store_id direto
+  // Filtrar por loja aqui, já que receipts não tem issuing_store_id
+  // direto. IMPORTANTE: tal como nas renovações, incluímos também
+  // recibos cuja apólice AINDA NÃO tem loja atribuída (null) — sem
+  // isto, um gestor de loja nunca via recibos Zurich por associar.
   const filteredReceipts =
     storeId && storeId !== "all"
-      ? receipts.filter(
-          (r) => policyMap.get(r.policy_id)?.issuing_store_id === storeId,
-        )
+      ? receipts.filter((r) => {
+          const policyStoreId = policyMap.get(r.policy_id)?.issuing_store_id;
+          return policyStoreId === storeId || policyStoreId == null;
+        })
       : receipts;
 
   const clientIds = Array.from(
@@ -394,10 +406,13 @@ export async function getOverdueReceiptsCount({
   let policyIdsFilter: string[] | null = null;
 
   if (storeId) {
+    // Tal como nas outras funções: inclui também apólices sem
+    // loja atribuída, para não escondermos recibos Zurich por
+    // associar do gestor de loja.
     const { data: storePolicies, error: storePoliciesError } = await supabase
       .from("policies")
       .select("id")
-      .eq("issuing_store_id", storeId);
+      .or(`issuing_store_id.eq.${storeId},issuing_store_id.is.null`);
 
     if (storePoliciesError) {
       throw new Error(

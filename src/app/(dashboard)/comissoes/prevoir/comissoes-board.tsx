@@ -26,7 +26,7 @@ import {
   type ParsedCommissionMovement,
   type StoreCommissionSummary,
   type StoreOption,
-} from "../actions";
+} from "./actions";
 
 type Props = {
   stores: StoreOption[];

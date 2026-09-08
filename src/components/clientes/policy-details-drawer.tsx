@@ -221,9 +221,14 @@ export function PolicyDetailsDrawer({
   );
 
   const [isAssigning, startAssignTransition] = useTransition();
-  const [assignedUser, setAssignedUser] = useState<{
+    const [assignedUser, setAssignedUser] = useState<{
     id: string;
     full_name: string;
+  } | null>(null);
+
+   const [assignedStore, setAssignedStore] = useState<{
+    id: string;
+    name: string;
   } | null>(null);
 
   const pillLabels = useMemo(
@@ -244,9 +249,14 @@ export function PolicyDetailsDrawer({
     [policies, activePolicyId],
   );
 
-  useEffect(() => {
+   useEffect(() => {
     setAssignedUser(activePolicy?.commercial_user ?? null);
-  }, [activePolicy?.id, activePolicy?.commercial_user]);
+    setAssignedStore(activePolicy?.issuing_store ?? null);
+  }, [
+    activePolicy?.id,
+    activePolicy?.commercial_user,
+    activePolicy?.issuing_store,
+  ]);
 
   useEffect(() => {
     if (!open || !activePolicy) {
@@ -291,17 +301,25 @@ export function PolicyDetailsDrawer({
     if (!activePolicy) {
       return;
     }
-
+ 
     startAssignTransition(async () => {
       try {
         const result = await assignCurrentUserToPolicy(
           activePolicy.id,
         );
-
+ 
         setAssignedUser({
           id: result.commercialUser.id,
           full_name: result.commercialUser.full_name,
         });
+ 
+        // issuingStore só vem preenchido quando a loja mudou
+        // nesta chamada (ex: apólice Zurich que ainda não tinha
+        // loja nenhuma) — se vier null, a loja já estava certa
+        // e não há nada para atualizar aqui.
+        if (result.issuingStore) {
+          setAssignedStore(result.issuingStore);
+        }
       } catch (error) {
         window.alert(
           error instanceof Error
@@ -492,8 +510,8 @@ const estimatedRenewalDate = latestPeriodEndReceipt?.period_end ?? null;
                   <Building2 className="h-3.5 w-3.5" />
                   Loja
                 </dt>
-                <dd className="mt-1 text-sm font-medium text-[#333842]">
-                  {activePolicy.issuing_store?.name ?? "Por associar"}
+                  <dd className="mt-1 text-sm font-medium text-[#333842]">
+                  {assignedStore?.name ?? "Por associar"}
                 </dd>
                 
               </div>

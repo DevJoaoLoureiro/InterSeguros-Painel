@@ -4,7 +4,7 @@ import { ArrowLeft } from "lucide-react";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
-import { getAccessibleStores } from "../actions";
+import { getAccessibleStores } from "./actions";
 import { ComissoesBoard } from "./comissoes-board";
 
 function getCurrentMonth() {

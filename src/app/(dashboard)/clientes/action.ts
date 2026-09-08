@@ -362,11 +362,13 @@ export async function getClientsPortfolioData(
   };
 }
 
+
 export async function assignCurrentUserToPolicy(
   policyId: string,
 ): Promise<{
   success: true;
   commercialUser: { id: string; full_name: string };
+  issuingStore: { id: string; name: string } | null;
 }> {
   const profile = await getCurrentProfile();
 
@@ -389,14 +391,25 @@ export async function assignCurrentUserToPolicy(
   const canAccessAllStores =
     profile.role === "OWNER" || profile.role === "ADMIN";
 
-  if (!canAccessAllStores) {
-    const profileStoreId = profile.store?.id ?? null;
+  const profileStoreId = profile.store?.id ?? null;
 
+  if (!canAccessAllStores) {
     if (!profileStoreId) {
       throw new Error("O utilizador não tem uma loja associada.");
     }
 
-    if (policy.issuing_store_id !== profileStoreId) {
+    // Se a apólice JÁ tem loja definida (ex: veio da Prévoir, cuja
+    // API já permite resolver a loja automaticamente), só deixamos
+    // associar quem for dessa loja — comportamento inalterado.
+    //
+    // Se a apólice AINDA NÃO tem loja (ex: Zurich, cuja API não dá
+    // essa informação de forma alguma), não há loja "errada" para
+    // comparar — a loja da apólice passa a ser a do comercial que
+    // se associar agora (ver mais abaixo).
+    if (
+      policy.issuing_store_id &&
+      policy.issuing_store_id !== profileStoreId
+    ) {
       throw new Error(
         "Não tens permissão para te associares a uma apólice de outra loja.",
       );
@@ -410,12 +423,34 @@ export async function assignCurrentUserToPolicy(
     throw new Error("Esta apólice já está associada a outro comercial.");
   }
 
+  let issuingStore: { id: string; name: string } | null = null;
+
   if (policy.commercial_user_id !== profile.id) {
-    // A condição adicional evita sobrescrever uma associação concorrente feita
-    // depois da leitura acima.
+    const updatePayload: Record<string, unknown> = {
+      commercial_user_id: profile.id,
+    };
+
+    // Preenche a loja automaticamente quando a apólice ainda não
+    // tem nenhuma (caso típico da Zurich) — a loja do comercial
+    // que se associa passa a ser também a loja da apólice.
+    if (!policy.issuing_store_id && profileStoreId) {
+      updatePayload.issuing_store_id = profileStoreId;
+
+      const { data: storeRow } = await admin
+        .from("stores")
+        .select("id, name")
+        .eq("id", profileStoreId)
+        .maybeSingle();
+
+      issuingStore = storeRow ?? null;
+    }
+
+    // A condição adicional (.is("commercial_user_id", null)) evita
+    // sobrescrever uma associação concorrente feita depois da
+    // leitura acima.
     const { data: updatedPolicy, error: updateError } = await admin
       .from("policies")
-      .update({ commercial_user_id: profile.id })
+      .update(updatePayload)
       .eq("id", policy.id)
       .is("commercial_user_id", null)
       .select("id")
@@ -438,5 +473,10 @@ export async function assignCurrentUserToPolicy(
       id: profile.id,
       full_name: profile.full_name,
     },
+    // null aqui não significa "sem loja" — significa "não mudou
+    // nesta chamada" (ou porque já tinha loja, ou porque não havia
+    // profileStoreId para preencher). O frontend só deve atualizar
+    // o que mostra quando isto vier preenchido.
+    issuingStore,
   };
 }
