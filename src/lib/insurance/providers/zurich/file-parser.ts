@@ -158,12 +158,27 @@ const APOLICES_COLUMNS: (keyof ZurichApoliceFicheiro)[] = [
   "AgenteCobrador",
 ];
 
+/**
+ * Faz parse a partir do texto já descodificado (ex: um ficheiro
+ * lido do disco, como a Carteira Total). Usa esta função quando
+ * já tens o conteúdo em texto, não em Base64.
+ */
+export function parseApolicesFileFromText(
+  content: string,
+): ZurichApoliceFicheiro[] {
+  const rows = parseLines(content);
+  return mapRows<ZurichApoliceFicheiro>(rows, APOLICES_COLUMNS);
+}
+
+/**
+ * Faz parse a partir do Base64 devolvido pela API da Zurich
+ * (ObterFicheiroDia / ObterFicheiroAdhoc).
+ */
 export function parseApolicesFile(
   base64Ficheiro: string,
 ): ZurichApoliceFicheiro[] {
   const content = decodeZurichFile(base64Ficheiro);
-  const rows = parseLines(content);
-  return mapRows<ZurichApoliceFicheiro>(rows, APOLICES_COLUMNS);
+  return parseApolicesFileFromText(content);
 }
 
 // -----------------------------------------------------
@@ -270,12 +285,27 @@ const RECIBOS_COLUMNS: (keyof ZurichReciboFicheiro)[] = [
   "ValorINEM",
 ];
 
+/**
+ * Faz parse a partir do texto já descodificado (ex: um ficheiro
+ * lido do disco, como a Carteira Total). Usa esta função quando
+ * já tens o conteúdo em texto, não em Base64.
+ */
+export function parseRecibosFileFromText(
+  content: string,
+): ZurichReciboFicheiro[] {
+  const rows = parseLines(content);
+  return mapRows<ZurichReciboFicheiro>(rows, RECIBOS_COLUMNS);
+}
+
+/**
+ * Faz parse a partir do Base64 devolvido pela API da Zurich
+ * (ObterFicheiroDia / ObterFicheiroAdhoc).
+ */
 export function parseRecibosFile(
   base64Ficheiro: string,
 ): ZurichReciboFicheiro[] {
   const content = decodeZurichFile(base64Ficheiro);
-  const rows = parseLines(content);
-  return mapRows<ZurichReciboFicheiro>(rows, RECIBOS_COLUMNS);
+  return parseRecibosFileFromText(content);
 }
 
 // -----------------------------------------------------
@@ -308,8 +338,8 @@ export type ZurichClienteFicheiro = {
   CodSituacao: string;
   Situacao: string;
   DataUltimaAlteracao: string;
-  CodTipoCliente: string;
-  DescTipoCliente: string;
+  Zurich4You: string;
+  RecDocPorEmail: string;
   DataAtualizacaoTipoCliente: string;
 };
 
@@ -339,17 +369,32 @@ const CLIENTES_COLUMNS: (keyof ZurichClienteFicheiro)[] = [
   "CodSituacao",
   "Situacao",
   "DataUltimaAlteracao",
-  "CodTipoCliente",
-  "DescTipoCliente",
+  "Zurich4You",
+  "RecDocPorEmail",
   "DataAtualizacaoTipoCliente",
 ];
 
+/**
+ * Faz parse a partir do texto já descodificado (ex: um ficheiro
+ * lido do disco, como a Carteira Total). Usa esta função quando
+ * já tens o conteúdo em texto, não em Base64.
+ */
+export function parseClientesFileFromText(
+  content: string,
+): ZurichClienteFicheiro[] {
+  const rows = parseLines(content);
+  return mapRows<ZurichClienteFicheiro>(rows, CLIENTES_COLUMNS);
+}
+
+/**
+ * Faz parse a partir do Base64 devolvido pela API da Zurich
+ * (ObterFicheiroDia / ObterFicheiroAdhoc).
+ */
 export function parseClientesFile(
   base64Ficheiro: string,
 ): ZurichClienteFicheiro[] {
   const content = decodeZurichFile(base64Ficheiro);
-  const rows = parseLines(content);
-  return mapRows<ZurichClienteFicheiro>(rows, CLIENTES_COLUMNS);
+  return parseClientesFileFromText(content);
 }
 
 // -----------------------------------------------------
@@ -378,12 +423,27 @@ const OBJETOS_COLUMNS: (keyof ZurichObjetoFicheiro)[] = [
   "Premio",
 ];
 
+/**
+ * Faz parse a partir do texto já descodificado (ex: um ficheiro
+ * lido do disco, como a Carteira Total). Usa esta função quando
+ * já tens o conteúdo em texto, não em Base64.
+ */
+export function parseObjetosFileFromText(
+  content: string,
+): ZurichObjetoFicheiro[] {
+  const rows = parseLines(content);
+  return mapRows<ZurichObjetoFicheiro>(rows, OBJETOS_COLUMNS);
+}
+
+/**
+ * Faz parse a partir do Base64 devolvido pela API da Zurich
+ * (ObterFicheiroDia / ObterFicheiroAdhoc).
+ */
 export function parseObjetosFile(
   base64Ficheiro: string,
 ): ZurichObjetoFicheiro[] {
   const content = decodeZurichFile(base64Ficheiro);
-  const rows = parseLines(content);
-  return mapRows<ZurichObjetoFicheiro>(rows, OBJETOS_COLUMNS);
+  return parseObjetosFileFromText(content);
 }
 
 // -----------------------------------------------------
@@ -412,10 +472,25 @@ const COBERTURAS_COLUMNS: (keyof ZurichCoberturaFicheiro)[] = [
   "NumDiasFranquia",
 ];
 
+/**
+ * Faz parse a partir do texto já descodificado (ex: um ficheiro
+ * lido do disco, como a Carteira Total). Usa esta função quando
+ * já tens o conteúdo em texto, não em Base64.
+ */
+export function parseCoberturasFileFromText(
+  content: string,
+): ZurichCoberturaFicheiro[] {
+  const rows = parseLines(content);
+  return mapRows<ZurichCoberturaFicheiro>(rows, COBERTURAS_COLUMNS);
+}
+
+/**
+ * Faz parse a partir do Base64 devolvido pela API da Zurich
+ * (ObterFicheiroDia / ObterFicheiroAdhoc).
+ */
 export function parseCoberturasFile(
   base64Ficheiro: string,
 ): ZurichCoberturaFicheiro[] {
   const content = decodeZurichFile(base64Ficheiro);
-  const rows = parseLines(content);
-  return mapRows<ZurichCoberturaFicheiro>(rows, COBERTURAS_COLUMNS);
+  return parseCoberturasFileFromText(content);
 }

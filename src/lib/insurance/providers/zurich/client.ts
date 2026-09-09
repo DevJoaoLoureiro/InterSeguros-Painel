@@ -10,7 +10,98 @@
 // - + Token1/Token2 (derivados do token de 22 caracteres,
 //   através do algoritmo de "unscramble" descrito no Anexo 1)
 //
+// SUPORTE A MÚLTIPLAS CONTAS:
+// A Zurich não distingue "loja" nos dados que devolve — cada
+// loja física tem a sua própria conta MyZurich (AgenteNr,
+// utilizador, password, token próprios). Por isso, tal como a
+// Prévoir usa códigos diferentes por loja, aqui integramos uma
+// conta por loja e sabemos a loja pela CONTA usada na chamada,
+// não pelos dados devolvidos.
+//
+// Se não passares "account" a nenhuma função, usa-se a conta
+// "default" lida das env vars de sempre (ZURICH_AGENTE_NR, etc.)
+// — mantém tudo o que já testámos a funcionar sem alterações.
 // =====================================================
+
+import { createAdminClient } from "@/lib/supabase/admin";
+
+// -----------------------------------------------------
+// CONTAS (uma por loja)
+// -----------------------------------------------------
+
+export type ZurichAccount = {
+  /** Identificador curto e estável desta conta (ex: "riomau"). */
+  key: string;
+  agenteNr: string;
+  username: string;
+  password: string;
+  /** Token inicial (de arranque) — depois passa a viver na BD. */
+  token: string;
+  /**
+   * Código a usar em store_external_refs para resolver a loja
+   * desta conta. Por convenção, o próprio AgenteNr já chega,
+   * mas podes definir outro valor se preferires.
+   */
+  storeExternalCode?: string;
+};
+
+/**
+ * Lê as contas configuradas em ZURICH_ACCOUNTS (JSON), uma por
+ * loja. Exemplo de valor para essa env var:
+ *
+ * [
+ *   {"key":"riomau","agenteNr":"12603","username":"12603","password":"...","token":"...","storeExternalCode":"12603"},
+ *   {"key":"braga","agenteNr":"XXXXX","username":"XXXXX","password":"...","token":"...","storeExternalCode":"XXXXX"},
+ *   {"key":"balazar","agenteNr":"YYYYY","username":"YYYYY","password":"...","token":"...","storeExternalCode":"YYYYY"}
+ * ]
+ *
+ * Se ZURICH_ACCOUNTS não estiver definida, cai para o modo de
+ * conta única (compatível com tudo o que já tínhamos).
+ */
+export function getZurichAccounts(): ZurichAccount[] {
+  const raw = process.env.ZURICH_ACCOUNTS;
+
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as ZurichAccount[];
+
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        throw new Error("ZURICH_ACCOUNTS deve ser um array não vazio.");
+      }
+
+      return parsed;
+    } catch (err) {
+      throw new Error(
+        `ZURICH_ACCOUNTS inválido (deve ser JSON válido): ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    }
+  }
+
+  // Modo de conta única (compatibilidade com o que já tínhamos).
+  const agenteNr = process.env.ZURICH_AGENTE_NR;
+  const username = process.env.ZURICH_USERNAME;
+  const password = process.env.ZURICH_PASSWORD;
+  const token = process.env.ZURICH_TOKEN;
+
+  if (!agenteNr || !username || !password || !token) {
+    throw new Error(
+      "Nem ZURICH_ACCOUNTS nem as env vars de conta única (ZURICH_AGENTE_NR/ZURICH_USERNAME/ZURICH_PASSWORD/ZURICH_TOKEN) estão configuradas.",
+    );
+  }
+
+  return [
+    {
+      key: "default",
+      agenteNr,
+      username,
+      password,
+      token,
+      storeExternalCode: agenteNr,
+    },
+  ];
+}
 
 // -----------------------------------------------------
 // TOKEN UNSCRAMBLE (Anexo 1 do documento funcional)
@@ -141,80 +232,70 @@ export function splitZurichToken(
 }
 
 // -----------------------------------------------------
-// CONFIG
+// CONFIG (ambiente UAT/PROD, comum a todas as contas)
 // -----------------------------------------------------
 
 type ZurichEnv = "uat" | "prod";
 
-function getConfig() {
+function getUrls() {
   const env = (process.env.ZURICH_ENV || "uat").toLowerCase() as ZurichEnv;
 
-  const agenteNr = process.env.ZURICH_AGENTE_NR;
-  const username = process.env.ZURICH_USERNAME;
-  const password = process.env.ZURICH_PASSWORD;
+  return env === "prod"
+    ? {
+        token: "https://myzurich.zurich.com.pt/ZurichServicos/rest/ZurichServicosAPI/",
+        consultas: "https://myzurich.zurich.com.pt/ZurichServicos/rest/InfoAgente/",
+        cobrancas: "https://myzurich.zurich.com.pt/ZurichServicos/rest/Cobrancas/",
+      }
+    : {
+        token: "https://uat-myzurich-pt.zurich.com/ZurichServicos/rest/ZurichServicosAPI/",
+        consultas: "https://uat-myzurich-pt.zurich.com/ZurichServicos/rest/InfoAgente/",
+        cobrancas: "https://uat-myzurich-pt.zurich.com/ZurichServicos/rest/Cobrancas/",
+      };
+}
 
-  if (!agenteNr) {
-    throw new Error("ZURICH_AGENTE_NR não está configurado.");
+/**
+ * Resolve a conta a usar: a que for passada explicitamente, ou
+ * a "default" (modo de conta única, env vars de sempre).
+ */
+function resolveAccount(account?: ZurichAccount): ZurichAccount {
+  if (account) {
+    return account;
   }
 
-  if (!username) {
-    throw new Error("ZURICH_USERNAME não está configurado.");
-  }
+  const accounts = getZurichAccounts();
+  const defaultAccount = accounts.find((a) => a.key === "default") ?? accounts[0];
 
-  if (!password) {
-    throw new Error(
-      "ZURICH_PASSWORD não está configurado (Palavra-Chave definida na ativação do token, não a password de login do MyZurich).",
-    );
-  }
-
-  const urls =
-    env === "prod"
-      ? {
-          token: "https://myzurich.zurich.com.pt/ZurichServicos/rest/ZurichServicosAPI/",
-          consultas: "https://myzurich.zurich.com.pt/ZurichServicos/rest/InfoAgente/",
-          cobrancas: "https://myzurich.zurich.com.pt/ZurichServicos/rest/Cobrancas/",
-        }
-      : {
-          token: "https://uat-myzurich-pt.zurich.com/ZurichServicos/rest/ZurichServicosAPI/",
-          consultas: "https://uat-myzurich-pt.zurich.com/ZurichServicos/rest/InfoAgente/",
-          cobrancas: "https://uat-myzurich-pt.zurich.com/ZurichServicos/rest/Cobrancas/",
-        };
-
-  return { env, agenteNr, username, password, urls };
+  return defaultAccount;
 }
 
 // -----------------------------------------------------
 // TOKEN STORE (com renovação automática + persistência)
 // -----------------------------------------------------
 //
-// O token fica cacheado em memória (rápido, evita ida à BD em
-// todas as chamadas), mas a fonte de verdade é a tabela
-// "integration_tokens" no Supabase — assim sobrevive a
-// reinícios/deploys, ao contrário de um simples .env.
-//
-// Fallback: se ainda não houver nada na tabela (primeira vez),
-// usa o valor de ZURICH_TOKEN do .env para arrancar, e a partir
-// daí passa a gravar sempre na BD.
+// O token fica cacheado em memória (por conta), mas a fonte de
+// verdade é a tabela "integration_tokens" no Supabase — assim
+// sobrevive a reinícios/deploys. Cada conta/loja tem a sua
+// própria linha, identificada por "zurich:<key-da-conta>".
 
-import { createAdminClient } from "@/lib/supabase/admin";
+const inMemoryTokens = new Map<string, string>();
 
-const ZURICH_TOKEN_PROVIDER_KEY = "zurich";
+function tokenProviderKey(accountKey: string): string {
+  return `zurich:${accountKey}`;
+}
 
-let inMemoryToken: string | null = null;
-
-async function loadTokenFromDb(): Promise<string | null> {
+async function loadTokenFromDb(accountKey: string): Promise<string | null> {
   try {
     const supabase = createAdminClient();
 
     const { data, error } = await supabase
       .from("integration_tokens")
       .select("token")
-      .eq("provider", ZURICH_TOKEN_PROVIDER_KEY)
+      .eq("provider", tokenProviderKey(accountKey))
       .maybeSingle();
 
     if (error) {
       console.warn(
-        "[Zurich] Erro ao ler token da BD, a usar fallback do .env:",
+        `[Zurich:${accountKey}] Erro ao ler token da BD, a usar fallback:`,
         error.message,
       );
       return null;
@@ -223,92 +304,97 @@ async function loadTokenFromDb(): Promise<string | null> {
     return data?.token ?? null;
   } catch (err) {
     console.warn(
-      "[Zurich] Não foi possível aceder à BD para ler o token, a usar fallback do .env:",
+      `[Zurich:${accountKey}] Não foi possível aceder à BD para ler o token, a usar fallback:`,
       err instanceof Error ? err.message : err,
     );
     return null;
   }
 }
 
-async function persistTokenToDb(token: string): Promise<void> {
+async function persistTokenToDb(
+  accountKey: string,
+  token: string,
+): Promise<void> {
   try {
     const supabase = createAdminClient();
 
     const { error } = await supabase.from("integration_tokens").upsert({
-      provider: ZURICH_TOKEN_PROVIDER_KEY,
+      provider: tokenProviderKey(accountKey),
       token,
       updated_at: new Date().toISOString(),
     });
 
     if (error) {
       console.warn(
-        "[Zurich] Falha ao persistir token na BD (fica só em memória por agora):",
+        `[Zurich:${accountKey}] Falha ao persistir token na BD (fica só em memória por agora):`,
         error.message,
       );
     }
   } catch (err) {
     console.warn(
-      "[Zurich] Falha ao persistir token na BD (fica só em memória por agora):",
+      `[Zurich:${accountKey}] Falha ao persistir token na BD (fica só em memória por agora):`,
       err instanceof Error ? err.message : err,
     );
   }
 }
 
-async function getCurrentToken(): Promise<string> {
-  if (inMemoryToken) {
-    return inMemoryToken;
+async function getCurrentToken(account: ZurichAccount): Promise<string> {
+  const cached = inMemoryTokens.get(account.key);
+
+  if (cached) {
+    return cached;
   }
 
-  const dbToken = await loadTokenFromDb();
+  const dbToken = await loadTokenFromDb(account.key);
 
   if (dbToken) {
-    inMemoryToken = dbToken;
-    return inMemoryToken;
+    inMemoryTokens.set(account.key, dbToken);
+    return dbToken;
   }
 
-  const envToken = process.env.ZURICH_TOKEN;
-
-  if (!envToken) {
-    throw new Error(
-      "Nenhum token Zurich disponível (nem na BD, nem em ZURICH_TOKEN no .env).",
-    );
-  }
-
-  inMemoryToken = envToken;
-  return inMemoryToken;
+  inMemoryTokens.set(account.key, account.token);
+  return account.token;
 }
 
-async function setCurrentToken(newToken: string): Promise<void> {
-  inMemoryToken = newToken;
-  cachedTokenParts = null;
-  cachedForToken = null;
+async function setCurrentToken(
+  account: ZurichAccount,
+  newToken: string,
+): Promise<void> {
+  inMemoryTokens.set(account.key, newToken);
+  cachedTokenParts.delete(account.key);
 
-  await persistTokenToDb(newToken);
+  await persistTokenToDb(account.key, newToken);
 }
 
-let cachedTokenParts: { token1: string; token2: string } | null = null;
-let cachedForToken: string | null = null;
+const cachedTokenParts = new Map<
+  string,
+  { token: string; parts: { token1: string; token2: string } }
+>();
 
-async function getTokenParts(): Promise<{ token1: string; token2: string }> {
-  const token = await getCurrentToken();
+async function getTokenParts(
+  account: ZurichAccount,
+): Promise<{ token1: string; token2: string }> {
+  const token = await getCurrentToken(account);
 
-  if (cachedTokenParts && cachedForToken === token) {
-    return cachedTokenParts;
+  const cached = cachedTokenParts.get(account.key);
+
+  if (cached && cached.token === token) {
+    return cached.parts;
   }
 
-  cachedTokenParts = splitZurichToken(token);
-  cachedForToken = token;
+  const parts = splitZurichToken(token);
+  cachedTokenParts.set(account.key, { token, parts });
 
-  return cachedTokenParts;
+  return parts;
 }
 
 /**
- * Pede um token novo à Zurich e atualiza-o em memória
- * (e no cache de Token1/Token2 derivado dele).
+ * Pede um token novo à Zurich (para a conta indicada) e
+ * atualiza-o em memória + BD.
  */
-async function renovarToken(): Promise<void> {
-  const result = await criarNovoTokenZurich();
-  setCurrentToken(result.Token);
+async function renovarToken(account: ZurichAccount): Promise<void> {
+  const result = await criarNovoTokenZurich(account);
+  await setCurrentToken(account, result.Token);
 }
 
 // -----------------------------------------------------
@@ -329,9 +415,11 @@ async function zurichRequest<T>(
   init?: { method?: "GET" | "POST"; body?: unknown },
   agenteParamName: string = "AgenteNr",
   isRetry: boolean = false,
+  account?: ZurichAccount,
 ): Promise<T> {
-  const { agenteNr, username, password } = getConfig();
-  const { token1, token2 } = await getTokenParts();
+  const resolvedAccount = resolveAccount(account);
+  const { agenteNr, username, password } = resolvedAccount;
+  const { token1, token2 } = await getTokenParts(resolvedAccount);
 
   const params = new URLSearchParams({
     [agenteParamName]: agenteNr,
@@ -372,7 +460,7 @@ async function zurichRequest<T>(
     const body = await response.text();
 
     throw new Error(
-      `Erro Zurich em ${path} (${response.status}): ${body.slice(0, 500)}`,
+      `Erro Zurich em ${path} (${response.status}) [conta ${resolvedAccount.key}]: ${body.slice(0, 500)}`,
     );
   }
 
@@ -392,7 +480,7 @@ async function zurichRequest<T>(
   // repetir o pedido original uma única vez (evita loop infinito
   // se a própria renovação também falhar).
   if (isTokenExpirado && !isRetry && path !== "CriarNovoToken") {
-    await renovarToken();
+    await renovarToken(resolvedAccount);
 
     return zurichRequest<T>(
       baseUrl,
@@ -401,6 +489,7 @@ async function zurichRequest<T>(
       init,
       agenteParamName,
       true,
+      resolvedAccount,
     );
   }
 
@@ -409,7 +498,7 @@ async function zurichRequest<T>(
   // CodigoErro truthy (não-zero) como falha também.
   if (sucesso === false || (codigoErro !== undefined && codigoErro !== 0)) {
     throw new Error(
-      `Zurich devolveu erro em ${path} (Código ${codigoErro}): ${raw.Mensagem}`,
+      `Zurich devolveu erro em ${path} (Código ${codigoErro}) [conta ${resolvedAccount.key}]: ${raw.Mensagem}`,
     );
   }
 
@@ -426,11 +515,13 @@ export type CriarNovoTokenOutput = ZurichBaseOutput & {
 
 /**
  * O token tem validade limitada. Quando expirar, chamar este
- * serviço devolve um novo token (que depois deve ser guardado
- * em ZURICH_TOKEN e passar a ser usado nas chamadas seguintes).
+ * serviço devolve um novo token — o resto do client já trata
+ * disto automaticamente (não precisas de chamar isto à mão).
  */
-export async function criarNovoTokenZurich(): Promise<CriarNovoTokenOutput> {
-  const { urls } = getConfig();
+export async function criarNovoTokenZurich(
+  account?: ZurichAccount,
+): Promise<CriarNovoTokenOutput> {
+  const urls = getUrls();
 
   return zurichRequest<CriarNovoTokenOutput>(
     urls.token,
@@ -438,6 +529,8 @@ export async function criarNovoTokenZurich(): Promise<CriarNovoTokenOutput> {
     {},
     undefined,
     "ConsumidorID",
+    false,
+    account,
   );
 }
 
@@ -473,12 +566,19 @@ export type ZurichApolice = {
 
 export async function obterApolicePorNr(
   apoliceNr: string,
+  account?: ZurichAccount,
 ): Promise<ZurichBaseOutput & { DadosApolice: ZurichApolice }> {
-  const { urls } = getConfig();
+  const urls = getUrls();
 
-  return zurichRequest(urls.consultas, "ObterApolicePorNr", {
-    ApoliceNr: apoliceNr,
-  });
+  return zurichRequest(
+    urls.consultas,
+    "ObterApolicePorNr",
+    { ApoliceNr: apoliceNr },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 export type ZurichRecibo = {
@@ -534,12 +634,19 @@ export type ZurichRecibo = {
 
 export async function obterReciboPorNr(
   reciboNr: string,
+  account?: ZurichAccount,
 ): Promise<ZurichBaseOutput & { DadosRecibo: ZurichRecibo }> {
-  const { urls } = getConfig();
+  const urls = getUrls();
 
-  return zurichRequest(urls.consultas, "ObterReciboPorNr", {
-    ReciboNr: reciboNr,
-  });
+  return zurichRequest(
+    urls.consultas,
+    "ObterReciboPorNr",
+    { ReciboNr: reciboNr },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 export type ZurichCliente = {
@@ -548,6 +655,8 @@ export type ZurichCliente = {
   Morada: string;
   Localidade: string;
   CodigoPostal: string;
+  OrdemPostal?: string;
+  LocalidadePostal?: string;
   Pais: string;
   NIF: string;
   Telefone: string;
@@ -574,18 +683,31 @@ export type ZurichCliente = {
 
 /**
  * Pelo menos um dos dois parâmetros (clienteNif / clienteId)
- * deve ser fornecido.
+ * deve ser fornecido. NOTA: "DadosCliente" vem como ARRAY na
+ * resposta real da API (a doc sugere um objeto aninhado, mas
+ * não é isso que a Zurich devolve).
  */
-export async function obterClientePorIdNif(params: {
-  clienteNif?: string;
-  clienteId?: string;
-}): Promise<ZurichBaseOutput & { DadosCliente: ZurichCliente[] }> {
-  const { urls } = getConfig();
+export async function obterClientePorIdNif(
+  params: {
+    clienteNif?: string;
+    clienteId?: string;
+  },
+  account?: ZurichAccount,
+): Promise<ZurichBaseOutput & { DadosCliente: ZurichCliente[] }> {
+  const urls = getUrls();
 
-  return zurichRequest(urls.consultas, "ObterClientePorIDNIF", {
-    ClienteNIF: params.clienteNif,
-    ClienteID: params.clienteId,
-  });
+  return zurichRequest(
+    urls.consultas,
+    "ObterClientePorIDNIF",
+    {
+      ClienteNIF: params.clienteNif,
+      ClienteID: params.clienteId,
+    },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 export type ZurichObjeto = {
@@ -601,12 +723,19 @@ export type ZurichObjeto = {
 
 export async function obterObjetosPorNrApolice(
   apoliceNr: string,
+  account?: ZurichAccount,
 ): Promise<ZurichBaseOutput & { ListaObjetos: ZurichObjeto[] }> {
-  const { urls } = getConfig();
+  const urls = getUrls();
 
-  return zurichRequest(urls.consultas, "ObterObjetosPorNrApolice", {
-    ApoliceNr: apoliceNr,
-  });
+  return zurichRequest(
+    urls.consultas,
+    "ObterObjetosPorNrApolice",
+    { ApoliceNr: apoliceNr },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 export type ZurichCobertura = {
@@ -624,12 +753,19 @@ export type ZurichCobertura = {
 
 export async function obterCoberturasPorApolice(
   apoliceNr: string,
+  account?: ZurichAccount,
 ): Promise<ZurichBaseOutput & { ListaCoberturas: ZurichCobertura[] }> {
-  const { urls } = getConfig();
+  const urls = getUrls();
 
-  return zurichRequest(urls.consultas, "ObterCoberturasPorApolice", {
-    ApoliceNr: apoliceNr,
-  });
+  return zurichRequest(
+    urls.consultas,
+    "ObterCoberturasPorApolice",
+    { ApoliceNr: apoliceNr },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 export enum ZurichTipoFicheiro {
@@ -650,41 +786,65 @@ export enum ZurichTipoFicheiro {
 export async function obterFicheiroDia(
   tipoFicheiro: ZurichTipoFicheiro,
   data: string,
+  account?: ZurichAccount,
 ): Promise<ZurichBaseOutput & { Ficheiro: string }> {
-  const { urls } = getConfig();
+  const urls = getUrls();
 
-  return zurichRequest(urls.consultas, "ObterFicheiroDia", {
-    TipoFicheiro: tipoFicheiro,
-    Data: data,
-  });
+  return zurichRequest(
+    urls.consultas,
+    "ObterFicheiroDia",
+    { TipoFicheiro: tipoFicheiro, Data: data },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 /**
  * Só é possível agendar ficheiros com data de início até 15 dias
  * inferior à data corrente. Datas no formato AAAA-MM-DD.
  */
-export async function registarPedidoFicheiroAdhoc(params: {
-  tipoFicheiro: ZurichTipoFicheiro;
-  dataInicio: string;
-  dataFim: string;
-}): Promise<ZurichBaseOutput & { idPedido: number }> {
-  const { urls } = getConfig();
+export async function registarPedidoFicheiroAdhoc(
+  params: {
+    tipoFicheiro: ZurichTipoFicheiro;
+    dataInicio: string;
+    dataFim: string;
+  },
+  account?: ZurichAccount,
+): Promise<ZurichBaseOutput & { idPedido: number }> {
+  const urls = getUrls();
 
-  return zurichRequest(urls.consultas, "RegistarPedidoFicheiroAdhoc", {
-    TipoFicheiro: params.tipoFicheiro,
-    DataInicio: params.dataInicio,
-    DataFim: params.dataFim,
-  });
+  return zurichRequest(
+    urls.consultas,
+    "RegistarPedidoFicheiroAdhoc",
+    {
+      TipoFicheiro: params.tipoFicheiro,
+      DataInicio: params.dataInicio,
+      DataFim: params.dataFim,
+    },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 export async function obterFicheiroAdhoc(
   idFicheiro: number,
+  account?: ZurichAccount,
 ): Promise<ZurichBaseOutput & { Ficheiro: string }> {
-  const { urls } = getConfig();
+  const urls = getUrls();
 
-  return zurichRequest(urls.consultas, "ObterFicheiroAdhoc", {
-    idFicheiro,
-  });
+  return zurichRequest(
+    urls.consultas,
+    "ObterFicheiroAdhoc",
+    { idFicheiro },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 /**
@@ -715,17 +875,23 @@ export type CobrarOutput = ZurichBaseOutput & {
   }[];
 };
 
-export async function cobrarRecibos(params: {
-  agenteCobradorNr: string;
-  listaRecibos: ZurichReciboParaCobrar[];
-}): Promise<CobrarOutput> {
-  const { urls } = getConfig();
+export async function cobrarRecibos(
+  params: {
+    agenteCobradorNr: string;
+    listaRecibos: ZurichReciboParaCobrar[];
+  },
+  account?: ZurichAccount,
+): Promise<CobrarOutput> {
+  const urls = getUrls();
 
   return zurichRequest(
     urls.cobrancas,
     "Cobrar",
     { AgenteCobradorNr: params.agenteCobradorNr },
     { method: "POST", body: params.listaRecibos },
+    undefined,
+    undefined,
+    account,
   );
 }
 
@@ -737,17 +903,23 @@ export type AlterarMetodoCobrancaOutput = {
   Sucesso: string;
 };
 
-export async function alterarMetodoCobranca(params: {
-  agenteCobradorNr: string;
-  listaRecibos: ZurichReciboParaCobrar[];
-}): Promise<AlterarMetodoCobrancaOutput> {
-  const { urls } = getConfig();
+export async function alterarMetodoCobranca(
+  params: {
+    agenteCobradorNr: string;
+    listaRecibos: ZurichReciboParaCobrar[];
+  },
+  account?: ZurichAccount,
+): Promise<AlterarMetodoCobrancaOutput> {
+  const urls = getUrls();
 
   return zurichRequest(
     urls.cobrancas,
     "Alterar",
     { AgenteCobradorNr: params.agenteCobradorNr },
     { method: "POST", body: params.listaRecibos },
+    undefined,
+    undefined,
+    account,
   );
 }
 
@@ -770,13 +942,16 @@ export type DevolverOutput = ZurichBaseOutput & {
   };
 };
 
-export async function devolverRecibo(params: {
-  numeroRecibo: string;
-  motivoTransferencia: ZurichMotivoTransferencia;
-  reciboPremioSubstituicao?: string;
-  talao: "N" | "S";
-}): Promise<DevolverOutput> {
-  const { urls } = getConfig();
+export async function devolverRecibo(
+  params: {
+    numeroRecibo: string;
+    motivoTransferencia: ZurichMotivoTransferencia;
+    reciboPremioSubstituicao?: string;
+    talao: "N" | "S";
+  },
+  account?: ZurichAccount,
+): Promise<DevolverOutput> {
+  const urls = getUrls();
 
   return zurichRequest(
     urls.cobrancas,
@@ -791,29 +966,47 @@ export async function devolverRecibo(params: {
         Talao: params.talao,
       },
     },
+    undefined,
+    undefined,
+    account,
   );
 }
 
 export async function apagarRecibo(
   reciboNr: string,
+  account?: ZurichAccount,
 ): Promise<ZurichBaseOutput> {
-  const { urls } = getConfig();
+  const urls = getUrls();
 
-  return zurichRequest(urls.cobrancas, "ApagarRecibo", {
-    ReciboNr: reciboNr,
-  });
+  return zurichRequest(
+    urls.cobrancas,
+    "ApagarRecibo",
+    { ReciboNr: reciboNr },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
-export async function fecharBoletim(params: {
-  boletimNr: string;
-  descricao: string;
-}): Promise<ZurichBaseOutput> {
-  const { urls } = getConfig();
+export async function fecharBoletim(
+  params: {
+    boletimNr: string;
+    descricao: string;
+  },
+  account?: ZurichAccount,
+): Promise<ZurichBaseOutput> {
+  const urls = getUrls();
 
-  return zurichRequest(urls.cobrancas, "FecharBoletim", {
-    BoletimNr: params.boletimNr,
-    Descricao: params.descricao,
-  });
+  return zurichRequest(
+    urls.cobrancas,
+    "FecharBoletim",
+    { BoletimNr: params.boletimNr, Descricao: params.descricao },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 export type ZurichRemessa = {
@@ -827,12 +1020,19 @@ export type ZurichRemessa = {
 
 export async function obterRemessa(
   boletimNr: string,
+  account?: ZurichAccount,
 ): Promise<ZurichBaseOutput & { ListaRemessas: ZurichRemessa[] }> {
-  const { urls } = getConfig();
+  const urls = getUrls();
 
-  return zurichRequest(urls.cobrancas, "ObterRemessa", {
-    BoletimNr: boletimNr,
-  });
+  return zurichRequest(
+    urls.cobrancas,
+    "ObterRemessa",
+    { BoletimNr: boletimNr },
+    undefined,
+    undefined,
+    undefined,
+    account,
+  );
 }
 
 export type AlterarRemessasBoletimOutput = ZurichBaseOutput & {
@@ -849,20 +1049,26 @@ export type AlterarRemessasBoletimOutput = ZurichBaseOutput & {
  * Usar ObterRemessa antes, alterar o que for preciso na
  * estrutura recebida, e reenviar tudo aqui.
  */
-export async function alterarRemessasBoletim(params: {
-  boletimNr: string;
-  // Nesta operação, TipoRemessa só aceita "C" ou "T".
-  listaRemessas: Omit<ZurichRemessa, "TipoRemessa"> & {
-    TipoRemessa: "C" | "T";
-  }[];
-}): Promise<AlterarRemessasBoletimOutput> {
-  const { urls } = getConfig();
+export async function alterarRemessasBoletim(
+  params: {
+    boletimNr: string;
+    // Nesta operação, TipoRemessa só aceita "C" ou "T".
+    listaRemessas: Omit<ZurichRemessa, "TipoRemessa"> & {
+      TipoRemessa: "C" | "T";
+    }[];
+  },
+  account?: ZurichAccount,
+): Promise<AlterarRemessasBoletimOutput> {
+  const urls = getUrls();
 
   return zurichRequest(
     urls.cobrancas,
     "AlterarRemessasBoletim",
     { BoletimNr: params.boletimNr },
     { method: "POST", body: params.listaRemessas },
+    undefined,
+    undefined,
+    account,
   );
 }
 
@@ -899,44 +1105,66 @@ import {
  */
 export async function getApolicesDoDia(
   data?: string,
+  account?: ZurichAccount,
 ): Promise<ZurichApoliceFicheiro[]> {
   const dia = data ?? new Date().toISOString().slice(0, 10);
-  const result = await obterFicheiroDia(ZurichTipoFicheiro.Apolices, dia);
+  const result = await obterFicheiroDia(
+    ZurichTipoFicheiro.Apolices,
+    dia,
+    account,
+  );
   return parseApolicesFile(result.Ficheiro);
 }
 
 export async function getRecibosDoDia(
   data?: string,
+  account?: ZurichAccount,
 ): Promise<ZurichReciboFicheiro[]> {
   const dia = data ?? new Date().toISOString().slice(0, 10);
-  const result = await obterFicheiroDia(ZurichTipoFicheiro.Recibos, dia);
+  const result = await obterFicheiroDia(
+    ZurichTipoFicheiro.Recibos,
+    dia,
+    account,
+  );
   return parseRecibosFile(result.Ficheiro);
 }
 
 export async function getClientesDoDia(
   data?: string,
+  account?: ZurichAccount,
 ): Promise<ZurichClienteFicheiro[]> {
   const dia = data ?? new Date().toISOString().slice(0, 10);
-  const result = await obterFicheiroDia(ZurichTipoFicheiro.Clientes, dia);
+  const result = await obterFicheiroDia(
+    ZurichTipoFicheiro.Clientes,
+    dia,
+    account,
+  );
   return parseClientesFile(result.Ficheiro);
 }
 
 export async function getObjetosDoDia(
   data?: string,
+  account?: ZurichAccount,
 ): Promise<ZurichObjetoFicheiro[]> {
   const dia = data ?? new Date().toISOString().slice(0, 10);
   const result = await obterFicheiroDia(
     ZurichTipoFicheiro.ObjetosDeRisco,
     dia,
+    account,
   );
   return parseObjetosFile(result.Ficheiro);
 }
 
 export async function getCoberturasDoDia(
   data?: string,
+  account?: ZurichAccount,
 ): Promise<ZurichCoberturaFicheiro[]> {
   const dia = data ?? new Date().toISOString().slice(0, 10);
-  const result = await obterFicheiroDia(ZurichTipoFicheiro.Coberturas, dia);
+  const result = await obterFicheiroDia(
+    ZurichTipoFicheiro.Coberturas,
+    dia,
+    account,
+  );
   return parseCoberturasFile(result.Ficheiro);
 }
 
@@ -946,16 +1174,16 @@ export async function getCoberturasDoDia(
  * diário, equivalente ao que fazias com o incremental da
  * Prévoir.
  */
-export async function getTudoDoDia(data?: string) {
+export async function getTudoDoDia(data?: string, account?: ZurichAccount) {
   const dia = data ?? new Date().toISOString().slice(0, 10);
 
   const [apolices, recibos, clientes, objetos, coberturas] =
     await Promise.all([
-      getApolicesDoDia(dia),
-      getRecibosDoDia(dia),
-      getClientesDoDia(dia),
-      getObjetosDoDia(dia),
-      getCoberturasDoDia(dia),
+      getApolicesDoDia(dia, account),
+      getRecibosDoDia(dia, account),
+      getClientesDoDia(dia, account),
+      getObjetosDoDia(dia, account),
+      getCoberturasDoDia(dia, account),
     ]);
 
   return { apolices, recibos, clientes, objetos, coberturas };

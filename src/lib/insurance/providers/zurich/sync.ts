@@ -5,6 +5,8 @@ import {
   getClientesDoDia,
   getRecibosDoDia,
   obterClientePorIdNif,
+  getZurichAccounts,
+  ZurichAccount,
 } from "./client";
 
 import { mapZurichPolicy } from "./mapper";
@@ -45,45 +47,45 @@ function* dateRange(from: Date, to: Date): Generator<string> {
 }
 
 /**
- * A Zurich devolve "Ficheiro não existente" (Código 6) em dias
- * sem alterações — tratamos isso como lista vazia, não como erro.
+ * A Zurich devolve "Ficheiro não existente" (Código 6) ou "Não
+ * existem dados para criar ficheiro para o dia indicado" (Código
+ * 7) em dias sem alterações — tratamos isso como lista vazia,
+ * não como erro.
  */
-async function safeGetApolicesDoDia(data: string) {
+function isDiaSemDadosError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.includes("Código 6") || error.message.includes("Código 7"))
+  );
+}
+
+async function safeGetApolicesDoDia(data: string, account: ZurichAccount) {
   try {
-    return await getApolicesDoDia(data);
+    return await getApolicesDoDia(data, account);
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.includes("Código 6") || error.message.includes("Código 7"))
-    ) {
+    if (isDiaSemDadosError(error)) {
       return [];
     }
     throw error;
   }
 }
 
-async function safeGetClientesDoDia(data: string) {
+async function safeGetClientesDoDia(data: string, account: ZurichAccount) {
   try {
-    return await getClientesDoDia(data);
+    return await getClientesDoDia(data, account);
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.includes("Código 6") || error.message.includes("Código 7"))
-    ) {
+    if (isDiaSemDadosError(error)) {
       return [];
     }
     throw error;
   }
 }
 
-async function safeGetRecibosDoDia(data: string) {
+async function safeGetRecibosDoDia(data: string, account: ZurichAccount) {
   try {
-    return await getRecibosDoDia(data);
+    return await getRecibosDoDia(data, account);
   } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message.includes("Código 6") || error.message.includes("Código 7"))
-    ) {
+    if (isDiaSemDadosError(error)) {
       return [];
     }
     throw error;
@@ -97,9 +99,16 @@ type SyncOptions = {
 // =====================================================
 // SYNC DE APÓLICES
 // =====================================================
+//
+// Percorre TODAS as contas configuradas (uma por loja — ver
+// getZurichAccounts() em client.ts). A loja de cada apólice é
+// determinada por QUAL CONTA a trouxe, não por nenhum campo
+// dentro dos dados da própria apólice (a Zurich não expõe essa
+// distinção nos dados).
 
 export async function syncZurichPolicies(options: SyncOptions = {}) {
   const supabase = createAdminClient();
+  const accounts = getZurichAccounts();
 
   const { data: company, error: companyError } = await supabase
     .from("companies")
@@ -159,22 +168,38 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
       : "FULL";
 
     // ======================================
-    // RECOLHER APÓLICES + CLIENTES DO PERÍODO
+    // RECOLHER APÓLICES + CLIENTES DO PERÍODO, POR CONTA/LOJA
     // ======================================
 
-    const sourcePolicies: Awaited<ReturnType<typeof getApolicesDoDia>> = [];
+    type PolicyWithAccount = {
+      source: Awaited<ReturnType<typeof getApolicesDoDia>>[number];
+      account: ZurichAccount;
+    };
+
+    const sourcePolicies: PolicyWithAccount[] = [];
+
+    // Chave composta "<conta>:<idCliente>" — evita colisões se
+    // duas contas/lojas tiverem, por acaso, o mesmo IDCliente
+    // numérico para clientes diferentes.
     const clientesPorId = new Map<string, ZurichClienteFicheiro>();
 
-    for (const dia of dateRange(fromDate, today)) {
-      const [apolicesDoDia, clientesDoDia] = await Promise.all([
-        safeGetApolicesDoDia(dia),
-        safeGetClientesDoDia(dia),
-      ]);
+    for (const account of accounts) {
+      for (const dia of dateRange(fromDate, today)) {
+        const [apolicesDoDia, clientesDoDia] = await Promise.all([
+          safeGetApolicesDoDia(dia, account),
+          safeGetClientesDoDia(dia, account),
+        ]);
 
-      sourcePolicies.push(...apolicesDoDia);
+        for (const source of apolicesDoDia) {
+          sourcePolicies.push({ source, account });
+        }
 
-      for (const cliente of clientesDoDia) {
-        clientesPorId.set(cliente.IDCliente.trim(), cliente);
+        for (const cliente of clientesDoDia) {
+          clientesPorId.set(
+            `${account.key}:${cliente.IDCliente.trim()}`,
+            cliente,
+          );
+        }
       }
     }
 
@@ -188,27 +213,33 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     // PROCESSAR
     // ======================================
 
-    for (const source of selectedPolicies) {
+    for (const { source, account } of selectedPolicies) {
       try {
         const idCliente = source.IDCliente.trim();
 
         // Tenta primeiro no que já veio nos ficheiros diários
-        // deste período; se o cliente não mudou recentemente,
-        // não vai aparecer aí — nesse caso, pede-o individualmente.
-        let cliente = clientesPorId.get(idCliente) ?? null;
+        // deste período (para esta conta/loja); se o cliente não
+        // mudou recentemente, não vai aparecer aí — nesse caso,
+        // pede-o individualmente, usando a MESMA conta (para
+        // teres a certeza de que consultas a loja certa).
+        let cliente =
+          clientesPorId.get(`${account.key}:${idCliente}`) ?? null;
 
         if (!cliente && (idCliente || source.NIF.trim())) {
           try {
-            const result = await obterClientePorIdNif({
-              clienteId: idCliente || undefined,
-              clienteNif: source.NIF.trim() || undefined,
-            });
+            const result = await obterClientePorIdNif(
+              {
+                clienteId: idCliente || undefined,
+                clienteNif: source.NIF.trim() || undefined,
+              },
+              account,
+            );
 
             const dadosCliente = result.DadosCliente?.[0];
 
             if (!dadosCliente) {
               console.warn(
-                `[Zurich] ObterClientePorIDNIF sem exceção mas sem dados utilizáveis (IDCliente=${idCliente}, NIF=${source.NIF}). Resposta bruta:`,
+                `[Zurich:${account.key}] ObterClientePorIDNIF sem exceção mas sem dados utilizáveis (IDCliente=${idCliente}, NIF=${source.NIF}). Resposta bruta:`,
                 JSON.stringify(result),
               );
             }
@@ -245,8 +276,8 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
                 CodSituacao: dadosCliente.CodSituacao ?? "",
                 Situacao: dadosCliente.Situacao ?? "",
                 DataUltimaAlteracao: dadosCliente.DataUltimaAlteracao ?? "",
-                CodTipoCliente: "",
-                DescTipoCliente: "",
+                Zurich4You: "",
+                RecDocPorEmail: "",
                 DataAtualizacaoTipoCliente: "",
               };
             }
@@ -256,7 +287,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
             // registamos o motivo para conseguirmos perceber
             // porque é que a consulta individual falhou.
             console.warn(
-              `[Zurich] Falha ao obter cliente individualmente (IDCliente=${idCliente}, NIF=${source.NIF}):`,
+              `[Zurich:${account.key}] Falha ao obter cliente individualmente (IDCliente=${idCliente}, NIF=${source.NIF}):`,
               clienteError instanceof Error
                 ? clienteError.message
                 : clienteError,
@@ -265,6 +296,12 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
         }
 
         const normalized = mapZurichPolicy(source, cliente);
+
+        // A loja é conhecida pela CONTA que trouxe esta apólice,
+        // não pelos dados da própria apólice — sobrepomos aqui,
+        // já que é a fonte de verdade real.
+        normalized.storeExternalCode =
+          account.storeExternalCode ?? normalized.storeExternalCode;
 
         // ----------------------------------
         // RAMO (provider_products -> insurance_lines)
@@ -344,9 +381,12 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
         const message =
           error instanceof Error ? error.message : "Erro desconhecido";
 
-        errors.push(message);
+        errors.push(`[conta ${account.key}] ${message}`);
 
-        console.error("Erro ao sincronizar apólice Zurich:", error);
+        console.error(
+          `Erro ao sincronizar apólice Zurich (conta ${account.key}):`,
+          error,
+        );
       }
     }
 
@@ -394,6 +434,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
       syncRunId: syncRun.id,
       status: finalStatus,
       syncMode,
+      accounts: accounts.map((a) => a.key),
       received,
       created,
       updated,
@@ -426,9 +467,16 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
 // =====================================================
 // SYNC DE RECIBOS
 // =====================================================
+//
+// Também percorre todas as contas. Os recibos não precisam de
+// ser "etiquetados" por loja aqui — já ficam associados à loja
+// certa indiretamente, através da apólice a que pertencem
+// (policy_id), que já foi corretamente atribuída no sync de
+// apólices.
 
 export async function syncZurichReceipts(options: SyncOptions = {}) {
   const supabase = createAdminClient();
+  const accounts = getZurichAccounts();
 
   const { data: company, error: companyError } = await supabase
     .from("companies")
@@ -489,18 +537,20 @@ export async function syncZurichReceipts(options: SyncOptions = {}) {
 
     // O mesmo recibo pode aparecer em mais do que um ficheiro
     // diário dentro da janela (ex: criado num dia, atualizado
-    // noutro) — deduplicamos por NumRecibo, mantendo sempre a
-    // versão do dia mais recente (a última do loop "ganha").
+    // noutro), e teoricamente em mais do que uma conta —
+    // deduplicamos por NumRecibo, mantendo a última versão vista.
     const receiptsByNumero = new Map<
       string,
       Awaited<ReturnType<typeof getRecibosDoDia>>[number]
     >();
 
-    for (const dia of dateRange(fromDate, today)) {
-      const recibosDoDia = await safeGetRecibosDoDia(dia);
+    for (const account of accounts) {
+      for (const dia of dateRange(fromDate, today)) {
+        const recibosDoDia = await safeGetRecibosDoDia(dia, account);
 
-      for (const recibo of recibosDoDia) {
-        receiptsByNumero.set(recibo.NumRecibo.trim(), recibo);
+        for (const recibo of recibosDoDia) {
+          receiptsByNumero.set(recibo.NumRecibo.trim(), recibo);
+        }
       }
     }
 
@@ -612,6 +662,7 @@ export async function syncZurichReceipts(options: SyncOptions = {}) {
       syncRunId: syncRun.id,
       status: finalStatus,
       syncMode,
+      accounts: accounts.map((a) => a.key),
       received,
       created,
       updated,

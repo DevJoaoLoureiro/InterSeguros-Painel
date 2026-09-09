@@ -87,6 +87,7 @@ function normalizeStatus(
   switch (status) {
     case "em vigor":
     case "revalidada":
+    case "normal":
       return "ACTIVE";
 
     case "anulada":

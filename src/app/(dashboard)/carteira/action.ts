@@ -60,6 +60,17 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
+/*
+ * Constrói o filtro OR para incluir tanto as lojas acessíveis
+ * como registos sem loja atribuída (ex: apólices Zurich ainda
+ * por associar). `.in()` sozinho nunca inclui nulls — por isso
+ * usamos `.or()` com um filtro raw do PostgREST.
+ */
+function storeOrUnassignedFilter(storeIds: string[]): string {
+  const idsList = storeIds.join(",");
+  return `issuing_store_id.in.(${idsList}),issuing_store_id.is.null`;
+}
+
 // ============================================================
 // LOJAS ACESSÍVEIS
 // ============================================================
@@ -127,15 +138,17 @@ export async function getCompaniesOverview(): Promise<CompanyOverview[]> {
     return [];
   }
 
-const todayKey = new Date().toISOString().slice(0, 10);
+  const todayKey = new Date().toISOString().slice(0, 10);
 
-let query = admin
-  .from("policies")
-  .select("company_id, annualized_premium")
-  .eq("status", "ACTIVE")
-  .in("issuing_store_id", storeIds)
-  .not("start_date", "is", null)
-  .lte("start_date", todayKey);
+  // Inclui também apólices sem loja atribuída (ex: Zurich por
+  // associar) — sem isto, ficavam invisíveis em toda a carteira.
+  let query = admin
+    .from("policies")
+    .select("company_id, annualized_premium")
+    .eq("status", "ACTIVE")
+    .or(storeOrUnassignedFilter(storeIds))
+    .not("start_date", "is", null)
+    .lte("start_date", todayKey);
 
   const { data: policies, error: policiesError } = await query;
 
@@ -192,23 +205,25 @@ async function fetchActivePolicies(
 
   const todayKey = new Date().toISOString().slice(0, 10);
 
-let query = admin
-  .from("policies")
-  .select(`
-    product_code,
-    product_name,
-    annualized_premium,
-    start_date,
-    issuing_store_id,
-    insurance_line:insurance_lines ( plan_type )
-  `)
-  .eq("status", "ACTIVE")
-  .eq("company_id", companyId)
-  .not("start_date", "is", null)
-  .lte("start_date", todayKey);
+  let query = admin
+    .from("policies")
+    .select(`
+      product_code,
+      product_name,
+      annualized_premium,
+      start_date,
+      issuing_store_id,
+      insurance_line:insurance_lines ( plan_type )
+    `)
+    .eq("status", "ACTIVE")
+    .eq("company_id", companyId)
+    .not("start_date", "is", null)
+    .lte("start_date", todayKey);
 
   if (storeIds) {
-    query = query.in("issuing_store_id", storeIds);
+    // Inclui também apólices sem loja atribuída — mesma regra
+    // usada em Clientes, Vencimentos e Comissões.
+    query = query.or(storeOrUnassignedFilter(storeIds));
   }
 
   const { data, error } = await query;
@@ -335,6 +350,9 @@ export async function getStorePortfolio(
     throw new Error("Loja não encontrada.");
   }
 
+  // NOTA: aqui continua a ser só a loja específica + sem-loja
+  // (via fetchActivePolicies), não outras lojas — mantém-se o
+  // isolamento entre lojas, só passa a incluir os "por associar".
   const rows = await fetchActivePolicies([storeId], companyId);
   const { plans, totalCount, totalAnualizado, seguroTotal } =
     buildPlans(rows);

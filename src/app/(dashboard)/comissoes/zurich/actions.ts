@@ -254,12 +254,42 @@ export async function getZurichCommissionsSummaryByStore(
     { vida: number; naoVida: number; financeiros: number; count: number }
   >();
 
+  // Total "Geral": tudo o que o utilizador tem acesso a ver, MAIS
+  // tudo o que ainda não tem loja atribuída (ex: apólices Zurich
+  // por associar) — sem isto, essas comissões não apareciam em
+  // lado nenhum, nem sequer contavam para nenhum total.
+  const geralTotal = {
+    vida: 0,
+    naoVida: 0,
+    financeiros: 0,
+    count: 0,
+  };
+
   for (const receipt of receipts) {
     if (!isInMonth(receipt.commissionDate, monthStart, monthEnd)) {
       continue;
     }
 
     const storeId = receipt.issuingStoreId;
+    const total = receipt.commissionCobranca + receipt.commissionAngariacao;
+
+    const isAccessibleOrUnassigned =
+      storeId === null || storeIds.has(storeId);
+
+    if (isAccessibleOrUnassigned) {
+      if (receipt.planType === "NAO_VIDA") {
+        geralTotal.naoVida += total;
+      } else if (receipt.planType === "FINANCEIROS") {
+        geralTotal.financeiros += total;
+      } else {
+        geralTotal.vida += total;
+      }
+      geralTotal.count += 1;
+    }
+
+    // Totais por loja específica continuam a exigir loja conhecida
+    // (isto não muda — só o "Geral" acima passou a incluir os
+    // sem-loja).
     if (!storeId || !storeIds.has(storeId)) {
       continue;
     }
@@ -270,8 +300,6 @@ export async function getZurichCommissionsSummaryByStore(
       financeiros: 0,
       count: 0,
     };
-
-    const total = receipt.commissionCobranca + receipt.commissionAngariacao;
 
     if (receipt.planType === "NAO_VIDA") {
       current.naoVida += total;
@@ -285,7 +313,7 @@ export async function getZurichCommissionsSummaryByStore(
     totals.set(storeId, current);
   }
 
-  return stores.map((store) => {
+  const perStoreRows = stores.map((store) => {
     const current = totals.get(store.id) ?? {
       vida: 0,
       naoVida: 0,
@@ -303,6 +331,19 @@ export async function getZurichCommissionsSummaryByStore(
       receiptCount: current.count,
     };
   });
+
+  const geralRow: StoreCommissionSummary = {
+    storeId: "GERAL",
+    storeName: "Geral",
+    vidaTotal: geralTotal.vida,
+    naoVidaTotal: geralTotal.naoVida,
+    financeirosTotal: geralTotal.financeiros,
+    totalGeral:
+      geralTotal.vida + geralTotal.naoVida + geralTotal.financeiros,
+    receiptCount: geralTotal.count,
+  };
+
+  return [geralRow, ...perStoreRows];
 }
 
 export async function getZurichCommissionsDetail(
@@ -313,11 +354,29 @@ export async function getZurichCommissionsDetail(
   const receipts = await getCalculatedZurichCommissionReceipts();
   const rows: CommissionReceiptRow[] = [];
 
+  // "GERAL" mostra tudo a que o utilizador tem acesso, incluindo
+  // recibos sem loja atribuída — mesma regra usada no resumo.
+  let accessibleStoreIds: Set<string> | null = null;
+
+  if (storeId === "GERAL") {
+    const { stores } = await getAccessibleStores();
+    accessibleStoreIds = new Set(stores.map((s) => s.id));
+  }
+
   for (const receipt of receipts) {
-    if (
-      receipt.issuingStoreId !== storeId ||
-      !isInMonth(receipt.commissionDate, monthStart, monthEnd)
-    ) {
+    if (!isInMonth(receipt.commissionDate, monthStart, monthEnd)) {
+      continue;
+    }
+
+    if (storeId === "GERAL") {
+      const isAccessibleOrUnassigned =
+        receipt.issuingStoreId === null ||
+        accessibleStoreIds!.has(receipt.issuingStoreId);
+
+      if (!isAccessibleOrUnassigned) {
+        continue;
+      }
+    } else if (receipt.issuingStoreId !== storeId) {
       continue;
     }
 
