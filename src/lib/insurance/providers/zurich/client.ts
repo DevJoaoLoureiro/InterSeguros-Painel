@@ -466,6 +466,11 @@ async function zurichRequest<T>(
 
   const data = (await response.json()) as T;
 
+  console.log(
+  `[ZURICH RAW RESPONSE - ${path}]`,
+  JSON.stringify(data, null, 2),
+  );
+
   // Verificação de sucesso "solta": a maioria dos endpoints usa
   // "Successo"/"Sucesso" (booleano) no topo, mas alguns (ex:
   // AlterarMetodoCobrancaOutput) fogem a esse padrão na doc.
@@ -1109,11 +1114,19 @@ export async function getApolicesDoDia(
 ): Promise<ZurichApoliceFicheiro[]> {
   const dia = data ?? new Date().toISOString().slice(0, 10);
   const result = await obterFicheiroDia(
-    ZurichTipoFicheiro.Apolices,
-    dia,
-    account,
-  );
-  return parseApolicesFile(result.Ficheiro);
+  ZurichTipoFicheiro.Apolices,
+  dia,
+  account,
+);
+
+const apolices = parseApolicesFile(result.Ficheiro);
+
+console.log(
+  "[ZURICH APOLICES JSON]",
+  JSON.stringify(apolices, null, 2),
+);
+
+return apolices;
 }
 
 export async function getRecibosDoDia(

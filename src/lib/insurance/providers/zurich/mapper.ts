@@ -180,11 +180,10 @@ export function mapZurichPolicy(
     // valor. Se em algum caso real isto não bater certo (ex:
     // aparecer o valor por prestação em vez do anual), avisa-me
     // para ajustarmos com base no Fraccionamento.
-    commercialPremium: null,
-    totalPremium: parseZurichFileDecimal(source.PremioApolice),
-    annualizedPremium: parseZurichFileDecimal(source.PremioApolice),
-
-    paymentFrequency: normalizeFrequency(source.Fraccionamento),
+      commercialPremium: null,
+      totalPremium: parseZurichFileDecimal(source.PremioApolice),
+      annualizedPremium: parseZurichFileDecimal(source.PremioApolice),
+       paymentFrequency: "UNKNOWN",
 
     // Não temos dados de agente/equipa vindos da API da Zurich.
     agentCode: null,

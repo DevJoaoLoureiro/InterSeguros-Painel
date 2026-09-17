@@ -1,7 +1,7 @@
 "use server";
 
-import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export type StoreOption = {
   id: string;
@@ -47,12 +47,24 @@ export type YearlyProduction = {
 };
 
 type RawPolicyRow = {
+  id: string;
   product_code: string | null;
   product_name: string | null;
   annualized_premium: number | string | null;
+  portfolio_premium: number;
   issue_date: string | null;
+  start_date: string | null;
   issuing_store_id: string | null;
   insurance_line: { plan_type: string } | { plan_type: string }[] | null;
+};
+
+type ZurichReceiptRow = {
+  policy_id: string | null;
+  commercial_premium: number | string | null;
+  period_end: string | null;
+  issue_date: string | null;
+  receipt_type: string | null;
+  external_nature: string | null;
 };
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
@@ -60,15 +72,37 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
+function toNumber(value: number | string | null | undefined): number {
+  if (value === null || value === undefined || value === "") {
+    return 0;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 /*
- * Constrói o filtro OR para incluir tanto as lojas acessíveis
- * como registos sem loja atribuída (ex: apólices Zurich ainda
- * por associar). `.in()` sozinho nunca inclui nulls — por isso
- * usamos `.or()` com um filtro raw do PostgREST.
+ * Inclui tanto as lojas acessíveis como registos sem loja atribuída.
+ * `.in()` sozinho não inclui NULL, por isso usamos `.or()`.
  */
 function storeOrUnassignedFilter(storeIds: string[]): string {
   const idsList = storeIds.join(",");
   return `issuing_store_id.in.(${idsList}),issuing_store_id.is.null`;
+}
+
+function isZurichCompanyCode(code: string | null | undefined): boolean {
+  return (code ?? "").trim().toUpperCase() === "ZURICH";
+}
+
+function isReversalReceipt(receipt: ZurichReceiptRow): boolean {
+  const receiptType = (receipt.receipt_type ?? "").trim().toUpperCase();
+  const externalNature = (receipt.external_nature ?? "").trim().toUpperCase();
+
+  return (
+    externalNature === "9" ||
+    receiptType.includes("ESTORNO") ||
+    receiptType.includes("REVERSAL")
+  );
 }
 
 // ============================================================
@@ -86,7 +120,6 @@ export async function getAccessibleStores(): Promise<{
   }
 
   const canAccessAll = profile.role === "OWNER" || profile.role === "ADMIN";
-
   const admin = createAdminClient();
 
   if (canAccessAll) {
@@ -99,17 +132,195 @@ export async function getAccessibleStores(): Promise<{
       throw new Error(`Erro ao carregar lojas: ${error.message}`);
     }
 
-    return { stores: data ?? [], canAccessAll: true };
+    return {
+      stores: data ?? [],
+      canAccessAll: true,
+    };
   }
 
   if (!profile.store) {
-    return { stores: [], canAccessAll: false };
+    return {
+      stores: [],
+      canAccessAll: false,
+    };
   }
 
   return {
-    stores: [{ id: profile.store.id, name: profile.store.name }],
+    stores: [
+      {
+        id: profile.store.id,
+        name: profile.store.name,
+      },
+    ],
     canAccessAll: false,
   };
+}
+
+// ============================================================
+// ZURICH — PRÉMIO COMERCIAL DOS RECIBOS
+// ============================================================
+
+/*
+ * Regra da Carteira para Zurich:
+ *
+ * - O ficheiro de apólices Zurich não traz PremioComercial.
+ * - O ficheiro de recibos traz PremioComercial.
+ * - Para cada apólice, usamos o recibo válido mais recente que tenha
+ *   commercial_premium preenchido.
+ * - Estornos/reversões não são usados como valor da carteira.
+ *
+ * A ordenação é por period_end e depois issue_date, ambos descendentes.
+ * Como percorremos nessa ordem e só guardamos o primeiro recibo válido
+ * por policy_id, ficamos com o valor mais recente.
+ */
+async function getZurichCommercialPremiums(
+  policyIds: string[],
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+
+  if (policyIds.length === 0) {
+    return result;
+  }
+
+  const admin = createAdminClient();
+
+  const { data, error } = await admin
+    .from("receipts")
+    .select(`
+      policy_id,
+      commercial_premium,
+      period_end,
+      issue_date,
+      receipt_type,
+      external_nature
+    `)
+    .in("policy_id", policyIds)
+    .not("commercial_premium", "is", null)
+    .order("period_end", { ascending: false })
+    .order("issue_date", { ascending: false });
+
+  if (error) {
+    throw new Error(
+      `Erro ao carregar prémios comerciais Zurich: ${error.message}`,
+    );
+  }
+
+  const receipts = (data ?? []) as ZurichReceiptRow[];
+
+  for (const receipt of receipts) {
+    if (!receipt.policy_id) {
+      continue;
+    }
+
+    if (result.has(receipt.policy_id)) {
+      continue;
+    }
+
+    if (isReversalReceipt(receipt)) {
+      continue;
+    }
+
+    const premium = toNumber(receipt.commercial_premium);
+
+    result.set(receipt.policy_id, premium);
+  }
+
+  return result;
+}
+
+// ============================================================
+// FETCH PARTILHADO DE APÓLICES ATIVAS
+// ============================================================
+
+async function fetchActivePolicies(
+  storeIds: string[] | null,
+  companyId: string,
+  knownCompanyCode?: string,
+): Promise<RawPolicyRow[]> {
+  const admin = createAdminClient();
+  const todayKey = new Date().toISOString().slice(0, 10);
+
+  let companyCode = knownCompanyCode;
+
+  if (!companyCode) {
+    const { data: company, error: companyError } = await admin
+      .from("companies")
+      .select("code")
+      .eq("id", companyId)
+      .maybeSingle();
+
+    if (companyError) {
+      throw new Error(
+        `Erro ao carregar companhia: ${companyError.message}`,
+      );
+    }
+
+    if (!company) {
+      throw new Error("Companhia não encontrada.");
+    }
+
+    companyCode = company.code;
+  }
+
+  let query = admin
+    .from("policies")
+    .select(`
+      id,
+      product_code,
+      product_name,
+      annualized_premium,
+      issue_date,
+      start_date,
+      issuing_store_id,
+      insurance_line:insurance_lines ( plan_type )
+    `)
+    .eq("status", "ACTIVE")
+    .eq("company_id", companyId)
+    .not("start_date", "is", null)
+    .lte("start_date", todayKey);
+
+  if (storeIds !== null) {
+    if (storeIds.length === 0) {
+      return [];
+    }
+
+    query = query.or(storeOrUnassignedFilter(storeIds));
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(`Erro ao carregar carteira: ${error.message}`);
+  }
+
+  const rows = (data ?? []) as unknown as Omit<
+    RawPolicyRow,
+    "portfolio_premium"
+  >[];
+
+  /*
+   * Todas as companhias, exceto Zurich:
+   * mantém o comportamento atual da aplicação.
+   */
+  if (!isZurichCompanyCode(companyCode)) {
+    return rows.map((row) => ({
+      ...row,
+      portfolio_premium: toNumber(row.annualized_premium),
+    }));
+  }
+
+  /*
+   * Zurich:
+   * o valor da Carteira vem de receipts.commercial_premium.
+   */
+  const commercialPremiums = await getZurichCommercialPremiums(
+    rows.map((row) => row.id),
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    portfolio_premium: commercialPremiums.get(row.id) ?? 0,
+  }));
 }
 
 // ============================================================
@@ -120,7 +331,7 @@ export async function getCompaniesOverview(): Promise<CompanyOverview[]> {
   const admin = createAdminClient();
 
   const { stores } = await getAccessibleStores();
-  const storeIds = stores.map((s) => s.id);
+  const storeIds = stores.map((store) => store.id);
 
   const { data: companies, error: companiesError } = await admin
     .from("companies")
@@ -138,102 +349,46 @@ export async function getCompaniesOverview(): Promise<CompanyOverview[]> {
     return [];
   }
 
-  const todayKey = new Date().toISOString().slice(0, 10);
+  /*
+   * Usamos fetchActivePolicies também no overview.
+   * Assim a regra do prémio é exatamente a mesma em:
+   *
+   * - /carteira
+   * - detalhe da companhia
+   * - detalhe por loja
+   * - produção anual
+   *
+   * Para Zurich isto significa commercial_premium dos recibos.
+   */
+  const overview = await Promise.all(
+    companies.map(async (company) => {
+      const rows = await fetchActivePolicies(
+        storeIds,
+        company.id,
+        company.code,
+      );
 
-  // Inclui também apólices sem loja atribuída (ex: Zurich por
-  // associar) — sem isto, ficavam invisíveis em toda a carteira.
-  let query = admin
-    .from("policies")
-    .select("company_id, annualized_premium")
-    .eq("status", "ACTIVE")
-    .or(storeOrUnassignedFilter(storeIds))
-    .not("start_date", "is", null)
-    .lte("start_date", todayKey);
+      const totalPremium = rows.reduce(
+        (sum, row) => sum + row.portfolio_premium,
+        0,
+      );
 
-  const { data: policies, error: policiesError } = await query;
+      return {
+        id: company.id,
+        code: company.code,
+        name: company.name,
+        totalCount: rows.length,
+        totalAnualizado: totalPremium,
+      } satisfies CompanyOverview;
+    }),
+  );
 
-  if (policiesError) {
-    throw new Error(
-      `Erro ao carregar carteira: ${policiesError.message}`,
-    );
-  }
-
-  const totalsByCompany = new Map<
-    string,
-    { count: number; premium: number }
-  >();
-
-  for (const row of policies ?? []) {
-    const current = totalsByCompany.get(row.company_id) ?? {
-      count: 0,
-      premium: 0,
-    };
-
-    current.count += 1;
-
-    current.premium +=
-      row.annualized_premium === null ? 0 : Number(row.annualized_premium);
-
-    totalsByCompany.set(row.company_id, current);
-  }
-
-  return companies.map((company) => {
-    const totals = totalsByCompany.get(company.id) ?? {
-      count: 0,
-      premium: 0,
-    };
-
-    return {
-      id: company.id,
-      code: company.code,
-      name: company.name,
-      totalCount: totals.count,
-      totalAnualizado: totals.premium,
-    };
-  });
+  return overview;
 }
 
 // ============================================================
-// FETCH PARTILHADO
+// AGREGAÇÃO POR PLANO / PRODUTO
 // ============================================================
-
-async function fetchActivePolicies(
-  storeIds: string[] | null,
-  companyId: string,
-): Promise<RawPolicyRow[]> {
-  const admin = createAdminClient();
-
-  const todayKey = new Date().toISOString().slice(0, 10);
-
-  let query = admin
-    .from("policies")
-    .select(`
-      product_code,
-      product_name,
-      annualized_premium,
-      start_date,
-      issuing_store_id,
-      insurance_line:insurance_lines ( plan_type )
-    `)
-    .eq("status", "ACTIVE")
-    .eq("company_id", companyId)
-    .not("start_date", "is", null)
-    .lte("start_date", todayKey);
-
-  if (storeIds) {
-    // Inclui também apólices sem loja atribuída — mesma regra
-    // usada em Clientes, Vencimentos e Comissões.
-    query = query.or(storeOrUnassignedFilter(storeIds));
-  }
-
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(`Erro ao carregar carteira: ${error.message}`);
-  }
-
-  return (data ?? []) as unknown as RawPolicyRow[];
-}
 
 function buildPlans(rows: RawPolicyRow[]): {
   plans: PlanBreakdown[];
@@ -263,10 +418,9 @@ function buildPlans(rows: RawPolicyRow[]): {
         ? line.plan_type
         : "NAO_CLASSIFICADO";
 
-    const premium =
-      row.annualized_premium === null ? 0 : Number(row.annualized_premium);
-
-    const productKey = row.product_code ?? row.product_name ?? "sem-codigo";
+    const premium = row.portfolio_premium;
+    const productKey =
+      row.product_code ?? row.product_name ?? "sem-codigo";
 
     const group = planGroups.get(planType)!;
 
@@ -289,18 +443,27 @@ function buildPlans(rows: RawPolicyRow[]): {
   let totalAnualizado = 0;
   let seguroTotal = 0;
 
-  const order = ["VIDA", "NAO_VIDA", "FINANCEIROS", "NAO_CLASSIFICADO"];
+  const order: PlanBreakdown["planType"][] = [
+    "VIDA",
+    "NAO_VIDA",
+    "FINANCEIROS",
+    "NAO_CLASSIFICADO",
+  ];
 
-  for (const planType of order as PlanBreakdown["planType"][]) {
+  for (const planType of order) {
     const productsMap = planGroups.get(planType)!;
 
     const products = Array.from(productsMap.values()).sort(
       (a, b) => b.annualizedPremium - a.annualizedPremium,
     );
 
-    const planCount = products.reduce((sum, p) => sum + p.count, 0);
+    const planCount = products.reduce(
+      (sum, product) => sum + product.count,
+      0,
+    );
+
     const planPremium = products.reduce(
-      (sum, p) => sum + p.annualizedPremium,
+      (sum, product) => sum + product.annualizedPremium,
       0,
     );
 
@@ -323,7 +486,12 @@ function buildPlans(rows: RawPolicyRow[]): {
     }
   }
 
-  return { plans, totalCount, totalAnualizado, seguroTotal };
+  return {
+    plans,
+    totalCount,
+    totalAnualizado,
+    seguroTotal,
+  };
 }
 
 // ============================================================
@@ -350,12 +518,18 @@ export async function getStorePortfolio(
     throw new Error("Loja não encontrada.");
   }
 
-  // NOTA: aqui continua a ser só a loja específica + sem-loja
-  // (via fetchActivePolicies), não outras lojas — mantém-se o
-  // isolamento entre lojas, só passa a incluir os "por associar".
+  /*
+   * Mantém a regra atual:
+   * loja selecionada + apólices ainda sem issuing_store_id.
+   */
   const rows = await fetchActivePolicies([storeId], companyId);
-  const { plans, totalCount, totalAnualizado, seguroTotal } =
-    buildPlans(rows);
+
+  const {
+    plans,
+    totalCount,
+    totalAnualizado,
+    seguroTotal,
+  } = buildPlans(rows);
 
   return {
     storeId: store.id,
@@ -368,23 +542,26 @@ export async function getStorePortfolio(
 }
 
 // ============================================================
-// CARTEIRA DE TODAS AS LOJAS ACESSÍVEIS (agregado, por companhia)
+// CARTEIRA DE TODAS AS LOJAS ACESSÍVEIS
 // ============================================================
 
 export async function getAllStoresPortfolio(
   companyId: string,
 ): Promise<StorePortfolio> {
   const { stores } = await getAccessibleStores();
-
-  const storeIds = stores.map((s) => s.id);
+  const storeIds = stores.map((store) => store.id);
 
   const rows =
     storeIds.length > 0
       ? await fetchActivePolicies(storeIds, companyId)
       : [];
 
-  const { plans, totalCount, totalAnualizado, seguroTotal } =
-    buildPlans(rows);
+  const {
+    plans,
+    totalCount,
+    totalAnualizado,
+    seguroTotal,
+  } = buildPlans(rows);
 
   return {
     storeId: "all",
@@ -397,7 +574,7 @@ export async function getAllStoresPortfolio(
 }
 
 // ============================================================
-// PRODUÇÃO ANUAL (por ano de emissão, apólices ativas)
+// PRODUÇÃO ANUAL
 // ============================================================
 
 export async function getYearlyProduction(
@@ -406,7 +583,7 @@ export async function getYearlyProduction(
 ): Promise<YearlyProduction[]> {
   const storeIds =
     storeId === "all"
-      ? (await getAccessibleStores()).stores.map((s) => s.id)
+      ? (await getAccessibleStores()).stores.map((store) => store.id)
       : [storeId];
 
   const rows =
@@ -414,22 +591,32 @@ export async function getYearlyProduction(
       ? await fetchActivePolicies(storeIds, companyId)
       : [];
 
-  const byYear = new Map<number, { count: number; premium: number }>();
+  const byYear = new Map<
+    number,
+    {
+      count: number;
+      premium: number;
+    }
+  >();
 
   for (const row of rows) {
-    if (!row.issue_date) continue;
+    if (!row.issue_date) {
+      continue;
+    }
 
     const year = Number(row.issue_date.slice(0, 4));
 
-    if (!Number.isFinite(year)) continue;
+    if (!Number.isFinite(year)) {
+      continue;
+    }
 
-    const premium =
-      row.annualized_premium === null ? 0 : Number(row.annualized_premium);
-
-    const current = byYear.get(year) ?? { count: 0, premium: 0 };
+    const current = byYear.get(year) ?? {
+      count: 0,
+      premium: 0,
+    };
 
     current.count += 1;
-    current.premium += premium;
+    current.premium += row.portfolio_premium;
 
     byYear.set(year, current);
   }
@@ -438,11 +625,14 @@ export async function getYearlyProduction(
 
   return years.map((year, index) => {
     const current = byYear.get(year)!;
-    const previous = index > 0 ? byYear.get(years[index - 1]) : null;
+    const previous =
+      index > 0 ? byYear.get(years[index - 1]) : null;
 
     const growthPct =
       previous && previous.premium > 0
-        ? ((current.premium - previous.premium) / previous.premium) * 100
+        ? ((current.premium - previous.premium) /
+            previous.premium) *
+          100
         : null;
 
     return {
