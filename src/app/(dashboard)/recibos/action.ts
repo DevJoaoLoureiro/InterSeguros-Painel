@@ -67,6 +67,24 @@ type SearchReceiptsRow = {
 
 };
 
+type ReceiptHistoryRow = {
+  id: string;
+  policy_id: string;
+  commercial_premium: number | string | null;
+  period_start: string | null;
+  period_end: string | null;
+  issue_date: string | null;
+  due_date: string | null;
+  receipt_type: string | null;
+  external_nature: string | null;
+};
+
+type PremiumComparison = {
+  previousCommercialPremium: number | null;
+  changePct: number | null;
+  increaseAlert: boolean;
+};
+
 type ReceiptsStatsRow = {
   paid_count: number | string | null;
   paid_commercial: number | string | null;
@@ -141,6 +159,10 @@ function mapRow(row: SearchReceiptsRow): ReceiptRow {
         ? null
         : Number(row.total_premium),
 
+    previous_commercial_premium: null,
+    commercial_premium_change_pct: null,
+    commercial_premium_increase_alert: false,
+
     status: row.status,
 
     payment_date: row.payment_date,
@@ -189,6 +211,182 @@ function mapRow(row: SearchReceiptsRow): ReceiptRow {
         : null,
     },
   };
+}
+
+function normalizePremium(
+  value: number | string | null,
+): number | null {
+  if (value === null || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed)
+    ? parsed
+    : null;
+}
+
+function isReversalHistoryReceipt(
+  receipt: ReceiptHistoryRow,
+): boolean {
+  const type = (receipt.receipt_type ?? "")
+    .trim()
+    .toUpperCase();
+
+  return (
+    receipt.external_nature === "9" ||
+    type === "REVERSAL" ||
+    type === "ESTORNO" ||
+    type.includes("REVERSAL") ||
+    type.includes("ESTORNO")
+  );
+}
+
+/*
+ * Para comparar recibos usamos primeiro o início do período,
+ * porque representa melhor a sequência de frações da apólice.
+ * Se não existir, fazemos fallback para vencimento/emissão/fim.
+ */
+function receiptChronologyKey(
+  receipt: ReceiptHistoryRow,
+): string {
+  return (
+    receipt.period_start ??
+    receipt.due_date ??
+    receipt.issue_date ??
+    receipt.period_end ??
+    "0000-00-00"
+  );
+}
+
+async function getPremiumComparisons(
+  rows: SearchReceiptsRow[],
+): Promise<Map<string, PremiumComparison>> {
+  const result = new Map<string, PremiumComparison>();
+
+  if (rows.length === 0) {
+    return result;
+  }
+
+  const policyIds = Array.from(
+    new Set(rows.map((row) => row.policy_id)),
+  );
+
+  const admin = createAdminClient();
+
+  const { data, error } = await admin
+    .from("receipts")
+    .select(`
+      id,
+      policy_id,
+      commercial_premium,
+      period_start,
+      period_end,
+      issue_date,
+      due_date,
+      receipt_type,
+      external_nature
+    `)
+    .in("policy_id", policyIds)
+    .not("commercial_premium", "is", null);
+
+  if (error) {
+    throw new Error(
+      `Erro ao comparar prémios dos recibos: ${error.message}`,
+    );
+  }
+
+  const historyByPolicy = new Map<
+    string,
+    ReceiptHistoryRow[]
+  >();
+
+  for (const receipt of (data ?? []) as ReceiptHistoryRow[]) {
+    if (isReversalHistoryReceipt(receipt)) {
+      continue;
+    }
+
+    const premium = normalizePremium(
+      receipt.commercial_premium,
+    );
+
+    if (premium === null || premium <= 0) {
+      continue;
+    }
+
+    const list = historyByPolicy.get(receipt.policy_id) ?? [];
+    list.push(receipt);
+    historyByPolicy.set(receipt.policy_id, list);
+  }
+
+  for (const receipts of historyByPolicy.values()) {
+    receipts.sort((a, b) => {
+      const dateComparison = receiptChronologyKey(a).localeCompare(
+        receiptChronologyKey(b),
+      );
+
+      if (dateComparison !== 0) {
+        return dateComparison;
+      }
+
+      return a.id.localeCompare(b.id);
+    });
+  }
+
+  for (const row of rows) {
+    const currentPremium = normalizePremium(
+      row.commercial_premium,
+    );
+
+    if (currentPremium === null || currentPremium <= 0) {
+      result.set(row.id, {
+        previousCommercialPremium: null,
+        changePct: null,
+        increaseAlert: false,
+      });
+      continue;
+    }
+
+    const history = historyByPolicy.get(row.policy_id) ?? [];
+    const currentIndex = history.findIndex(
+      (receipt) => receipt.id === row.id,
+    );
+
+    if (currentIndex <= 0) {
+      result.set(row.id, {
+        previousCommercialPremium: null,
+        changePct: null,
+        increaseAlert: false,
+      });
+      continue;
+    }
+
+    const previousReceipt = history[currentIndex - 1];
+    const previousPremium = normalizePremium(
+      previousReceipt.commercial_premium,
+    );
+
+    if (previousPremium === null || previousPremium <= 0) {
+      result.set(row.id, {
+        previousCommercialPremium: null,
+        changePct: null,
+        increaseAlert: false,
+      });
+      continue;
+    }
+
+    const changePct =
+      ((currentPremium - previousPremium) / previousPremium) * 100;
+
+    result.set(row.id, {
+      previousCommercialPremium: previousPremium,
+      changePct,
+      increaseAlert: changePct > 5,
+    });
+  }
+
+  return result;
 }
 
 /*
@@ -365,6 +563,27 @@ export async function getReceiptsData(
     totalPages,
   );
 
+  const premiumComparisons = await getPremiumComparisons(rows);
+
+  const items = rows.map((row) => {
+    const mapped = mapRow(row);
+    const comparison = premiumComparisons.get(row.id);
+
+    if (!comparison) {
+      return mapped;
+    }
+
+    return {
+      ...mapped,
+      previous_commercial_premium:
+        comparison.previousCommercialPremium,
+      commercial_premium_change_pct:
+        comparison.changePct,
+      commercial_premium_increase_alert:
+        comparison.increaseAlert,
+    };
+  });
+
   return {
     stats: {
       paid: {
@@ -416,7 +635,7 @@ export async function getReceiptsData(
       },
     },
 
-    items: rows.map(mapRow),
+    items,
 
     page,
     totalPages,

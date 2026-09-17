@@ -132,7 +132,11 @@ const getPortfolioMetadata = unstable_cache(
   },
 );
 
-function mapPolicy(raw: PolicyJson, clientId: string): PolicyRow {
+function mapPolicy(
+  raw: PolicyJson,
+  clientId: string,
+  vehicleRegistration: string | null,
+): PolicyRow {
   return {
     id: raw.id,
     client_id: clientId,
@@ -152,6 +156,7 @@ function mapPolicy(raw: PolicyJson, clientId: string): PolicyRow {
     commercial_premium: toFiniteNumber(raw.commercial_premium),
     total_premium: toFiniteNumber(raw.total_premium),
     annualized_premium: toFiniteNumber(raw.annualized_premium),
+    vehicle_registration: vehicleRegistration,
     latest_receipt: raw.latest_receipt
       ? {
           id: raw.latest_receipt.id,
@@ -184,7 +189,10 @@ function mapPolicy(raw: PolicyJson, clientId: string): PolicyRow {
   };
 }
 
-function mapPortfolioRows(rows: PortfolioRpcRow[]): PortfolioClient[] {
+function mapPortfolioRows(
+  rows: PortfolioRpcRow[],
+  vehicleRegistrations: Map<string, string>,
+): PortfolioClient[] {
   return rows.map((row) => ({
     client: {
       id: row.client_id,
@@ -201,7 +209,11 @@ function mapPortfolioRows(rows: PortfolioRpcRow[]): PortfolioClient[] {
       updated_at: "",
     },
     policies: (row.policies ?? []).map((policy) =>
-      mapPolicy(policy, row.client_id),
+      mapPolicy(
+        policy,
+        row.client_id,
+        vehicleRegistrations.get(policy.id) ?? null,
+      ),
     ),
     opportunity: {
       hasOpportunity: false,
@@ -212,6 +224,70 @@ function mapPortfolioRows(rows: PortfolioRpcRow[]): PortfolioClient[] {
       reason: null,
     },
   }));
+}
+
+function getVehicleRegistrationFromMetadata(
+  metadata: unknown,
+): string | null {
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    Array.isArray(metadata)
+  ) {
+    return null;
+  }
+
+  const value = (metadata as Record<string, unknown>).vehicleRegistration;
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toUpperCase();
+
+  return normalized || null;
+}
+
+async function getVehicleRegistrationsForRows(
+  admin: ReturnType<typeof createAdminClient>,
+  rows: PortfolioRpcRow[],
+): Promise<Map<string, string>> {
+  const policyIds = Array.from(
+    new Set(
+      rows.flatMap((row) =>
+        (row.policies ?? []).map((policy) => policy.id),
+      ),
+    ),
+  );
+
+  const result = new Map<string, string>();
+
+  if (policyIds.length === 0) {
+    return result;
+  }
+
+  const { data, error } = await admin
+    .from("policies")
+    .select("id, provider_metadata")
+    .in("id", policyIds);
+
+  if (error) {
+    throw new Error(
+      `Erro ao carregar matrículas das apólices: ${error.message}`,
+    );
+  }
+
+  for (const policy of data ?? []) {
+    const registration = getVehicleRegistrationFromMetadata(
+      policy.provider_metadata,
+    );
+
+    if (registration) {
+      result.set(policy.id, registration);
+    }
+  }
+
+  return result;
 }
 
 export async function getClientsPortfolioData(
@@ -351,9 +427,14 @@ export async function getClientsPortfolioData(
   const totalPages = Math.max(1, Math.ceil(totalCount / CLIENTS_PAGE_SIZE));
   const page = Math.min(requestedPage, totalPages);
 
+  const vehicleRegistrations = await getVehicleRegistrationsForRows(
+    admin,
+    rows,
+  );
+
   return {
     stats,
-    items: mapPortfolioRows(rows),
+    items: mapPortfolioRows(rows, vehicleRegistrations),
     page,
     totalPages,
     totalCount,

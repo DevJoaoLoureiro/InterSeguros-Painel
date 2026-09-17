@@ -13,6 +13,7 @@ import {
   Clock3,
   RotateCcw,
   Search,
+  TrendingUp,
   Undo2,
 } from "lucide-react";
 
@@ -443,8 +444,25 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
                       <StatusBadge receipt={receipt} />
                     </td>
 
-                    <td className="px-5 py-4 text-right text-sm font-medium text-[#343941]">
-                      {formatCurrency(receipt.commercial_premium ?? 0)}
+                    <td className="px-5 py-4 text-right">
+                      <p className="text-sm font-medium text-[#343941]">
+                        {formatCurrency(receipt.commercial_premium ?? 0)}
+                      </p>
+
+                      {receipt.commercial_premium_increase_alert &&
+                        receipt.commercial_premium_change_pct !== null && (
+                          <div
+                            className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700"
+                            title={
+                              receipt.previous_commercial_premium !== null
+                                ? `Recibo anterior: ${formatCurrency(receipt.previous_commercial_premium)}`
+                                : undefined
+                            }
+                          >
+                            <TrendingUp className="h-3.5 w-3.5" />
+                            +{receipt.commercial_premium_change_pct.toFixed(2)}%
+                          </div>
+                        )}
                     </td>
 
                     <td className="px-5 py-4 text-right text-sm font-semibold text-[#24272d]">

@@ -4,7 +4,9 @@ import {
   getApolicesDoDia,
   getClientesDoDia,
   getRecibosDoDia,
+  getObjetosDoDia,
   obterClientePorIdNif,
+  obterObjetosPorNrApolice,
   getZurichAccounts,
   ZurichAccount,
 } from "./client";
@@ -16,7 +18,10 @@ import { upsertClient } from "@/lib/insurance/sync/upsert-client";
 import { upsertPolicy } from "@/lib/insurance/sync/upsert-policy";
 import { batchUpsertReceipts } from "@/lib/insurance/sync/batch-upsert-receipts";
 
-import type { ZurichClienteFicheiro } from "./file-parser";
+import type {
+  ZurichClienteFicheiro,
+  ZurichObjetoFicheiro,
+} from "./file-parser";
 
 const COMPANY_CODE = "ZURICH";
 
@@ -90,6 +95,45 @@ async function safeGetRecibosDoDia(data: string, account: ZurichAccount) {
     }
     throw error;
   }
+}
+
+async function safeGetObjetosDoDia(data: string, account: ZurichAccount) {
+  try {
+    return await getObjetosDoDia(data, account);
+  } catch (error) {
+    if (isDiaSemDadosError(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/**
+ * Extrai uma matrícula portuguesa no formato XX-XX-XX do texto
+ * de DescricaoObjeto devolvido pela Zurich.
+ *
+ * Exemplos reais:
+ *   "AC-87-GG Renault -" -> "AC-87-GG"
+ *   "21-AH-98 Renault Megane 1.5" -> "21-AH-98"
+ */
+function extractVehicleRegistration(description: string): string | null {
+  const match = description
+    .trim()
+    .toUpperCase()
+    .match(/\b[A-Z0-9]{2}-[A-Z0-9]{2}-[A-Z0-9]{2}\b/);
+
+  return match?.[0] ?? null;
+}
+
+function findVehicleObject<T extends {
+  TipoObjeto: string;
+  DescricaoObjeto: string;
+}>(objects: T[]): T | null {
+  return (
+    objects.find((object) =>
+      object.TipoObjeto.trim().toLowerCase().includes("viatura"),
+    ) ?? null
+  );
 }
 
 type SyncOptions = {
@@ -183,11 +227,16 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     // numérico para clientes diferentes.
     const clientesPorId = new Map<string, ZurichClienteFicheiro>();
 
+    // Objetos de risco por conta + número de apólice.
+    // Para Auto, DescricaoObjeto contém a matrícula.
+    const objetosPorApolice = new Map<string, ZurichObjetoFicheiro[]>();
+
     for (const account of accounts) {
       for (const dia of dateRange(fromDate, today)) {
-        const [apolicesDoDia, clientesDoDia] = await Promise.all([
+        const [apolicesDoDia, clientesDoDia, objetosDoDia] = await Promise.all([
           safeGetApolicesDoDia(dia, account),
           safeGetClientesDoDia(dia, account),
+          safeGetObjetosDoDia(dia, account),
         ]);
 
         for (const source of apolicesDoDia) {
@@ -199,6 +248,13 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
             `${account.key}:${cliente.IDCliente.trim()}`,
             cliente,
           );
+        }
+
+        for (const objeto of objetosDoDia) {
+          const key = `${account.key}:${objeto.NumeroApolice.trim()}`;
+          const current = objetosPorApolice.get(key) ?? [];
+          current.push(objeto);
+          objetosPorApolice.set(key, current);
         }
       }
     }
@@ -296,6 +352,70 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
         }
 
         const normalized = mapZurichPolicy(source, cliente);
+
+        // ----------------------------------
+        // OBJETO DE RISCO / MATRÍCULA
+        // ----------------------------------
+        //
+        // A matrícula não vem no ficheiro de apólices.
+        // Para Auto, a Zurich envia-a em Objetos de Risco,
+        // dentro de DescricaoObjeto quando TipoObjeto = Viatura.
+        //
+        // Primeiro usamos os objetos do ficheiro diário. Se não
+        // houver nenhum para esta apólice nesse período, fazemos
+        // fallback para a consulta individual por nº de apólice.
+
+        const policyObjectsKey = `${account.key}:${source.NumeroApolice.trim()}`;
+        let policyObjects = objetosPorApolice.get(policyObjectsKey) ?? [];
+
+        if (policyObjects.length === 0) {
+          try {
+            const objectResult = await obterObjetosPorNrApolice(
+              source.NumeroApolice.trim(),
+              account,
+            );
+
+            policyObjects = (objectResult.ListaObjetos ?? []).map((object) => ({
+              NumeroApolice: object.NumeroApolice ?? source.NumeroApolice,
+              NumeroObjeto: object.NumeroObjeto ?? "",
+              DescricaoObjeto: object.DescricaoObjeto ?? "",
+              TipoObjeto: object.TipoObjeto ?? "",
+              Capital: String(object.Capital ?? ""),
+              EstadoCod: object.EstadoCod ?? "",
+              Estado: object.Estado ?? "",
+              Premio: String(object.Premio ?? ""),
+            }));
+          } catch (objectError) {
+            console.warn(
+              `[Zurich:${account.key}] Falha ao obter objetos da apólice ${source.NumeroApolice}:`,
+              objectError instanceof Error
+                ? objectError.message
+                : objectError,
+            );
+          }
+        }
+
+        const vehicleObject = findVehicleObject(policyObjects);
+        const vehicleRegistration = vehicleObject
+          ? extractVehicleRegistration(vehicleObject.DescricaoObjeto)
+          : null;
+
+        normalized.providerMetadata = {
+          ...normalized.providerMetadata,
+          ...(vehicleObject
+            ? {
+                insuredObject: {
+                  number: vehicleObject.NumeroObjeto,
+                  type: vehicleObject.TipoObjeto,
+                  description: vehicleObject.DescricaoObjeto,
+                  status: vehicleObject.Estado,
+                },
+              }
+            : {}),
+          ...(vehicleRegistration
+            ? { vehicleRegistration }
+            : {}),
+        };
 
         // A loja é conhecida pela CONTA que trouxe esta apólice,
         // não pelos dados da própria apólice — sobrepomos aqui,

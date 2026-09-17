@@ -65,6 +65,10 @@ export type ReceiptRow = {
   commercial_premium: number | null;
   total_premium: number | null;
 
+  previous_commercial_premium: number | null;
+  commercial_premium_change_pct: number | null;
+  commercial_premium_increase_alert: boolean;
+
   status: ReceiptStatus;
 
   payment_date: string | null;

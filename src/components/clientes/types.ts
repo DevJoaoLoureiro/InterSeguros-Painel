@@ -68,6 +68,9 @@ export type PolicyRow = {
   total_premium: number | null;
   annualized_premium: number | null;
 
+  // Matrícula normalizada, quando disponível no provider_metadata.
+  vehicle_registration: string | null;
+
     latest_receipt: {
     id: string;
     receipt_number: string | null;

@@ -4,9 +4,11 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   Building2,
   CalendarDays,
+  Car,
   CreditCard,
   ReceiptText,
   ShieldCheck,
+  TrendingUp,
   UserRound,
   X,
 } from "lucide-react";
@@ -221,12 +223,12 @@ export function PolicyDetailsDrawer({
   );
 
   const [isAssigning, startAssignTransition] = useTransition();
-    const [assignedUser, setAssignedUser] = useState<{
+  const [assignedUser, setAssignedUser] = useState<{
     id: string;
     full_name: string;
   } | null>(null);
 
-   const [assignedStore, setAssignedStore] = useState<{
+  const [assignedStore, setAssignedStore] = useState<{
     id: string;
     name: string;
   } | null>(null);
@@ -249,7 +251,7 @@ export function PolicyDetailsDrawer({
     [policies, activePolicyId],
   );
 
-   useEffect(() => {
+  useEffect(() => {
     setAssignedUser(activePolicy?.commercial_user ?? null);
     setAssignedStore(activePolicy?.issuing_store ?? null);
   }, [
@@ -345,10 +347,11 @@ export function PolicyDetailsDrawer({
   ).length;
 
   const latestPeriodEndReceipt = [...nonReversalReceipts]
-  .filter((r) => r.period_end)
-  .sort((a, b) => (b.period_end! > a.period_end! ? 1 : -1))[0];
+    .filter((r) => r.period_end)
+    .sort((a, b) => (b.period_end! > a.period_end! ? 1 : -1))[0];
 
-const estimatedRenewalDate = latestPeriodEndReceipt?.period_end ?? null;
+  const estimatedRenewalDate =
+    latestPeriodEndReceipt?.period_end ?? null;
 
   return (
     <div className="fixed inset-0 z-[100]">
@@ -464,6 +467,21 @@ const estimatedRenewalDate = latestPeriodEndReceipt?.period_end ?? null;
                   {activePolicy.product_name ?? "—"}
                 </dd>
               </div>
+
+            {(
+              activePolicy.product_name?.toLowerCase().includes("auto") ||
+              ["5324", "5907", "5910"].includes(activePolicy.product_code ?? "")
+            ) && (
+              <div>
+                <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
+                  <Car className="h-3.5 w-3.5" />
+                  Matrícula
+                </dt>
+                <dd className="mt-1 text-sm font-semibold tracking-wide text-[#333842]">
+                  {activePolicy.vehicle_registration ?? "—"}
+                </dd>
+              </div>
+            )}
 
               <div>
                 <dt className="flex items-center gap-1 text-xs text-[#8a9099]">
@@ -633,10 +651,46 @@ const estimatedRenewalDate = latestPeriodEndReceipt?.period_end ?? null;
                     </div>
 
                     <div className="text-right">
-                      <p className="text-sm font-semibold text-[#20242a]">
-                        {formatCurrency(receipt.commercial_premium)}
-                      </p>
-                      <p className="text-xs text-[#8a9099]">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <p className="text-sm font-semibold text-[#20242a]">
+                          {formatCurrency(receipt.commercial_premium)}
+                        </p>
+
+                        {receipt.premium_change_pct !== null && (
+                          <span
+                            title={
+                              receipt.previous_commercial_premium !== null
+                                ? `Recibo anterior: ${formatCurrency(receipt.previous_commercial_premium)}`
+                                : undefined
+                            }
+                            className={[
+                              "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+                              receipt.premium_increase_alert
+                                ? "border-red-200 bg-red-50 text-red-700"
+                                : receipt.premium_change_pct > 0
+                                  ? "border-amber-200 bg-amber-50 text-amber-700"
+                                  : receipt.premium_change_pct < 0
+                                    ? "border-green-200 bg-green-50 text-green-700"
+                                    : "border-slate-200 bg-slate-50 text-slate-600",
+                            ].join(" ")}
+                          >
+                            {receipt.premium_change_pct > 0 && (
+                              <TrendingUp className="h-3 w-3" />
+                            )}
+
+                            {receipt.premium_change_pct > 0 ? "+" : ""}
+                            {receipt.premium_change_pct.toFixed(2)}%
+                          </span>
+                        )}
+                      </div>
+
+                      {receipt.premium_increase_alert && (
+                        <p className="mt-1 text-[10px] font-medium text-red-600">
+                          Aumento superior a 5%
+                        </p>
+                      )}
+
+                      <p className="mt-1 text-xs text-[#8a9099]">
                         Total: {formatCurrency(receipt.total_premium)}
                       </p>
                     </div>
