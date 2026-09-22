@@ -183,7 +183,12 @@ export function mapZurichPolicy(
       commercialPremium: null,
       totalPremium: parseZurichFileDecimal(source.PremioApolice),
       annualizedPremium: parseZurichFileDecimal(source.PremioApolice),
-       paymentFrequency: "UNKNOWN",
+      // Fraccionamento (descrição) vem em cada apólice. Valores que a
+      // Zurich envie e que não estejam previstos em normalizeFrequency
+      // ficam "OTHER" (nunca se inventa); o valor bruto (código e
+      // descrição) é preservado em provider_metadata.paymentFrequencyRaw
+      // pelo enriquecimento, para auditoria.
+      paymentFrequency: normalizeFrequency(source.Fraccionamento),
 
     // Não temos dados de agente/equipa vindos da API da Zurich.
     agentCode: null,

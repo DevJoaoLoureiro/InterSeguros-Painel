@@ -1,0 +1,191 @@
+[1mdiff --git "a/C:\\Users\\Jo\303\243o Loureiro\\Desktop\\inter\\InterSeguros-Antigo\\src\\lib\\insurance\\providers\\zurich\\client.ts" "b/C:\\Users\\Jo\303\243o Loureiro\\Documents\\Fisacar\\Interseguros\\InterSeguros-Painel\\src\\lib\\insurance\\providers\\zurich\\client.ts"[m
+[1mindex 55756b5..67bc606 100644[m
+[1m--- "a/C:\\Users\\Jo\303\243o Loureiro\\Desktop\\inter\\InterSeguros-Antigo\\src\\lib\\insurance\\providers\\zurich\\client.ts"[m	
+[1m+++ "b/C:\\Users\\Jo\303\243o Loureiro\\Documents\\Fisacar\\Interseguros\\InterSeguros-Painel\\src\\lib\\insurance\\providers\\zurich\\client.ts"[m	
+[36m@@ -21,9 +21,18 @@[m
+ // Se não passares "account" a nenhuma função, usa-se a conta[m
+ // "default" lida das env vars de sempre (ZURICH_AGENTE_NR, etc.)[m
+ // — mantém tudo o que já testámos a funcionar sem alterações.[m
+[32m+[m[32m//[m
+[32m+[m[32m// TOKEN: SÓ DO ENV, SEM RENOVAÇÃO[m
+[32m+[m[32m// O utilizador/token Zurich é PARTILHADO por vários CRMs. Emitir um[m
+[32m+[m[32m// token novo (CriarNovoToken) pode anular o token que os outros[m
+[32m+[m[32m// usam. Por isso este client lê o token SEMPRE de account.token[m
+[32m+[m[32m// (ZURICH_TOKEN, ou o campo "token" de cada entrada de[m
+[32m+[m[32m// ZURICH_ACCOUNTS), não o guarda nem o lê da BD e nunca o renova[m
+[32m+[m[32m// sozinho. Se a Zurich rejeitar o token, o erro sobe e o token é[m
+[32m+[m[32m// atualizado no env, de forma coordenada com os outros CRMs.[m
+ // =====================================================[m
+ [m
+[31m-import { createAdminClient } from "@/lib/supabase/admin";[m
+[32m+[m[32mimport { sanitizeZurichText } from "./log-safety";[m
+ [m
+ // -----------------------------------------------------[m
+ // CONTAS (uma por loja)[m
+[36m@@ -269,102 +278,12 @@[m [mfunction resolveAccount(account?: ZurichAccount): ZurichAccount {[m
+ }[m
+ [m
+ // -----------------------------------------------------[m
+[31m-// TOKEN STORE (com renovação automática + persistência)[m
+[32m+[m[32m// TOKEN (SÓ DO ENV; SEM RENOVAÇÃO NEM PERSISTÊNCIA)[m
+ // -----------------------------------------------------[m
+ //[m
+[31m-// O token fica cacheado em memória (por conta), mas a fonte de[m
+[31m-// verdade é a tabela "integration_tokens" no Supabase — assim[m
+[31m-// sobrevive a reinícios/deploys. Cada conta/loja tem a sua[m
+[31m-// própria linha, identificada por "zurich:<key-da-conta>".[m
+[31m-[m
+[31m-const inMemoryTokens = new Map<string, string>();[m
+[31m-[m
+[31m-function tokenProviderKey(accountKey: string): string {[m
+[31m-  return `zurich:${accountKey}`;[m
+[31m-}[m
+[31m-[m
+[31m-async function loadTokenFromDb(accountKey: string): Promise<string | null> {[m
+[31m-  try {[m
+[31m-    const supabase = createAdminClient();[m
+[31m-[m
+[31m-    const { data, error } = await supabase[m
+[31m-      .from("integration_tokens")[m
+[31m-      .select("token")[m
+[31m-      .eq("provider", tokenProviderKey(accountKey))[m
+[31m-      .maybeSingle();[m
+[31m-[m
+[31m-    if (error) {[m
+[31m-      console.warn([m
+[31m-        `[Zurich:${accountKey}] Erro ao ler token da BD, a usar fallback:`,[m
+[31m-        error.message,[m
+[31m-      );[m
+[31m-      return null;[m
+[31m-    }[m
+[31m-[m
+[31m-    return data?.token ?? null;[m
+[31m-  } catch (err) {[m
+[31m-    console.warn([m
+[31m-      `[Zurich:${accountKey}] Não foi possível aceder à BD para ler o token, a usar fallback:`,[m
+[31m-      err instanceof Error ? err.message : err,[m
+[31m-    );[m
+[31m-    return null;[m
+[31m-  }[m
+[31m-}[m
+[31m-[m
+[31m-async function persistTokenToDb([m
+[31m-  accountKey: string,[m
+[31m-  token: string,[m
+[31m-): Promise<void> {[m
+[31m-  try {[m
+[31m-    const supabase = createAdminClient();[m
+[31m-[m
+[31m-    const { error } = await supabase.from("integration_tokens").upsert({[m
+[31m-      provider: tokenProviderKey(accountKey),[m
+[31m-      token,[m
+[31m-      updated_at: new Date().toISOString(),[m
+[31m-    });[m
+[31m-[m
+[31m-    if (error) {[m
+[31m-      console.warn([m
+[31m-        `[Zurich:${accountKey}] Falha ao persistir token na BD (fica só em memória por agora):`,[m
+[31m-        error.message,[m
+[31m-      );[m
+[31m-    }[m
+[31m-  } catch (err) {[m
+[31m-    console.warn([m
+[31m-      `[Zurich:${accountKey}] Falha ao persistir token na BD (fica só em memória por agora):`,[m
+[31m-      err instanceof Error ? err.message : err,[m
+[31m-    );[m
+[31m-  }[m
+[31m-}[m
+[31m-[m
+[31m-async function getCurrentToken(account: ZurichAccount): Promise<string> {[m
+[31m-  const cached = inMemoryTokens.get(account.key);[m
+[31m-[m
+[31m-  if (cached) {[m
+[31m-    return cached;[m
+[31m-  }[m
+[31m-[m
+[31m-  const dbToken = await loadTokenFromDb(account.key);[m
+[31m-[m
+[31m-  if (dbToken) {[m
+[31m-    inMemoryTokens.set(account.key, dbToken);[m
+[31m-    return dbToken;[m
+[31m-  }[m
+[31m-[m
+[31m-  inMemoryTokens.set(account.key, account.token);[m
+[31m-  return account.token;[m
+[31m-}[m
+[31m-[m
+[31m-async function setCurrentToken([m
+[31m-  account: ZurichAccount,[m
+[31m-  newToken: string,[m
+[31m-): Promise<void> {[m
+[31m-  inMemoryTokens.set(account.key, newToken);[m
+[31m-  cachedTokenParts.delete(account.key);[m
+[31m-[m
+[31m-  await persistTokenToDb(account.key, newToken);[m
+[31m-}[m
+[32m+[m[32m// O token vem de account.token e mais nenhum sítio: nada de BD[m
+[32m+[m[32m// (a tabela integration_tokens já não é usada por este client) e[m
+[32m+[m[32m// nada de renovação automática. Ver o cabeçalho do ficheiro.[m
+ [m
+ const cachedTokenParts = new Map<[m
+   string,[m
+[36m@@ -374,7 +293,13 @@[m [mconst cachedTokenParts = new Map<[m
+ async function getTokenParts([m
+   account: ZurichAccount,[m
+ ): Promise<{ token1: string; token2: string }> {[m
+[31m-  const token = await getCurrentToken(account);[m
+[32m+[m[32m  const token = account.token;[m
+[32m+[m
+[32m+[m[32m  if (typeof token !== "string" || token.trim() === "") {[m
+[32m+[m[32m    throw new Error([m
+[32m+[m[32m      `Token Zurich em falta para a conta ${account.key} (ZURICH_TOKEN ou o campo "token" da entrada em ZURICH_ACCOUNTS).`,[m
+[32m+[m[32m    );[m
+[32m+[m[32m  }[m
+ [m
+   const cached = cachedTokenParts.get(account.key);[m
+ [m
+[36m@@ -388,15 +313,6 @@[m [masync function getTokenParts([m
+   return parts;[m
+ }[m
+ [m
+[31m-/**[m
+[31m- * Pede um token novo à Zurich (para a conta indicada) e[m
+[31m- * atualiza-o em memória + BD.[m
+[31m- */[m
+[31m-async function renovarToken(account: ZurichAccount): Promise<void> {[m
+[31m-  const result = await criarNovoTokenZurich(account);[m
+[31m-  await setCurrentToken(account, result.Token);[m
+[31m-}[m
+[31m-[m
+ // -----------------------------------------------------[m
+ // HTTP HELPER[m
+ // -----------------------------------------------------[m
+[36m@@ -414,7 +330,10 @@[m [masync function zurichRequest<T>([m
+   extraParams: Record<string, string | number | undefined>,[m
+   init?: { method?: "GET" | "POST"; body?: unknown },[m
+   agenteParamName: string = "AgenteNr",[m
+[31m-  isRetry: boolean = false,[m
+[32m+[m[32m  // Reservado: já não há repetição automática (ver TOKEN no cabeçalho).[m
+[32m+[m[32m  // Mantém-se só para não mudar a posição dos argumentos dos chamadores.[m
+[32m+[m[32m  // eslint-disable-next-line @typescript-eslint/no-unused-vars[m
+[32m+[m[32m  _isRetry: boolean = false,[m
+   account?: ZurichAccount,[m
+ ): Promise<T> {[m
+   const resolvedAccount = resolveAccount(account);[m
+[36m@@ -437,6 +356,8 @@[m [masync function zurichRequest<T>([m
+     "base64",[m
+   );[m
+ [m
+[32m+[m[32m  const startedAt = Date.now();[m
+[32m+[m
+   const response = await fetch([m
+     `${baseUrl.replace(/\/+$/, "")}/${path}?${params.toString()}`,[m
+     {[m
+[36m@@ -456,21 +377,27 @@[m [masync function zurichRequest<T>([m
+     },[m
+   );[m
+ [m
+[32m+[m[32m  const durationMs = Date.now() - startedAt;[m
+[32m+[m
+   if (!response.ok) {[m
+[31m-    co

@@ -21,9 +21,18 @@
 // Se não passares "account" a nenhuma função, usa-se a conta
 // "default" lida das env vars de sempre (ZURICH_AGENTE_NR, etc.)
 // — mantém tudo o que já testámos a funcionar sem alterações.
+//
+// TOKEN: SÓ DO ENV, SEM RENOVAÇÃO
+// O utilizador/token Zurich é PARTILHADO por vários CRMs. Emitir um
+// token novo (CriarNovoToken) pode anular o token que os outros
+// usam. Por isso este client lê o token SEMPRE de account.token
+// (ZURICH_TOKEN, ou o campo "token" de cada entrada de
+// ZURICH_ACCOUNTS), não o guarda nem o lê da BD e nunca o renova
+// sozinho. Se a Zurich rejeitar o token, o erro sobe e o token é
+// atualizado no env, de forma coordenada com os outros CRMs.
 // =====================================================
 
-import { createAdminClient } from "@/lib/supabase/admin";
+import { sanitizeZurichText } from "./log-safety";
 
 // -----------------------------------------------------
 // CONTAS (uma por loja)
@@ -269,102 +278,12 @@ function resolveAccount(account?: ZurichAccount): ZurichAccount {
 }
 
 // -----------------------------------------------------
-// TOKEN STORE (com renovação automática + persistência)
+// TOKEN (SÓ DO ENV; SEM RENOVAÇÃO NEM PERSISTÊNCIA)
 // -----------------------------------------------------
 //
-// O token fica cacheado em memória (por conta), mas a fonte de
-// verdade é a tabela "integration_tokens" no Supabase — assim
-// sobrevive a reinícios/deploys. Cada conta/loja tem a sua
-// própria linha, identificada por "zurich:<key-da-conta>".
-
-const inMemoryTokens = new Map<string, string>();
-
-function tokenProviderKey(accountKey: string): string {
-  return `zurich:${accountKey}`;
-}
-
-async function loadTokenFromDb(accountKey: string): Promise<string | null> {
-  try {
-    const supabase = createAdminClient();
-
-    const { data, error } = await supabase
-      .from("integration_tokens")
-      .select("token")
-      .eq("provider", tokenProviderKey(accountKey))
-      .maybeSingle();
-
-    if (error) {
-      console.warn(
-        `[Zurich:${accountKey}] Erro ao ler token da BD, a usar fallback:`,
-        error.message,
-      );
-      return null;
-    }
-
-    return data?.token ?? null;
-  } catch (err) {
-    console.warn(
-      `[Zurich:${accountKey}] Não foi possível aceder à BD para ler o token, a usar fallback:`,
-      err instanceof Error ? err.message : err,
-    );
-    return null;
-  }
-}
-
-async function persistTokenToDb(
-  accountKey: string,
-  token: string,
-): Promise<void> {
-  try {
-    const supabase = createAdminClient();
-
-    const { error } = await supabase.from("integration_tokens").upsert({
-      provider: tokenProviderKey(accountKey),
-      token,
-      updated_at: new Date().toISOString(),
-    });
-
-    if (error) {
-      console.warn(
-        `[Zurich:${accountKey}] Falha ao persistir token na BD (fica só em memória por agora):`,
-        error.message,
-      );
-    }
-  } catch (err) {
-    console.warn(
-      `[Zurich:${accountKey}] Falha ao persistir token na BD (fica só em memória por agora):`,
-      err instanceof Error ? err.message : err,
-    );
-  }
-}
-
-async function getCurrentToken(account: ZurichAccount): Promise<string> {
-  const cached = inMemoryTokens.get(account.key);
-
-  if (cached) {
-    return cached;
-  }
-
-  const dbToken = await loadTokenFromDb(account.key);
-
-  if (dbToken) {
-    inMemoryTokens.set(account.key, dbToken);
-    return dbToken;
-  }
-
-  inMemoryTokens.set(account.key, account.token);
-  return account.token;
-}
-
-async function setCurrentToken(
-  account: ZurichAccount,
-  newToken: string,
-): Promise<void> {
-  inMemoryTokens.set(account.key, newToken);
-  cachedTokenParts.delete(account.key);
-
-  await persistTokenToDb(account.key, newToken);
-}
+// O token vem de account.token e mais nenhum sítio: nada de BD
+// (a tabela integration_tokens já não é usada por este client) e
+// nada de renovação automática. Ver o cabeçalho do ficheiro.
 
 const cachedTokenParts = new Map<
   string,
@@ -374,7 +293,13 @@ const cachedTokenParts = new Map<
 async function getTokenParts(
   account: ZurichAccount,
 ): Promise<{ token1: string; token2: string }> {
-  const token = await getCurrentToken(account);
+  const token = account.token;
+
+  if (typeof token !== "string" || token.trim() === "") {
+    throw new Error(
+      `Token Zurich em falta para a conta ${account.key} (ZURICH_TOKEN ou o campo "token" da entrada em ZURICH_ACCOUNTS).`,
+    );
+  }
 
   const cached = cachedTokenParts.get(account.key);
 
@@ -386,15 +311,6 @@ async function getTokenParts(
   cachedTokenParts.set(account.key, { token, parts });
 
   return parts;
-}
-
-/**
- * Pede um token novo à Zurich (para a conta indicada) e
- * atualiza-o em memória + BD.
- */
-async function renovarToken(account: ZurichAccount): Promise<void> {
-  const result = await criarNovoTokenZurich(account);
-  await setCurrentToken(account, result.Token);
 }
 
 // -----------------------------------------------------
@@ -414,7 +330,10 @@ async function zurichRequest<T>(
   extraParams: Record<string, string | number | undefined>,
   init?: { method?: "GET" | "POST"; body?: unknown },
   agenteParamName: string = "AgenteNr",
-  isRetry: boolean = false,
+  // Reservado: já não há repetição automática (ver TOKEN no cabeçalho).
+  // Mantém-se só para não mudar a posição dos argumentos dos chamadores.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _isRetry: boolean = false,
   account?: ZurichAccount,
 ): Promise<T> {
   const resolvedAccount = resolveAccount(account);
@@ -437,6 +356,8 @@ async function zurichRequest<T>(
     "base64",
   );
 
+  const startedAt = Date.now();
+
   const response = await fetch(
     `${baseUrl.replace(/\/+$/, "")}/${path}?${params.toString()}`,
     {
@@ -456,20 +377,26 @@ async function zurichRequest<T>(
     },
   );
 
+  const durationMs = Date.now() - startedAt;
+
   if (!response.ok) {
-    const body = await response.text();
+    // O corpo NÃO é lido nem incluído: pode repetir o URL do pedido
+    // (com Token1/Token2 e AgenteNr) ou trazer dados pessoais.
+    await response.body?.cancel().catch(() => undefined);
+
+    console.warn("[Zurich] Request falhou", {
+      operation: path,
+      account: resolvedAccount.key,
+      status: response.status,
+      durationMs,
+    });
 
     throw new Error(
-      `Erro Zurich em ${path} (${response.status}) [conta ${resolvedAccount.key}]: ${body.slice(0, 500)}`,
+      `Erro Zurich em ${path} (${response.status}) [conta ${resolvedAccount.key}]`,
     );
   }
 
   const data = (await response.json()) as T;
-
-  console.log(
-  `[ZURICH RAW RESPONSE - ${path}]`,
-  JSON.stringify(data, null, 2),
-  );
 
   // Verificação de sucesso "solta": a maioria dos endpoints usa
   // "Successo"/"Sucesso" (booleano) no topo, mas alguns (ex:
@@ -479,31 +406,31 @@ async function zurichRequest<T>(
   const sucesso = raw.Successo ?? raw.Sucesso;
   const codigoErro = raw.CodigoErro;
 
-  const isTokenExpirado = codigoErro === 1;
-
-  // Token expirado (Anexo 3, código 1): pedir um token novo e
-  // repetir o pedido original uma única vez (evita loop infinito
-  // se a própria renovação também falhar).
-  if (isTokenExpirado && !isRetry && path !== "CriarNovoToken") {
-    await renovarToken(resolvedAccount);
-
-    return zurichRequest<T>(
-      baseUrl,
-      path,
-      extraParams,
-      init,
-      agenteParamName,
-      true,
-      resolvedAccount,
-    );
-  }
+  // Log operacional SEGURO: nunca a resposta (pode ter token, NIF,
+  // IBAN, ficheiros inteiros em base64) nem os parâmetros do pedido.
+  console.log("[Zurich] Request concluído", {
+    operation: path,
+    account: resolvedAccount.key,
+    status: response.status,
+    durationMs,
+    success:
+      sucesso !== false && (codigoErro === undefined || codigoErro === 0),
+    code: codigoErro ?? null,
+  });
 
   // Alguns erros (Anexo 3) vêm só com CodigoErro + Mensagem,
   // sem o campo Successo/Sucesso — por isso tratamos qualquer
   // CodigoErro truthy (não-zero) como falha também.
   if (sucesso === false || (codigoErro !== undefined && codigoErro !== 0)) {
+    // "Código N" tem de se manter tal e qual: o sync reconhece os
+    // códigos 6/7 ("sem ficheiro/dados") por esse texto. A Mensagem
+    // é redigida porque pode repetir NIF, IBAN ou outros dados.
     throw new Error(
-      `Zurich devolveu erro em ${path} (Código ${codigoErro}) [conta ${resolvedAccount.key}]: ${raw.Mensagem}`,
+      `Zurich devolveu erro em ${path} (Código ${codigoErro}) [conta ${resolvedAccount.key}]: ${sanitizeZurichText(String(raw.Mensagem))}${
+        codigoErro === 1 || codigoErro === 5
+          ? " [token rejeitado: a renovação automática está desativada porque o token é partilhado; atualiza o token no env]"
+          : ""
+      }`,
     );
   }
 
@@ -519,13 +446,22 @@ export type CriarNovoTokenOutput = ZurichBaseOutput & {
 };
 
 /**
- * O token tem validade limitada. Quando expirar, chamar este
- * serviço devolve um novo token — o resto do client já trata
- * disto automaticamente (não precisas de chamar isto à mão).
+ * DESATIVADO POR OMISSÃO. Emite um token novo na Zurich, o que pode
+ * ANULAR o token que os outros CRMs partilham. Nada neste projeto o
+ * chama automaticamente. Só corre com ZURICH_ALLOW_TOKEN_ISSUE=1, de
+ * forma deliberada e coordenada; o token devolvido NÃO é guardado em
+ * lado nenhum: tem de ser copiado manualmente para o env de todos os
+ * consumidores.
  */
 export async function criarNovoTokenZurich(
   account?: ZurichAccount,
 ): Promise<CriarNovoTokenOutput> {
+  if (process.env.ZURICH_ALLOW_TOKEN_ISSUE !== "1") {
+    throw new Error(
+      "Emitir tokens Zurich está desativado: o utilizador/token é partilhado por vários CRMs e uma emissão nova pode anular o token dos outros. Só com ZURICH_ALLOW_TOKEN_ISSUE=1, de forma deliberada e coordenada.",
+    );
+  }
+
   const urls = getUrls();
 
   return zurichRequest<CriarNovoTokenOutput>(
@@ -1106,6 +1042,25 @@ import {
 } from "./file-parser";
 
 /**
+ * Log operacional SEGURO de um ficheiro do dia já lido e interpretado:
+ * só o tipo, o dia, a conta e o nº de registos. Nunca o conteúdo
+ * (NIF, IBAN, nomes) nem o base64 do ficheiro.
+ */
+function logFicheiroDoDia(
+  tipoFicheiro: string,
+  dia: string,
+  account: ZurichAccount | undefined,
+  recordCount: number,
+): void {
+  console.log("[Zurich] Ficheiro do dia processado", {
+    tipoFicheiro,
+    dia,
+    account: account?.key ?? "default",
+    recordCount,
+  });
+}
+
+/**
  * Data no formato AAAA-MM-DD (por omissão, hoje).
  */
 export async function getApolicesDoDia(
@@ -1121,10 +1076,7 @@ export async function getApolicesDoDia(
 
 const apolices = parseApolicesFile(result.Ficheiro);
 
-console.log(
-  "[ZURICH APOLICES JSON]",
-  JSON.stringify(apolices, null, 2),
-);
+logFicheiroDoDia("Apolices", dia, account, apolices.length);
 
 return apolices;
 }
@@ -1139,7 +1091,9 @@ export async function getRecibosDoDia(
     dia,
     account,
   );
-  return parseRecibosFile(result.Ficheiro);
+  const recibos = parseRecibosFile(result.Ficheiro);
+  logFicheiroDoDia("Recibos", dia, account, recibos.length);
+  return recibos;
 }
 
 export async function getClientesDoDia(
@@ -1152,7 +1106,9 @@ export async function getClientesDoDia(
     dia,
     account,
   );
-  return parseClientesFile(result.Ficheiro);
+  const clientes = parseClientesFile(result.Ficheiro);
+  logFicheiroDoDia("Clientes", dia, account, clientes.length);
+  return clientes;
 }
 
 export async function getObjetosDoDia(
@@ -1165,7 +1121,9 @@ export async function getObjetosDoDia(
     dia,
     account,
   );
-  return parseObjetosFile(result.Ficheiro);
+  const objetos = parseObjetosFile(result.Ficheiro);
+  logFicheiroDoDia("ObjetosDeRisco", dia, account, objetos.length);
+  return objetos;
 }
 
 export async function getCoberturasDoDia(
@@ -1178,7 +1136,9 @@ export async function getCoberturasDoDia(
     dia,
     account,
   );
-  return parseCoberturasFile(result.Ficheiro);
+  const coberturas = parseCoberturasFile(result.Ficheiro);
+  logFicheiroDoDia("Coberturas", dia, account, coberturas.length);
+  return coberturas;
 }
 
 /**

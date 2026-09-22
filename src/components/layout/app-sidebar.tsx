@@ -7,6 +7,7 @@ import {
   BarChart3,
   Building2,
   CalendarDays,
+  Calculator,
   ChevronDown,
   CircleUserRound,
   Coins,
@@ -115,6 +116,11 @@ const menuGroups: MenuGroup[] = [
       label: "Oportunidades",
       href: "/oportunidades",
       icon: Target,
+    },
+    {
+      label: "Simulador",
+      href: "/simulador",
+      icon: Calculator,
     },
     {
       label: "Conversas",

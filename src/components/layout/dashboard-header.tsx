@@ -11,6 +11,7 @@ import {
   ReceiptText,
 } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 import { MobileSidebar } from "@/components/layout/mobile-sidebar";
 
@@ -69,6 +70,26 @@ function formatRole(role: string) {
   }
 }
 
+/*
+ * Título e subtítulo por rota. O layout não os passa, e sem isto todas as
+ * páginas mostram o valor por omissão ("Dashboard"). Só as rotas listadas
+ * aqui são afetadas.
+ */
+const PAGE_HEADERS: Record<string, { title: string; subtitle: string }> = {
+  "/simulador": {
+    title: "Simulador",
+    subtitle: "Compare estimativas e cotações de várias seguradoras",
+  },
+};
+
+function getPageHeader(pathname: string) {
+  const match = Object.keys(PAGE_HEADERS).find(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+
+  return match ? PAGE_HEADERS[match] : null;
+}
+
 const notificationIcons = {
   task: ClipboardList,
   receipt: ReceiptText,
@@ -90,6 +111,8 @@ export function DashboardHeader({
 }: DashboardHeaderProps) {
   const initials = getInitials(profile.full_name);
 
+  const pageHeader = getPageHeader(usePathname());
+
   const [notificationsOpen, setNotificationsOpen] = useState(false);
 
   const currentStoreId = selectedStoreId ?? profile.store?.id ?? "all";
@@ -108,11 +131,11 @@ export function DashboardHeader({
 
           <div className="min-w-0">
             <h1 className="truncate text-lg font-semibold tracking-tight text-[#17191d] sm:text-2xl">
-              {title}
+              {pageHeader?.title ?? title}
             </h1>
 
             <p className="mt-0.5 hidden truncate text-xs text-[#777f8a] sm:block sm:text-sm">
-              {subtitle}
+              {pageHeader?.subtitle ?? subtitle}
             </p>
           </div>
         </div>

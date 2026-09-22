@@ -21,6 +21,7 @@ export async function upsertPolicy({
   clientId,
   insuranceLineId,
   policy,
+  metadataPatch,
 }: {
   supabase: SupabaseClient;
   companyId: string;
@@ -29,6 +30,17 @@ export async function upsertPolicy({
     | string
     | null;
   policy: NormalizedPolicy;
+
+  /**
+   * Opcional. Recebe o provider_metadata JÁ GRAVADO (ou {} se não
+   * existir) e devolve as chaves a juntar por cima no fim. Permite a
+   * um provider reconciliar listas com o que existe (ex.: união de
+   * coberturas) sem uma query extra. Sem este parâmetro o
+   * comportamento é exatamente o de sempre.
+   */
+  metadataPatch?: (
+    existing: Record<string, unknown>,
+  ) => Record<string, unknown>;
 }): Promise<UpsertPolicyResult> {
   // ========================================
   // PROCURAR APÃ“LICE EXISTENTE
@@ -174,6 +186,20 @@ export async function upsertPolicy({
           storeExternalCode:
             policy.storeExternalCode,
         }
+      : {}),
+
+    /*
+     * Por último: chaves que o provider reconcilia com o metadata
+     * existente (só quando pedido).
+     */
+    ...(metadataPatch
+      ? metadataPatch(
+          existing?.provider_metadata &&
+            typeof existing.provider_metadata === "object" &&
+            !Array.isArray(existing.provider_metadata)
+            ? (existing.provider_metadata as Record<string, unknown>)
+            : {},
+        )
       : {}),
   };
 

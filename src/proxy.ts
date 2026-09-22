@@ -17,6 +17,10 @@ if (pathname === "/api/whatsapp/webhook") {
   return NextResponse.next();
 }
 
+if (pathname === "/api/zurich/login-code") {
+  return NextResponse.next();
+}
+
     // =====================================================
   // CRON
   // =====================================================

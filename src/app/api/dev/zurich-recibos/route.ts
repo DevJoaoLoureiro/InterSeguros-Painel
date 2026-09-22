@@ -1,4 +1,8 @@
 import { getRecibosDoDia } from "@/lib/insurance/providers/zurich/client";
+import {
+  maskSensitiveFields,
+  sanitizeZurichText,
+} from "@/lib/insurance/providers/zurich/log-safety";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -14,7 +18,10 @@ export async function GET(request: Request) {
       success: true,
       data,
       count: recibos.length,
-      recibos,
+      // NIF e IDCliente mascarados: rota de inspeção de formato.
+      recibos: recibos.map((recibo) =>
+        maskSensitiveFields(recibo, ["NIF", "IDCliente"]),
+      ),
     });
   } catch (error) {
     return Response.json(
@@ -23,7 +30,7 @@ export async function GET(request: Request) {
         data,
         error:
           error instanceof Error
-            ? error.message
+            ? sanitizeZurichText(error.message)
             : "Erro desconhecido",
       },
       { status: 500 },

@@ -5,14 +5,31 @@ import {
   getClientesDoDia,
   getRecibosDoDia,
   getObjetosDoDia,
+  getCoberturasDoDia,
   obterClientePorIdNif,
   obterObjetosPorNrApolice,
+  obterCoberturasPorApolice,
   getZurichAccounts,
   ZurichAccount,
 } from "./client";
 
 import { mapZurichPolicy } from "./mapper";
 import { mapZurichReceipt } from "./receipt-mapper";
+import {
+  maskIdentifier,
+  sanitizeZurichText,
+  summarizeZurichError,
+} from "./log-safety";
+import {
+  buildZurichEnrichmentPatch,
+  isZurichAutoPolicy,
+  type ZurichEnrichmentInput,
+} from "./risk-enrichment";
+import {
+  createFallbackBudget,
+  DEFAULT_FALLBACK_DELAY_MS,
+  prepareZurichPolicyEnrichment,
+} from "./policy-enrichment";
 
 import { upsertClient } from "@/lib/insurance/sync/upsert-client";
 import { upsertPolicy } from "@/lib/insurance/sync/upsert-policy";
@@ -20,6 +37,7 @@ import { batchUpsertReceipts } from "@/lib/insurance/sync/batch-upsert-receipts"
 
 import type {
   ZurichClienteFicheiro,
+  ZurichCoberturaFicheiro,
   ZurichObjetoFicheiro,
 } from "./file-parser";
 
@@ -109,6 +127,32 @@ async function safeGetObjetosDoDia(data: string, account: ZurichAccount) {
 }
 
 /**
+ * As coberturas são um EXTRA: qualquer falha (não só "dia sem
+ * dados") é registada e tratada como "sem coberturas neste dia",
+ * para nunca impedir o sync das apólices.
+ */
+async function safeGetCoberturasDoDia(
+  data: string,
+  account: ZurichAccount,
+): Promise<ZurichCoberturaFicheiro[]> {
+  try {
+    return await getCoberturasDoDia(data, account);
+  } catch (error) {
+    if (isDiaSemDadosError(error)) {
+      return [];
+    }
+
+    console.warn("[Zurich] Falha ao obter coberturas do dia (segue sem elas)", {
+      account: account.key,
+      dia: data,
+      ...summarizeZurichError(error),
+    });
+
+    return [];
+  }
+}
+
+/**
  * Extrai uma matrícula portuguesa no formato XX-XX-XX do texto
  * de DescricaoObjeto devolvido pela Zurich.
  *
@@ -138,7 +182,100 @@ function findVehicleObject<T extends {
 
 type SyncOptions = {
   limit?: number;
+
+  /**
+   * Liga o enriquecimento de risco: pede o ficheiro de coberturas
+   * (TipoFicheiro 5) e grava objetos/coberturas/fracionamento cru em
+   * provider_metadata. Omissão: variável de ambiente ZURICH_ENRICHMENT
+   * ("1", "true" ou "on"). Desligado, o sync não pede coberturas e
+   * grava os mesmos metadados de antes.
+   */
+  enrichment?: boolean;
+
+  /**
+   * Não escreve NADA na BD (nem registo de execução, nem estado
+   * incremental, nem clientes, nem apólices). Lê da Zurich e da BD e
+   * devolve, em `preview`, um resumo mascarado do que faria.
+   */
+  dryRun?: boolean;
+
+  /** Teto de apólices Auto com consulta individual (fallback) nesta corrida. */
+  fallbackLimit?: number;
+
+  /** Pausa (ms) após cada consulta individual do fallback. */
+  fallbackDelayMs?: number;
 };
+
+function isEnrichmentEnabled(options: SyncOptions): boolean {
+  if (options.enrichment !== undefined) {
+    return options.enrichment;
+  }
+
+  return ["1", "true", "on"].includes(
+    (process.env.ZURICH_ENRICHMENT ?? "").trim().toLowerCase(),
+  );
+}
+
+type DayBucket<T> = { day: string; items: T[] };
+
+/**
+ * Guarda, por conta + apólice, só as linhas do dia MAIS RECENTE em
+ * que a apólice apareceu. Os dias chegam por ordem crescente, por
+ * isso o seguinte substitui o anterior. Evita objetos/coberturas
+ * duplicados quando a mesma apólice aparece em vários ficheiros
+ * diários (o que faria uma só viatura parecer várias).
+ */
+function keepLatestDay<T extends { NumeroApolice: string }>(
+  store: Map<string, DayBucket<T>>,
+  accountKey: string,
+  day: string,
+  rows: readonly T[],
+): void {
+  const perPolicy = new Map<string, T[]>();
+
+  for (const row of rows) {
+    const key = `${accountKey}:${row.NumeroApolice.trim()}`;
+    const list = perPolicy.get(key) ?? [];
+    list.push(row);
+    perPolicy.set(key, list);
+  }
+
+  for (const [key, items] of perPolicy) {
+    store.set(key, { day, items });
+  }
+}
+
+type LineInfo = { code: string | null; name: string | null };
+
+/** Código/nome do ramo, em cache por corrida (poucas linhas distintas). */
+async function loadInsuranceLineInfo(
+  supabase: ReturnType<typeof createAdminClient>,
+  lineId: string | null,
+  cache: Map<string, LineInfo | null>,
+): Promise<LineInfo | null> {
+  if (!lineId) {
+    return null;
+  }
+
+  if (cache.has(lineId)) {
+    return cache.get(lineId) ?? null;
+  }
+
+  const { data, error } = await supabase
+    .from("insurance_lines")
+    .select("code, name")
+    .eq("id", lineId)
+    .maybeSingle();
+
+  const info: LineInfo | null =
+    error || !data
+      ? null
+      : { code: data.code ?? null, name: data.name ?? null };
+
+  cache.set(lineId, info);
+
+  return info;
+}
 
 // =====================================================
 // SYNC DE APÓLICES
@@ -149,10 +286,22 @@ type SyncOptions = {
 // determinada por QUAL CONTA a trouxe, não por nenhum campo
 // dentro dos dados da própria apólice (a Zurich não expõe essa
 // distinção nos dados).
+//
+// ENRIQUECIMENTO (opcional, ver SyncOptions.enrichment):
+// - pede também o ficheiro de coberturas (TipoFicheiro 5);
+// - objetos/coberturas por conta + apólice, só do dia mais recente;
+// - fallback individual só para Auto e só se faltarem dados
+//   (ver policy-enrichment.ts);
+// - o patch é reconciliado com o provider_metadata já gravado
+//   (união por chave; nunca se apaga o que uma corrida não trouxe).
 
 export async function syncZurichPolicies(options: SyncOptions = {}) {
   const supabase = createAdminClient();
   const accounts = getZurichAccounts();
+
+  const enrichmentEnabled = isEnrichmentEnabled(options);
+  const dryRun = options.dryRun === true;
+  const fallbackDelayMs = options.fallbackDelayMs ?? DEFAULT_FALLBACK_DELAY_MS;
 
   const { data: company, error: companyError } = await supabase
     .from("companies")
@@ -168,21 +317,28 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     );
   }
 
-  const { data: syncRun, error: runError } = await supabase
-    .from("integration_sync_runs")
-    .insert({
-      company_id: company.id,
-      resource_type: "POLICIES",
-      status: "RUNNING",
-      started_at: new Date().toISOString(),
-    })
-    .select("id")
-    .single();
+  // Em dryRun não se cria registo de execução (seria uma escrita).
+  let syncRun: { id: string } | null = null;
 
-  if (runError || !syncRun) {
-    throw new Error(
-      `Erro ao iniciar sync: ${runError?.message ?? "sem sync run"}`,
-    );
+  if (!dryRun) {
+    const { data: createdRun, error: runError } = await supabase
+      .from("integration_sync_runs")
+      .insert({
+        company_id: company.id,
+        resource_type: "POLICIES",
+        status: "RUNNING",
+        started_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (runError || !createdRun) {
+      throw new Error(
+        `Erro ao iniciar sync: ${runError?.message ?? "sem sync run"}`,
+      );
+    }
+
+    syncRun = createdRun;
   }
 
   let received = 0;
@@ -192,6 +348,22 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
   let failed = 0;
 
   const errors: string[] = [];
+
+  const fetchedAt = new Date().toISOString();
+  const budget = createFallbackBudget(options.fallbackLimit);
+  const lineInfoCache = new Map<string, LineInfo | null>();
+  const preview: Record<string, unknown>[] = [];
+
+  const enrichmentStats = {
+    coverageFileRequests: 0,
+    autoPolicies: 0,
+    riskEnrichedPolicies: 0,
+    objectsFromFile: 0,
+    objectsFromLookup: 0,
+    coveragesFromFile: 0,
+    coveragesFromLookup: 0,
+    vehicleAmbiguous: 0,
+  };
 
   try {
     const { data: syncState } = await supabase
@@ -227,17 +399,30 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     // numérico para clientes diferentes.
     const clientesPorId = new Map<string, ZurichClienteFicheiro>();
 
-    // Objetos de risco por conta + número de apólice.
+    // Objetos de risco e coberturas por conta + número de apólice
+    // (só o dia mais recente em que a apólice apareceu).
     // Para Auto, DescricaoObjeto contém a matrícula.
-    const objetosPorApolice = new Map<string, ZurichObjetoFicheiro[]>();
+    const objetosPorApolice = new Map<string, DayBucket<ZurichObjetoFicheiro>>();
+    const coberturasPorApolice = new Map<
+      string,
+      DayBucket<ZurichCoberturaFicheiro>
+    >();
 
     for (const account of accounts) {
       for (const dia of dateRange(fromDate, today)) {
-        const [apolicesDoDia, clientesDoDia, objetosDoDia] = await Promise.all([
-          safeGetApolicesDoDia(dia, account),
-          safeGetClientesDoDia(dia, account),
-          safeGetObjetosDoDia(dia, account),
-        ]);
+        const [apolicesDoDia, clientesDoDia, objetosDoDia, coberturasDoDia] =
+          await Promise.all([
+            safeGetApolicesDoDia(dia, account),
+            safeGetClientesDoDia(dia, account),
+            safeGetObjetosDoDia(dia, account),
+            enrichmentEnabled
+              ? safeGetCoberturasDoDia(dia, account)
+              : Promise.resolve<ZurichCoberturaFicheiro[]>([]),
+          ]);
+
+        if (enrichmentEnabled) {
+          enrichmentStats.coverageFileRequests += 1;
+        }
 
         for (const source of apolicesDoDia) {
           sourcePolicies.push({ source, account });
@@ -250,12 +435,8 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
           );
         }
 
-        for (const objeto of objetosDoDia) {
-          const key = `${account.key}:${objeto.NumeroApolice.trim()}`;
-          const current = objetosPorApolice.get(key) ?? [];
-          current.push(objeto);
-          objetosPorApolice.set(key, current);
-        }
+        keepLatestDay(objetosPorApolice, account.key, dia, objetosDoDia);
+        keepLatestDay(coberturasPorApolice, account.key, dia, coberturasDoDia);
       }
     }
 
@@ -278,10 +459,12 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
         // mudou recentemente, não vai aparecer aí — nesse caso,
         // pede-o individualmente, usando a MESMA conta (para
         // teres a certeza de que consultas a loja certa).
+        // Em dryRun não se faz esta consulta: não é preciso para o
+        // resumo e evita pedidos à Zurich.
         let cliente =
           clientesPorId.get(`${account.key}:${idCliente}`) ?? null;
 
-        if (!cliente && (idCliente || source.NIF.trim())) {
+        if (!cliente && !dryRun && (idCliente || source.NIF.trim())) {
           try {
             const result = await obterClientePorIdNif(
               {
@@ -294,9 +477,16 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
             const dadosCliente = result.DadosCliente?.[0];
 
             if (!dadosCliente) {
+              // Sem NIF, IDCliente nem resposta bruta (PII): só o
+              // suficiente para perceber o que falhou.
               console.warn(
-                `[Zurich:${account.key}] ObterClientePorIDNIF sem exceção mas sem dados utilizáveis (IDCliente=${idCliente}, NIF=${source.NIF}). Resposta bruta:`,
-                JSON.stringify(result),
+                "[Zurich] ObterClientePorIDNIF sem dados utilizáveis",
+                {
+                  account: account.key,
+                  hasClientId: idCliente !== "",
+                  hasNif: source.NIF.trim() !== "",
+                  responseKeys: Object.keys(result ?? {}),
+                },
               );
             }
 
@@ -342,80 +532,16 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
             // com um nome de fallback baseado no NIF. Mas
             // registamos o motivo para conseguirmos perceber
             // porque é que a consulta individual falhou.
-            console.warn(
-              `[Zurich:${account.key}] Falha ao obter cliente individualmente (IDCliente=${idCliente}, NIF=${source.NIF}):`,
-              clienteError instanceof Error
-                ? clienteError.message
-                : clienteError,
-            );
+            console.warn("[Zurich] Falha ao obter cliente individualmente", {
+              account: account.key,
+              hasClientId: idCliente !== "",
+              hasNif: source.NIF.trim() !== "",
+              ...summarizeZurichError(clienteError),
+            });
           }
         }
 
         const normalized = mapZurichPolicy(source, cliente);
-
-        // ----------------------------------
-        // OBJETO DE RISCO / MATRÍCULA
-        // ----------------------------------
-        //
-        // A matrícula não vem no ficheiro de apólices.
-        // Para Auto, a Zurich envia-a em Objetos de Risco,
-        // dentro de DescricaoObjeto quando TipoObjeto = Viatura.
-        //
-        // Primeiro usamos os objetos do ficheiro diário. Se não
-        // houver nenhum para esta apólice nesse período, fazemos
-        // fallback para a consulta individual por nº de apólice.
-
-        const policyObjectsKey = `${account.key}:${source.NumeroApolice.trim()}`;
-        let policyObjects = objetosPorApolice.get(policyObjectsKey) ?? [];
-
-        if (policyObjects.length === 0) {
-          try {
-            const objectResult = await obterObjetosPorNrApolice(
-              source.NumeroApolice.trim(),
-              account,
-            );
-
-            policyObjects = (objectResult.ListaObjetos ?? []).map((object) => ({
-              NumeroApolice: object.NumeroApolice ?? source.NumeroApolice,
-              NumeroObjeto: object.NumeroObjeto ?? "",
-              DescricaoObjeto: object.DescricaoObjeto ?? "",
-              TipoObjeto: object.TipoObjeto ?? "",
-              Capital: String(object.Capital ?? ""),
-              EstadoCod: object.EstadoCod ?? "",
-              Estado: object.Estado ?? "",
-              Premio: String(object.Premio ?? ""),
-            }));
-          } catch (objectError) {
-            console.warn(
-              `[Zurich:${account.key}] Falha ao obter objetos da apólice ${source.NumeroApolice}:`,
-              objectError instanceof Error
-                ? objectError.message
-                : objectError,
-            );
-          }
-        }
-
-        const vehicleObject = findVehicleObject(policyObjects);
-        const vehicleRegistration = vehicleObject
-          ? extractVehicleRegistration(vehicleObject.DescricaoObjeto)
-          : null;
-
-        normalized.providerMetadata = {
-          ...normalized.providerMetadata,
-          ...(vehicleObject
-            ? {
-                insuredObject: {
-                  number: vehicleObject.NumeroObjeto,
-                  type: vehicleObject.TipoObjeto,
-                  description: vehicleObject.DescricaoObjeto,
-                  status: vehicleObject.Estado,
-                },
-              }
-            : {}),
-          ...(vehicleRegistration
-            ? { vehicleRegistration }
-            : {}),
-        };
 
         // A loja é conhecida pela CONTA que trouxe esta apólice,
         // não pelos dados da própria apólice — sobrepomos aqui,
@@ -462,6 +588,198 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
         }
 
         // ----------------------------------
+        // OBJETO DE RISCO / MATRÍCULA / COBERTURAS
+        // ----------------------------------
+        //
+        // A matrícula não vem no ficheiro de apólices.
+        // Para Auto, a Zurich envia-a em Objetos de Risco,
+        // dentro de DescricaoObjeto quando TipoObjeto = Viatura.
+
+        const policyNumber = source.NumeroApolice.trim();
+        const policyKey = `${account.key}:${policyNumber}`;
+
+        const fileObjects = objetosPorApolice.get(policyKey)?.items ?? [];
+        const fileCoverages = coberturasPorApolice.get(policyKey)?.items ?? [];
+
+        let enrichmentInput: ZurichEnrichmentInput | null = null;
+
+        if (enrichmentEnabled) {
+          const lineInfo = await loadInsuranceLineInfo(
+            supabase,
+            insuranceLineId,
+            lineInfoCache,
+          );
+
+          const isAuto = isZurichAutoPolicy({
+            insuranceLineCode: normalized.insuranceLineCode,
+            lineCode: lineInfo?.code,
+            lineName: lineInfo?.name,
+            productCode: normalized.productCode,
+            productName: normalized.productName,
+          });
+
+          const prepared = await prepareZurichPolicyEnrichment({
+            isAuto,
+            fileObjects,
+            fileCoverages,
+            paymentFrequency: {
+              code: source.FraccionamentoCod,
+              description: source.Fraccionamento,
+            },
+            fetchedAt,
+            budget,
+            fallbackDelayMs,
+            deps: {
+              lookupObjects: async () =>
+                (await obterObjetosPorNrApolice(policyNumber, account))
+                  .ListaObjetos ?? [],
+              lookupCoverages: async () =>
+                (await obterCoberturasPorApolice(policyNumber, account))
+                  .ListaCoberturas ?? [],
+              loadExistingMetadata: async () => {
+                const { data, error } = await supabase
+                  .from("policies")
+                  .select("provider_metadata")
+                  .eq("company_id", company.id)
+                  .eq("external_id", normalized.externalId)
+                  .maybeSingle();
+
+                if (error) {
+                  throw new Error(error.message);
+                }
+
+                const metadata = data?.provider_metadata;
+
+                return metadata &&
+                  typeof metadata === "object" &&
+                  !Array.isArray(metadata)
+                  ? (metadata as Record<string, unknown>)
+                  : null;
+              },
+              sleep: (ms) =>
+                ms > 0
+                  ? new Promise<void>((resolve) => setTimeout(resolve, ms))
+                  : Promise.resolve(),
+              now: () => new Date(),
+              warn: (message, details) =>
+                console.warn(`[Zurich] ${message}`, {
+                  account: account.key,
+                  policy: maskIdentifier(policyNumber),
+                  ...summarizeZurichError(details.error),
+                }),
+            },
+          });
+
+          enrichmentInput = prepared.input;
+
+          if (isAuto) {
+            enrichmentStats.autoPolicies += 1;
+          }
+
+          if (prepared.objectsSource === "DAILY_FILE") {
+            enrichmentStats.objectsFromFile += 1;
+          } else if (prepared.objectsSource === "POLICY_LOOKUP") {
+            enrichmentStats.objectsFromLookup += 1;
+          }
+
+          if (prepared.coveragesSource === "DAILY_FILE") {
+            enrichmentStats.coveragesFromFile += 1;
+          } else if (prepared.coveragesSource === "POLICY_LOOKUP") {
+            enrichmentStats.coveragesFromLookup += 1;
+          }
+
+          if (enrichmentInput?.objects || enrichmentInput?.coverages) {
+            enrichmentStats.riskEnrichedPolicies += 1;
+          }
+        } else {
+          // Enriquecimento desligado: comportamento anterior. Objetos
+          // do ficheiro diário; se não houver nenhum para esta apólice,
+          // consulta individual por nº de apólice (qualquer ramo).
+          let policyObjects = fileObjects;
+
+          if (policyObjects.length === 0) {
+            try {
+              const objectResult = await obterObjetosPorNrApolice(
+                policyNumber,
+                account,
+              );
+
+              policyObjects = (objectResult.ListaObjetos ?? []).map(
+                (object) => ({
+                  NumeroApolice: object.NumeroApolice ?? source.NumeroApolice,
+                  NumeroObjeto: object.NumeroObjeto ?? "",
+                  DescricaoObjeto: object.DescricaoObjeto ?? "",
+                  TipoObjeto: object.TipoObjeto ?? "",
+                  Capital: String(object.Capital ?? ""),
+                  EstadoCod: object.EstadoCod ?? "",
+                  Estado: object.Estado ?? "",
+                  Premio: String(object.Premio ?? ""),
+                }),
+              );
+            } catch (objectError) {
+              console.warn("[Zurich] Falha ao obter objetos da apólice", {
+                account: account.key,
+                policy: maskIdentifier(source.NumeroApolice),
+                ...summarizeZurichError(objectError),
+              });
+            }
+          }
+
+          const vehicleObject = findVehicleObject(policyObjects);
+          const vehicleRegistration = vehicleObject
+            ? extractVehicleRegistration(vehicleObject.DescricaoObjeto)
+            : null;
+
+          normalized.providerMetadata = {
+            ...normalized.providerMetadata,
+            ...(vehicleObject
+              ? {
+                  insuredObject: {
+                    number: vehicleObject.NumeroObjeto,
+                    type: vehicleObject.TipoObjeto,
+                    description: vehicleObject.DescricaoObjeto,
+                    status: vehicleObject.Estado,
+                  },
+                }
+              : {}),
+            ...(vehicleRegistration ? { vehicleRegistration } : {}),
+          };
+        }
+
+        const patchInput = enrichmentInput;
+
+        if (patchInput) {
+          const diagnostics = buildZurichEnrichmentPatch(null, patchInput)
+            .diagnostics;
+
+          if (diagnostics.vehicleSelection?.status === "AMBIGUOUS") {
+            enrichmentStats.vehicleAmbiguous += 1;
+          }
+
+          if (dryRun && preview.length < 25) {
+            preview.push({
+              policy: maskIdentifier(source.NumeroApolice),
+              account: account.key,
+              paymentFrequency: normalized.paymentFrequency,
+              objects: diagnostics.objectCount,
+              coverages: diagnostics.coverageCount,
+              vehicleSelection: diagnostics.vehicleSelection?.status ?? null,
+              unparsableNumbers: diagnostics.unparsableNumbers,
+              sources: {
+                objects: patchInput.objects?.source ?? null,
+                coverages: patchInput.coverages?.source ?? null,
+              },
+            });
+          }
+        }
+
+        if (dryRun) {
+          // Nada é escrito: nem cliente, nem apólice.
+          skipped += 1;
+          continue;
+        }
+
+        // ----------------------------------
         // CLIENTE
         // ----------------------------------
 
@@ -488,6 +806,31 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
           clientId: clientResult.clientId,
           insuranceLineId,
           policy: normalized as any,
+          // O enriquecimento nunca faz falhar a apólice: se o patch não
+          // se conseguir montar, a apólice grava-se sem ele.
+          metadataPatch: patchInput
+            ? (existing) => {
+                try {
+                  return buildZurichEnrichmentPatch(existing, patchInput)
+                    .metadata as Record<string, unknown>;
+                } catch (patchError) {
+                  console.warn(
+                    "[Zurich] Enriquecimento ignorado (erro ao montar o patch)",
+                    {
+                      account: account.key,
+                      policy: maskIdentifier(source.NumeroApolice),
+                      error: sanitizeZurichText(
+                        patchError instanceof Error
+                          ? patchError.message
+                          : String(patchError),
+                      ),
+                    },
+                  );
+
+                  return {};
+                }
+              }
+            : undefined,
         });
 
         if (policyResult.created) {
@@ -503,10 +846,13 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
 
         errors.push(`[conta ${account.key}] ${message}`);
 
-        console.error(
-          `Erro ao sincronizar apólice Zurich (conta ${account.key}):`,
-          error,
-        );
+        // O objeto de erro inteiro não é impresso: mensagens de BD
+        // (ex.: violação de chave única) podem repetir o NIF.
+        console.error("[Zurich] Erro ao sincronizar apólice", {
+          account: account.key,
+          policy: maskIdentifier(source.NumeroApolice),
+          error: sanitizeZurichText(message),
+        });
       }
     }
 
@@ -517,7 +863,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     const finalStatus =
       failed === 0 ? "SUCCESS" : created + updated > 0 ? "PARTIAL" : "ERROR";
 
-    if (failed === 0 && !options.limit) {
+    if (failed === 0 && !options.limit && !dryRun) {
       await supabase.from("integration_sync_state").upsert(
         {
           company_id: company.id,
@@ -530,28 +876,46 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
       );
     }
 
-    const { error: finishError } = await supabase
-      .from("integration_sync_runs")
-      .update({
-        finished_at: new Date().toISOString(),
-        status: finalStatus,
-        records_received: received,
-        records_created: created,
-        records_updated: updated,
-        records_skipped: skipped,
-        records_failed: failed,
-        error_message:
-          errors.length > 0 ? errors.slice(0, 10).join("\n") : null,
-      })
-      .eq("id", syncRun.id);
+    if (syncRun) {
+      const { error: finishError } = await supabase
+        .from("integration_sync_runs")
+        .update({
+          finished_at: new Date().toISOString(),
+          status: finalStatus,
+          records_received: received,
+          records_created: created,
+          records_updated: updated,
+          records_skipped: skipped,
+          records_failed: failed,
+          error_message:
+            errors.length > 0 ? errors.slice(0, 10).join("\n") : null,
+        })
+        .eq("id", syncRun.id);
 
-    if (finishError) {
-      throw new Error(`Erro ao finalizar sync run: ${finishError.message}`);
+      if (finishError) {
+        throw new Error(`Erro ao finalizar sync run: ${finishError.message}`);
+      }
     }
+
+    // Só contagens: nada de identificadores nem conteúdo.
+    console.log("[Zurich] Sync de apólices concluído", {
+      status: finalStatus,
+      syncMode,
+      dryRun,
+      enrichmentEnabled,
+      received,
+      created,
+      updated,
+      skipped,
+      failed,
+      enrichment: enrichmentStats,
+      fallback: budget,
+    });
 
     return {
       ok: finalStatus !== "ERROR",
-      syncRunId: syncRun.id,
+      dryRun,
+      syncRunId: syncRun?.id ?? null,
       status: finalStatus,
       syncMode,
       accounts: accounts.map((a) => a.key),
@@ -561,24 +925,32 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
       skipped,
       failed,
       errors: errors.slice(0, 10),
+      enrichment: {
+        enabled: enrichmentEnabled,
+        ...enrichmentStats,
+        fallback: { ...budget },
+      },
+      ...(dryRun ? { preview } : {}),
     };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Erro desconhecido";
 
-    await supabase
-      .from("integration_sync_runs")
-      .update({
-        finished_at: new Date().toISOString(),
-        status: "ERROR",
-        records_received: received,
-        records_created: created,
-        records_updated: updated,
-        records_skipped: skipped,
-        records_failed: failed,
-        error_message: message,
-      })
-      .eq("id", syncRun.id);
+    if (syncRun) {
+      await supabase
+        .from("integration_sync_runs")
+        .update({
+          finished_at: new Date().toISOString(),
+          status: "ERROR",
+          records_received: received,
+          records_created: created,
+          records_updated: updated,
+          records_skipped: skipped,
+          records_failed: failed,
+          error_message: message,
+        })
+        .eq("id", syncRun.id);
+    }
 
     throw error;
   }

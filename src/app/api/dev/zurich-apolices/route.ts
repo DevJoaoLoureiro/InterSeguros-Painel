@@ -1,4 +1,8 @@
 import { getApolicesDoDia } from "@/lib/insurance/providers/zurich/client";
+import {
+  maskSensitiveFields,
+  sanitizeZurichText,
+} from "@/lib/insurance/providers/zurich/log-safety";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -14,7 +18,11 @@ export async function GET(request: Request) {
       success: true,
       data,
       count: apolices.length,
-      apolices,
+      // NIF, IBAN e IDCliente mascarados: esta rota serve para
+      // inspecionar o formato, não para expor dados pessoais.
+      apolices: apolices.map((apolice) =>
+        maskSensitiveFields(apolice, ["NIF", "IBAN", "IDCliente"]),
+      ),
     });
   } catch (error) {
     return Response.json(
@@ -23,8 +31,8 @@ export async function GET(request: Request) {
         data,
         error:
           error instanceof Error
-            ? error.message
-            : String(error),
+            ? sanitizeZurichText(error.message)
+            : sanitizeZurichText(String(error)),
       },
       { status: 500 },
     );
