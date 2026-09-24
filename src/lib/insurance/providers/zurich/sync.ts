@@ -375,8 +375,15 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
 
     const today = new Date();
 
+    // NUNCA avança para o dia seguinte ao último sync: o "dia" da Zurich é
+    // por data de calendário, e um sync que corre a meio do dia (ex.: 10:56)
+    // só vê o que já existia até essa hora — uma apólice criada nesse MESMO
+    // dia mas depois dessa hora nunca mais seria pedida (o próximo sync
+    // saltava logo para o dia seguinte). Por isso repetimos sempre o dia do
+    // último sync bem-sucedido como margem de segurança; reprocessar esse
+    // dia é barato (upsert idempotente, fica "unchanged").
     const fromDate = syncState?.last_successful_sync_at
-      ? addDays(new Date(syncState.last_successful_sync_at), 1)
+      ? new Date(syncState.last_successful_sync_at)
       : addDays(today, -FIRST_SYNC_BACKFILL_DAYS);
 
     const syncMode: "FULL" | "INCREMENTAL" = syncState?.last_successful_sync_at
@@ -1024,8 +1031,12 @@ export async function syncZurichReceipts(options: SyncOptions = {}) {
 
     const today = new Date();
 
+    // Mesma margem de segurança da função de apólices: repete o dia do
+    // último sync bem-sucedido em vez de saltar logo para o dia seguinte
+    // (um sync a meio do dia não vê recibos criados mais tarde nesse
+    // mesmo dia). Reprocessar é barato: upsert idempotente, fica "unchanged".
     const fromDate = syncState?.last_successful_sync_at
-      ? addDays(new Date(syncState.last_successful_sync_at), 1)
+      ? new Date(syncState.last_successful_sync_at)
       : addDays(today, -FIRST_SYNC_BACKFILL_DAYS);
 
     const syncMode: "FULL" | "INCREMENTAL" = syncState?.last_successful_sync_at
