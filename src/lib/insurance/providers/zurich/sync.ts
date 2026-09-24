@@ -50,6 +50,15 @@ const COMPANY_CODE = "ZURICH";
 // partir do MyZurich (ver doc "Da Subscrição ao Uso").
 const FIRST_SYNC_BACKFILL_DAYS = 30;
 
+// A Zurich pode inserir uma apólice/recibo no ficheiro de um dia JÁ
+// PASSADO, mesmo depois de esse dia já ter sido sincronizado (visto em
+// produção: um recibo emitido a 24/09 apareceu arquivado no ficheiro do
+// dia 19/09, 5 dias depois de esse ficheiro já ter sido lido e "fechado"
+// do nosso lado). Por isso cada sync incremental repete sempre os
+// últimos N dias antes do último sync bem-sucedido, não só esse dia —
+// reprocessar é barato (upsert idempotente, fica "sem alterações").
+const RETROACTIVE_LOOKBACK_DAYS = 7;
+
 function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -375,15 +384,11 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
 
     const today = new Date();
 
-    // NUNCA avança para o dia seguinte ao último sync: o "dia" da Zurich é
-    // por data de calendário, e um sync que corre a meio do dia (ex.: 10:56)
-    // só vê o que já existia até essa hora — uma apólice criada nesse MESMO
-    // dia mas depois dessa hora nunca mais seria pedida (o próximo sync
-    // saltava logo para o dia seguinte). Por isso repetimos sempre o dia do
-    // último sync bem-sucedido como margem de segurança; reprocessar esse
-    // dia é barato (upsert idempotente, fica "unchanged").
+    // Ver RETROACTIVE_LOOKBACK_DAYS: repete sempre a última semana antes do
+    // último sync bem-sucedido, não só esse dia — a Zurich já demonstrou
+    // inserir apólices em ficheiros de dias passados há vários dias.
     const fromDate = syncState?.last_successful_sync_at
-      ? new Date(syncState.last_successful_sync_at)
+      ? addDays(new Date(syncState.last_successful_sync_at), -RETROACTIVE_LOOKBACK_DAYS)
       : addDays(today, -FIRST_SYNC_BACKFILL_DAYS);
 
     const syncMode: "FULL" | "INCREMENTAL" = syncState?.last_successful_sync_at
@@ -1031,12 +1036,9 @@ export async function syncZurichReceipts(options: SyncOptions = {}) {
 
     const today = new Date();
 
-    // Mesma margem de segurança da função de apólices: repete o dia do
-    // último sync bem-sucedido em vez de saltar logo para o dia seguinte
-    // (um sync a meio do dia não vê recibos criados mais tarde nesse
-    // mesmo dia). Reprocessar é barato: upsert idempotente, fica "unchanged".
+    // Mesma margem de segurança da função de apólices (RETROACTIVE_LOOKBACK_DAYS).
     const fromDate = syncState?.last_successful_sync_at
-      ? new Date(syncState.last_successful_sync_at)
+      ? addDays(new Date(syncState.last_successful_sync_at), -RETROACTIVE_LOOKBACK_DAYS)
       : addDays(today, -FIRST_SYNC_BACKFILL_DAYS);
 
     const syncMode: "FULL" | "INCREMENTAL" = syncState?.last_successful_sync_at
