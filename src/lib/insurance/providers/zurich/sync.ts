@@ -1004,7 +1004,12 @@ export async function syncZurichReceipts(options: SyncOptions = {}) {
   let received = 0;
   let created = 0;
   let updated = 0;
-  const skipped = 0;
+  // Recibos já existentes e sem alterações (batchUpsertReceipts devolve
+  // isto separado de created/updated); sem isto no total, um sync com
+  // poucas falhas transitórias (apólice ainda não sincronizada) aparecia
+  // como created:0/updated:0/skipped:0 mesmo tendo processado tudo bem,
+  // e o status caía para ERROR em vez de PARTIAL.
+  let skipped = 0;
   let failed = 0;
 
   const errors: string[] = [];
@@ -1109,13 +1114,18 @@ export async function syncZurichReceipts(options: SyncOptions = {}) {
 
     created = batchResult.created;
     updated = batchResult.updated;
+    skipped = batchResult.unchanged;
 
     // ======================================
     // FINALIZAR
     // ======================================
 
     const finalStatus =
-      failed === 0 ? "SUCCESS" : created + updated > 0 ? "PARTIAL" : "ERROR";
+      failed === 0
+        ? "SUCCESS"
+        : created + updated + skipped > 0
+          ? "PARTIAL"
+          : "ERROR";
 
     if (failed === 0 && !options.limit) {
       await supabase.from("integration_sync_state").upsert(
