@@ -18,6 +18,7 @@ import {
   REAL_QUOTE_BASES,
   type JsonObject,
   type ObservationStatus,
+  type QuoteObservationSource,
   type RealQuoteData,
   type ZurichQuoteObservationInsert,
 } from "./types";
@@ -168,15 +169,19 @@ export function buildPredictionSnapshot(prediction: EstimatedQuote): JsonObject 
   });
 }
 
-export const REAL_QUOTE_SOURCE = "MANUAL_ENTRY";
+export const REAL_QUOTE_SOURCE: QuoteObservationSource = "MANUAL_ENTRY";
+
+/** Recalculado a partir de uma apólice já emitida (leave-one-out), não visto por ninguém. */
+export const RETROACTIVE_SOURCE: QuoteObservationSource = "RETROACTIVE_PORTFOLIO";
 
 export function buildInsurerQuoteSnapshot(
   real: RealQuoteData,
   enteredAt: string,
+  source: QuoteObservationSource = REAL_QUOTE_SOURCE,
 ): JsonObject {
   return toJsonObject({
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
-    source: REAL_QUOTE_SOURCE,
+    source,
     insurer: "ZURICH",
     enteredAt,
     amount: real.amount,
@@ -203,6 +208,9 @@ export type BuildObservationParams = {
 
   /** Momento em que a cotação real foi introduzida (ISO). */
   quotedAt: string;
+
+  /** Por omissão MANUAL_ENTRY (o agente viu o preço no portal). */
+  source?: QuoteObservationSource;
 };
 
 export type BuildObservationResult =
@@ -328,7 +336,11 @@ export function buildObservationInsert(
       model_version: normalizeText(prediction.modelVersion) as string,
       request_snapshot: requestSnapshot,
       prediction_snapshot: buildPredictionSnapshot(prediction),
-      insurer_quote_snapshot: buildInsurerQuoteSnapshot(real, quotedAt),
+      insurer_quote_snapshot: buildInsurerQuoteSnapshot(
+        real,
+        quotedAt,
+        params.source ?? REAL_QUOTE_SOURCE,
+      ),
 
       vehicle_registration: normalizePlate(request.vehicle?.registration),
       postal_code: normalizePostalCode(request.customer?.postalCode),

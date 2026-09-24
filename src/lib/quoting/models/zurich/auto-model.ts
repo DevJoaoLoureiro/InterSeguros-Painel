@@ -55,7 +55,7 @@ const MAX_POLICIES = 5000;
 /** Nº de ids por consulta (evita URLs enormes e respostas truncadas). */
 const ID_CHUNK = 100;
 
-type AdminClient = ReturnType<typeof createAdminClient>;
+export type AdminClient = ReturnType<typeof createAdminClient>;
 
 type PolicyRow = {
   id: string;
@@ -253,6 +253,31 @@ async function loadHistoricalInputs(
   return { inputs, truncated };
 }
 
+/**
+ * Apólices Zurich Auto (+ clientes + recibos), prontas a extrair features.
+ * Reutilizada pelo backfill retroativo (calibration/retroactive-backfill.ts)
+ * para não duplicar a leitura da BD nem o "encontrar a companhia Zurich".
+ */
+export async function loadZurichAutoPortfolio(
+  admin: AdminClient,
+): Promise<{ inputs: HistoricalPolicyInput[]; truncated: boolean }> {
+  const { data: zurichCompany, error: companyError } = await admin
+    .from("companies")
+    .select("id")
+    .eq("code", "ZURICH")
+    .maybeSingle();
+
+  if (companyError) {
+    throw new Error(`Erro ao procurar companhia Zurich: ${companyError.message}`);
+  }
+
+  if (!zurichCompany) {
+    throw new Error("Companhia Zurich não encontrada na tabela companies.");
+  }
+
+  return loadHistoricalInputs(admin, zurichCompany.id);
+}
+
 // ---------- erro histórico em cache ----------
 
 /*
@@ -352,25 +377,7 @@ export class ZurichAutoPricingModel extends HistoricalPricingModel {
 
   protected async calculateHistoricalEstimate(request: QuoteRequest) {
     const admin = createAdminClient();
-
-    const { data: zurichCompany, error: companyError } = await admin
-      .from("companies")
-      .select("id")
-      .eq("code", "ZURICH")
-      .maybeSingle();
-
-    if (companyError) {
-      throw new Error(`Erro ao procurar companhia Zurich: ${companyError.message}`);
-    }
-
-    if (!zurichCompany) {
-      throw new Error("Companhia Zurich não encontrada na tabela companies.");
-    }
-
-    const { inputs, truncated } = await loadHistoricalInputs(
-      admin,
-      zurichCompany.id,
-    );
+    const { inputs, truncated } = await loadZurichAutoPortfolio(admin);
 
     const now = new Date();
     const features = inputs.map((input) => extractZurichHistoricalFeatures(input, now));

@@ -96,6 +96,7 @@ function row(overrides: Partial<CalibrationRow> = {}): CalibrationRow {
   return {
     id: `obs-${counter}`,
     status: "VALID",
+    source: "MANUAL_ENTRY",
     model_version: VERSION,
     quoted_at: NOW.toISOString(),
     birth_date: "2006-01-15",
@@ -471,17 +472,20 @@ describe("valor principal apresentado: «Calibração com cotações reais»", (
     assert.match(calibration.reason, /valor principal/);
   });
 
-  it("o viés GLOBAL (outro tipo de cobertura) nunca é o valor em grande", () => {
+  it("mesmo o viés GLOBAL (outro tipo de cobertura) é o valor em grande: nunca a estimativa histórica com cotações reais existentes", () => {
     const calibration = calibrate(diverse(30, 3, { coverage_tier: "OWN_DAMAGE" }));
 
     assert.equal(calibration.mode, "GLOBAL");
-    assert.equal(calibration.headlineEstimate, null);
+    assert.notEqual(calibration.headlineEstimate, null);
     assert.match(calibration.reason, /viés global/);
+    // Continua honesto no diagnóstico: diz que veio de outro tipo de cobertura.
+    assert.match(calibration.reason, /não há cotações reais deste tipo de cobertura/);
   });
 
-  it("sem cotações reais não há valor em grande (mostra-se a estimativa histórica)", () => {
+  it("SÓ sem nenhuma cotação real (mode NONE) é que não há valor em grande", () => {
     assert.equal(calibrate([]).headlineEstimate, null);
     assert.equal(calibrate([], { configMode: "DISABLED" }).headlineEstimate, null);
+    assert.equal(calibrate([]).mode, "NONE");
   });
 
   it("um valor absurdo é limitado a x6 no valor em grande; o bruto continua visível", () => {

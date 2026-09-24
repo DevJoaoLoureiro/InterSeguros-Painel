@@ -86,6 +86,7 @@ function candidate(overrides: Partial<DuplicateCandidate> = {}): DuplicateCandid
     real_quote_reference: "SIM-1",
     real_quote_amount: 1262.55,
     real_quote_basis: "ANNUAL",
+    source: "MANUAL_ENTRY",
     ...overrides,
   };
 }

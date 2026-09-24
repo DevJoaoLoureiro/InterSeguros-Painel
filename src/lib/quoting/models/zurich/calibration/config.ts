@@ -21,14 +21,15 @@ export const ZURICH_CALIBRATION_MODE: CalibrationConfigMode = "EXPERIMENTAL";
 // ---------- valor principal apresentado ----------
 
 /**
- * O valor calibrado aparece em GRANDE («Calibração com cotações reais») quando
- * a correção vem de cotações do MESMO tipo de cobertura (vizinhas ou segmento),
- * mesmo com amostra pequena: a confiança mostrada desce em conformidade. O viés
- * GLOBAL mistura tipos de cobertura e nunca é o valor principal.
+ * O valor calibrado aparece SEMPRE em GRANDE («Calibração com cotações reais»)
+ * quando existe pelo menos uma cotação real utilizável (qualquer estratégia:
+ * NEAREST_QUOTES, SEGMENT ou GLOBAL), mesmo com amostra pequena ou vinda de
+ * outro tipo de cobertura: a confiança mostrada desce em conformidade e o
+ * diagnóstico explica a origem. Só SEM NENHUMA cotação real (mode = "NONE")
+ * é que não há valor a mostrar.
  *
  * É só apresentação: o `pointEstimate` guardado continua a ser a estimativa base.
  */
-export const HEADLINE_MODES = ["NEAREST_QUOTES", "SEGMENT"] as const;
 
 /** Teto de sanidade do valor principal: nunca mais de x6 (ou menos de 1/6) da base. */
 export const MAX_HEADLINE_FACTOR = 6;

@@ -126,6 +126,10 @@ export function findMatchingRealQuote(
     .filter(
       (candidate) =>
         USABLE_STATUSES.has(candidate.status) &&
+        // Nunca apresentar um valor recalculado (leave-one-out) como se fosse
+        // uma cotação vista no portal da Zurich: só MANUAL_ENTRY (e linhas
+        // antigas sem a marca, source === null) podem ser "a cotação real".
+        candidate.source !== "RETROACTIVE_PORTFOLIO" &&
         BASIS_MAP[candidate.real_quote_basis] !== undefined &&
         Number.isFinite(candidate.real_quote_amount) &&
         candidate.real_quote_amount > 0 &&

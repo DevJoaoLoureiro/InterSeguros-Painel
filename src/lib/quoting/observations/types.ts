@@ -161,7 +161,16 @@ export type ZurichQuoteObservationRow = ZurichQuoteObservationInsert & {
   relative_error: number | null;
 };
 
-/** Só o que o dedupe precisa de uma linha existente. */
+/**
+ * Origem da cotação real, dentro de insurer_quote_snapshot.source (jsonb; sem
+ * coluna nova). "MANUAL_ENTRY" = o agente escreveu o preço visto no portal.
+ * "RETROACTIVE_PORTFOLIO" = recalculado a partir de uma apólice já emitida
+ * (leave-one-out), não é uma cotação vista por ninguém: NUNCA se apresenta
+ * como "cotação real do portal" nem entra na calibração do valor principal.
+ */
+export type QuoteObservationSource = "MANUAL_ENTRY" | "RETROACTIVE_PORTFOLIO";
+
+/** Só o que o dedupe (e a correspondência de "mesmo pedido") precisam de uma linha existente. */
 export type DuplicateCandidate = Pick<
   ZurichQuoteObservationRow,
   | "id"
@@ -180,7 +189,10 @@ export type DuplicateCandidate = Pick<
   | "real_quote_reference"
   | "real_quote_amount"
   | "real_quote_basis"
->;
+> & {
+  /** null = formato antigo/desconhecido; tratado como MANUAL_ENTRY por compatibilidade. */
+  source: QuoteObservationSource | null;
+};
 
 /** Só o que as métricas precisam. */
 export type MetricsRow = Pick<
@@ -197,9 +209,12 @@ export type MetricsRow = Pick<
   | "signed_error"
   | "absolute_error"
   | "relative_error"
+  | "confidence_label"
 > & {
   /** prediction_snapshot.calibration (jsonb) ou null: para as métricas calibradas. */
   calibration: JsonValue | null;
+
+  source: QuoteObservationSource | null;
 };
 
 /** O que a calibração precisa de uma observação (inclui os snapshots). */
@@ -223,7 +238,9 @@ export type CalibrationRow = Pick<
   | "real_quote_amount"
   | "request_snapshot"
   | "prediction_snapshot"
->;
+> & {
+  source: QuoteObservationSource | null;
+};
 
 export type MetricsFilters = {
   /** Versão do modelo BASE. */
@@ -234,6 +251,15 @@ export type MetricsFilters = {
 
   /** Modo da calibração (DISABLED/EXPERIMENTAL/PRODUCTION); "NONE" = sem calibração. */
   calibrationMode?: string | null;
+
+  /**
+   * Origem da observação. MANUAL_ENTRY = cotação vista por um agente no
+   * portal (validação externa genuína). RETROACTIVE_PORTFOLIO = recalculada
+   * a partir de apólices já emitidas (é o próprio backtest, não validação
+   * independente — ver retroactive-backfill.ts). Sem filtro, mostra as duas
+   * MISTURADAS, o que normalmente não é o que se quer.
+   */
+  source?: QuoteObservationSource | null;
 
   /** ISO (inclusivo) sobre quoted_at. */
   from?: string | null;

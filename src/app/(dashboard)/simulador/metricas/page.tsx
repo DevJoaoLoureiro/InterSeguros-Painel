@@ -18,11 +18,13 @@ import type {
   AccuracyMetrics,
   AccuracyReport,
   CalibrationComparison,
+  ConfidenceCalibration,
   OutputGroup,
 } from "@/lib/quoting/observations/metrics";
 import { createSupabaseObservationStore } from "@/lib/quoting/observations/supabase-store";
 import {
   REAL_QUOTE_BASES,
+  type QuoteObservationSource,
   type RealQuoteBasis,
 } from "@/lib/quoting/observations/types";
 import { getZurichQuoteAccuracyMetrics } from "@/lib/quoting/observations/zurich-quote-observations";
@@ -41,6 +43,7 @@ type SearchParams = Promise<{
   product?: string;
   from?: string;
   to?: string;
+  source?: string;
 }>;
 
 const eur = new Intl.NumberFormat("pt-PT", {
@@ -57,6 +60,12 @@ const percent = new Intl.NumberFormat("pt-PT", {
 const money = (value: number | null) => (value === null ? "—" : eur.format(value));
 const pct = (value: number | null) => (value === null ? "—" : percent.format(value));
 
+function ratio(value: number | null): string {
+  if (value === null) return "—";
+
+  return `${value.toFixed(2).replace(".", ",")}×`;
+}
+
 function signedMoney(value: number | null): string {
   if (value === null) return "—";
 
@@ -71,6 +80,25 @@ const inputClass =
 
 function isBasis(value: string | undefined): value is RealQuoteBasis {
   return (REAL_QUOTE_BASES as readonly string[]).includes(value ?? "");
+}
+
+const SOURCES: readonly QuoteObservationSource[] = ["MANUAL_ENTRY", "RETROACTIVE_PORTFOLIO"];
+
+function isSource(value: string | undefined): value is QuoteObservationSource {
+  return (SOURCES as readonly string[]).includes(value ?? "");
+}
+
+/**
+ * Sem parâmetro na URL, a vista principal mostra só MANUAL_ENTRY (cotações
+ * genuínas): a carteira retroativa (leave-one-out) é o próprio backtest, não
+ * validação independente, e não deve dominar silenciosamente o número
+ * principal. "ALL" mistura as duas de propósito (ver aviso no relatório).
+ */
+function resolveSourceFilter(value: string | undefined): QuoteObservationSource | null {
+  if (value === "ALL") return null;
+  if (isSource(value)) return value;
+
+  return "MANUAL_ENTRY";
 }
 
 export default async function ZurichAccuracyPage({
@@ -95,6 +123,7 @@ export default async function ZurichAccuracyPage({
     productCode: params.product?.trim() || null,
     from: params.from?.trim() || null,
     to: params.to?.trim() || null,
+    source: resolveSourceFilter(params.source),
   };
 
   let report: AccuracyReport | null = null;
@@ -189,6 +218,14 @@ export default async function ZurichAccuracyPage({
           <input name="product" defaultValue={params.product ?? ""} className={inputClass} />
         </Filter>
 
+        <Filter label="Origem">
+          <select name="source" defaultValue={params.source ?? "MANUAL_ENTRY"} className={inputClass}>
+            <option value="MANUAL_ENTRY">Cotações reais (MANUAL_ENTRY)</option>
+            <option value="RETROACTIVE_PORTFOLIO">Carteira retroativa</option>
+            <option value="ALL">Todas (misturadas)</option>
+          </select>
+        </Filter>
+
         <Filter label="De">
           <input type="date" name="from" defaultValue={params.from ?? ""} className={inputClass} />
         </Filter>
@@ -223,9 +260,25 @@ export default async function ZurichAccuracyPage({
             </ul>
           )}
 
-          <Summary title="Modelo base (estimated_premium = estimativa histórica)" metrics={report.overall} />
+          <Summary
+            title={`Modelo base — ${
+              filters.source === "RETROACTIVE_PORTFOLIO"
+                ? "carteira retroativa (leave-one-out, é o próprio backtest)"
+                : filters.source === "MANUAL_ENTRY"
+                  ? "cotações reais (MANUAL_ENTRY, validação externa genuína)"
+                  : "todas as origens misturadas"
+            }`}
+            metrics={report.overall}
+          />
+
+          <BreakdownTable
+            title="Por origem (MANUAL_ENTRY = cotações reais · RETROACTIVE_PORTFOLIO = recalculado do histórico, é o próprio backtest)"
+            rows={report.bySource}
+          />
 
           <ComparisonBlock comparison={report.calibration} />
+
+          <ConfidenceCalibrationBlock calibration={report.confidenceCalibration} />
 
           {calibrationSummary && (
             <CalibrationBlock
@@ -275,6 +328,10 @@ function Summary({ title, metrics }: { title: string; metrics: AccuracyMetrics }
     ["P95", money(metrics.absErrorP95)],
     ["Subestimadas", pct(metrics.underestimationRate)],
     ["Sobrestimadas", pct(metrics.overestimationRate)],
+    ["Dentro de ±10%", pct(metrics.within10PctRate)],
+    ["Dentro de ±20%", pct(metrics.within20PctRate)],
+    ["Rácio A/E médio", ratio(metrics.meanActualToEstimatedRatio)],
+    ["Rácio A/E mediano", ratio(metrics.medianActualToEstimatedRatio)],
   ];
 
   return (
@@ -482,6 +539,54 @@ function ComparisonBlock({ comparison }: { comparison: CalibrationComparison }) 
         {" · "}Median AE: {changeText(comparison.medianAbsoluteErrorChange)}
         {" · "}P90: {changeText(comparison.p90Change)}
       </p>
+    </section>
+  );
+}
+
+/** A confiança (LOW/MEDIUM/HIGH) guardada prevê mesmo o erro, nestes dados? */
+function ConfidenceCalibrationBlock({ calibration }: { calibration: ConfidenceCalibration }) {
+  const known = calibration.byBand.filter((band) => band.metrics.count > 0);
+
+  if (known.length === 0) return null;
+
+  const verdict =
+    calibration.wellOrdered === null
+      ? "Amostra insuficiente (menos de duas bandas com observações) para concluir."
+      : calibration.wellOrdered
+        ? "A confiança guardada ACOMPANHA o erro real: LOW tem Median AE maior que MEDIUM, que tem maior que HIGH."
+        : "A confiança guardada NÃO acompanha o erro real nestes dados (a ordem esperada LOW ≥ MEDIUM ≥ HIGH falha).";
+
+  return (
+    <section className={`${panelClass} overflow-x-auto p-5`}>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-[#8a9099]">
+        A confiança prevê o erro?
+      </h3>
+
+      <p className="mt-1 text-sm text-[#525963]">{verdict}</p>
+
+      <table className="mt-3 w-full min-w-[480px] text-left text-sm">
+        <thead className="text-xs text-[#8a9099]">
+          <tr>
+            <th className="py-1.5 pr-3 font-medium">Confiança</th>
+            <th className="py-1.5 pr-3 font-medium">N</th>
+            <th className="py-1.5 pr-3 font-medium">Median AE</th>
+            <th className="py-1.5 pr-3 font-medium">MAE</th>
+            <th className="py-1.5 font-medium">Dentro de ±20%</th>
+          </tr>
+        </thead>
+
+        <tbody className="text-[#353b44]">
+          {calibration.byBand.map((band) => (
+            <tr key={band.label} className="border-t border-[#edf0f2]">
+              <td className="py-1.5 pr-3 font-medium">{band.label}</td>
+              <td className="py-1.5 pr-3">{band.metrics.count}</td>
+              <td className="py-1.5 pr-3">{money(band.metrics.medianAbsoluteError)}</td>
+              <td className="py-1.5 pr-3">{money(band.metrics.mae)}</td>
+              <td className="py-1.5">{pct(band.metrics.within20PctRate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </section>
   );
 }

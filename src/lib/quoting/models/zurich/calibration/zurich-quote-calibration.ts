@@ -16,7 +16,6 @@ import {
 import { quantile } from "../zurich-auto-validation";
 import {
   BASIS_WEIGHT,
-  HEADLINE_MODES,
   HIGH_MAX_DISPERSION,
   HIGH_MIN_MEAN_SIMILARITY,
   HIGH_SAMPLE_MULTIPLIER,
@@ -203,7 +202,7 @@ type Classified = {
 
 /** Observações VALID elegíveis (versão do modelo e base do preço), com a contagem dos descartes. */
 function classify(rows: readonly CalibrationRow[], modelVersion: string): Classified {
-  const rejected = { modelVersion: 0, basis: 0, tier: 0, invalid: 0 };
+  const rejected = { modelVersion: 0, basis: 0, tier: 0, invalid: 0, retroactive: 0 };
   const usable: CalibrationObservation[] = [];
   let totalValid = 0;
 
@@ -211,6 +210,14 @@ function classify(rows: readonly CalibrationRow[], modelVersion: string): Classi
     if (row.status !== "VALID") continue;
 
     totalValid += 1;
+
+    // Recalculado a partir de uma apólice já emitida (leave-one-out), não uma
+    // cotação vista por um agente: nunca calibra o valor principal (ver
+    // retroactive-backfill.ts). Fica de fora ANTES de qualquer outra checagem.
+    if (row.source === "RETROACTIVE_PORTFOLIO") {
+      rejected.retroactive += 1;
+      continue;
+    }
 
     const observation = toCalibrationObservation(row);
 
@@ -453,7 +460,7 @@ export function calibrateZurichEstimate(
     meanAbsoluteError: null,
     residualPercentiles: null,
   };
-  const noRejections = { modelVersion: 0, basis: 0, tier: 0, invalid: 0 };
+  const noRejections = { modelVersion: 0, basis: 0, tier: 0, invalid: 0, retroactive: 0 };
 
   if (configMode === "DISABLED") {
     return emptyCalibration({
@@ -614,10 +621,14 @@ export function calibrateZurichEstimate(
 
   const raw = base * Math.exp(residual.value);
 
-  // Valor principal a apresentar: só com cotações do MESMO tipo de cobertura e se a
-  // calibração ainda não alterou o pointEstimate (PRODUCTION já o faz).
+  // Valor principal a apresentar: sempre que há qualquer cotação real utilizável
+  // (por decisão explícita: nunca mostrar a estimativa histórica como principal
+  // quando existe pelo menos uma cotação real, mesmo vindo do viés GLOBAL entre
+  // tipos de cobertura diferentes), e se a calibração ainda não alterou o
+  // pointEstimate (PRODUCTION já o faz). `mode` nunca é "NONE" aqui (esse caso
+  // devolve-se mais acima, em emptyCalibration, sem chegar a este ponto).
   const headlineLimit = Math.log(MAX_HEADLINE_FACTOR);
-  const headlineAllowed = !applied && (HEADLINE_MODES as readonly string[]).includes(mode);
+  const headlineAllowed = !applied;
   const headlineClamped = headlineAllowed && Math.abs(residual.value) > headlineLimit;
   const headline = headlineAllowed
     ? base * Math.exp(Math.max(-headlineLimit, Math.min(headlineLimit, residual.value)))
@@ -659,16 +670,14 @@ export function calibrateZurichEstimate(
 
   if (headline !== null) {
     reasons.push(
-      "Mostrada como valor principal (Calibração com cotações reais); a estimativa histórica base continua registada e inalterada.",
+      mode === "GLOBAL"
+        ? "Mostrada como valor principal (Calibração com cotações reais), a partir do viés global: não há cotações reais deste tipo de cobertura, usou-se o desvio médio de outros tipos. A estimativa histórica base continua registada e inalterada."
+        : "Mostrada como valor principal (Calibração com cotações reais); a estimativa histórica base continua registada e inalterada.",
     );
 
     if (headlineClamped) {
       reasons.push(`Valor principal limitado a x${MAX_HEADLINE_FACTOR} da base pelo teto de sanidade.`);
     }
-  } else if (mode === "GLOBAL") {
-    reasons.push(
-      "Só há viés global entre tipos de cobertura diferentes: informativo, não é o valor principal.",
-    );
   }
 
   return {
@@ -779,6 +788,7 @@ export function summarizeObservationResiduals(
       modelVersion: rejected.modelVersion,
       basis: rejected.basis,
       invalid: rejected.invalid,
+      retroactive: rejected.retroactive,
     },
     byBasis,
     ...residualStats(usable),

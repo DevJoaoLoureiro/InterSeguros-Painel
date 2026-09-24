@@ -135,8 +135,10 @@ export async function getZurichQuoteAccuracyMetrics(
   filters: MetricsFilters,
   store: ObservationStore,
 ): Promise<AccuracyReport> {
-  // Versão do modelo e calibração filtram-se em memória (para as mostrar lado a lado).
-  const { modelVersion, calibrationVersion, calibrationMode, ...databaseFilters } = filters;
+  // Versão do modelo, calibração e origem filtram-se em memória (para as
+  // mostrar lado a lado, incl. o bloco bySource que ignora o filtro de origem).
+  const { modelVersion, calibrationVersion, calibrationMode, source, ...databaseFilters } =
+    filters;
 
   const rows = await store.listValidForMetrics({
     from: normalizeDate(databaseFilters.from) ?? null,
@@ -151,5 +153,6 @@ export async function getZurichQuoteAccuracyMetrics(
     modelVersion: normalizeText(modelVersion),
     calibrationVersion: normalizeText(calibrationVersion),
     calibrationMode: normalizeText(calibrationMode),
+    source: source ?? null,
   });
 }

@@ -314,6 +314,13 @@ export type EstimateCalibration = {
       basis: number;
       tier: number;
       invalid: number;
+
+      /**
+       * Observações RETROACTIVE_PORTFOLIO (recalculadas a partir de apólices
+       * já emitidas, não de uma simulação real): nunca calibram o valor
+       * principal, só servem de diagnóstico próprio (ver metrics.ts).
+       */
+      retroactive: number;
     };
 
     /** Média e mediana do resíduo em euros (real - base) e MAE, sobre as elegíveis. */

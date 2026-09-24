@@ -7,6 +7,7 @@ import type {
   MetricsRow,
   ObservationStatus,
   ObservationStore,
+  QuoteObservationSource,
   RealQuoteBasis,
   ZurichQuoteObservationInsert,
   ZurichQuoteObservationRow,
@@ -41,25 +42,33 @@ const ROW_COLUMNS = `
   signed_error, absolute_error, relative_error, status, duplicate_of, notes
 `;
 
+// `source` (dentro de insurer_quote_snapshot) diz se a linha veio de uma
+// cotação vista por um agente (MANUAL_ENTRY) ou foi recalculada a partir de
+// uma apólice já emitida (RETROACTIVE_PORTFOLIO, ver retroactive-backfill.ts).
+// Sem esta coluna nunca se saberia distinguir as duas nas leituras abaixo.
 const CANDIDATE_COLUMNS = `
   id, created_at, quoted_at, status, vehicle_registration, birth_date,
   driving_licence_date, postal_code, coverage_tier, deductible,
   payment_frequency, real_product_code, real_product_name,
-  real_quote_reference, real_quote_amount, real_quote_basis
+  real_quote_reference, real_quote_amount, real_quote_basis,
+  source:insurer_quote_snapshot->>source
 `;
 
 // A calibração vai como sub-objeto do jsonb (não se transfere o snapshot inteiro).
 const METRICS_COLUMNS = `
   id, status, model_version, quoted_at, coverage_tier, real_product_code,
   real_quote_basis, estimated_premium, real_quote_amount, signed_error,
-  absolute_error, relative_error, calibration:prediction_snapshot->calibration
+  absolute_error, relative_error, confidence_label,
+  calibration:prediction_snapshot->calibration,
+  source:insurer_quote_snapshot->>source
 `;
 
 const CALIBRATION_COLUMNS = `
   id, status, model_version, quoted_at, birth_date, driving_licence_date,
   postal_code, usage_type, coverage_tier, deductible, payment_frequency,
   real_product_code, real_product_name, real_quote_basis, estimated_premium,
-  real_quote_amount, request_snapshot, prediction_snapshot
+  real_quote_amount, request_snapshot, prediction_snapshot,
+  source:insurer_quote_snapshot->>source
 `;
 
 export class ObservationStoreError extends Error {
@@ -123,6 +132,7 @@ function toCandidate(raw: RawRecord): DuplicateCandidate {
     real_quote_reference: (raw.real_quote_reference as string | null) ?? null,
     real_quote_amount: numberOrThrow(raw.real_quote_amount),
     real_quote_basis: raw.real_quote_basis as RealQuoteBasis,
+    source: toSource(raw.source),
   };
 }
 
@@ -146,8 +156,23 @@ function toMetricsRow(raw: RawRecord): MetricsRow | null {
     signed_error: num(raw.signed_error),
     absolute_error: num(raw.absolute_error),
     relative_error: num(raw.relative_error),
+    confidence_label: (raw.confidence_label as string | null) ?? null,
     calibration: (raw.calibration as MetricsRow["calibration"]) ?? null,
+    source: toSource(raw.source),
   };
+}
+
+const KNOWN_SOURCES: readonly QuoteObservationSource[] = [
+  "MANUAL_ENTRY",
+  "RETROACTIVE_PORTFOLIO",
+];
+
+/** null/desconhecido (linhas antigas, sem este campo) -> null, nunca inventado. */
+function toSource(raw: unknown): QuoteObservationSource | null {
+  return typeof raw === "string" &&
+    (KNOWN_SOURCES as readonly string[]).includes(raw)
+    ? (raw as QuoteObservationSource)
+    : null;
 }
 
 /** Escapa % _ \ para usar o valor num ilike como igualdade sem maiúsculas/minúsculas. */
@@ -183,6 +208,7 @@ function toCalibrationRow(raw: RawRecord): CalibrationRow | null {
       (raw.request_snapshot as CalibrationRow["request_snapshot"]) ?? {},
     prediction_snapshot:
       (raw.prediction_snapshot as CalibrationRow["prediction_snapshot"]) ?? {},
+    source: toSource(raw.source),
   };
 }
 

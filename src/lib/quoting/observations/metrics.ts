@@ -73,6 +73,18 @@ export type AccuracyMetrics = {
   underestimationRate: number | null;
   overestimationRate: number | null;
   exactRate: number | null;
+
+  /** Fração (0..1) dentro de ±10% / ±20% do preço real: mais fácil de ler que MAE em euros. */
+  within10PctRate: number | null;
+  within20PctRate: number | null;
+
+  /**
+   * Rácio A/E (Actual/Expected = real ÷ estimado), como as seguradoras o
+   * usam: 1 = certo; >1 = o modelo subestimou; <1 = sobrestimou. Média e
+   * mediana (a média é sensível a um único caso muito errado).
+   */
+  meanActualToEstimatedRatio: number | null;
+  medianActualToEstimatedRatio: number | null;
 };
 
 const EMPTY_METRICS: AccuracyMetrics = {
@@ -90,6 +102,10 @@ const EMPTY_METRICS: AccuracyMetrics = {
   underestimationRate: null,
   overestimationRate: null,
   exactRate: null,
+  within10PctRate: null,
+  within20PctRate: null,
+  meanActualToEstimatedRatio: null,
+  medianActualToEstimatedRatio: null,
 };
 
 function mean(values: readonly number[]): number {
@@ -127,6 +143,12 @@ export function computeAccuracyMetrics(rows: readonly MetricsRow[]): AccuracyMet
   const absolute = points.map((point) => point.absolute);
   const count = points.length;
 
+  // estimado = real + erro assinado (signed = estimado - real); evita
+  // guardar mais um campo só para isto.
+  const ratios = points
+    .map((point) => point.real / (point.real + point.signed))
+    .filter((ratio) => Number.isFinite(ratio) && ratio > 0);
+
   return {
     count,
     mae: mean(absolute),
@@ -142,6 +164,10 @@ export function computeAccuracyMetrics(rows: readonly MetricsRow[]): AccuracyMet
     underestimationRate: points.filter((point) => point.signed < 0).length / count,
     overestimationRate: points.filter((point) => point.signed > 0).length / count,
     exactRate: points.filter((point) => point.signed === 0).length / count,
+    within10PctRate: points.filter((point) => point.relative <= 0.1).length / count,
+    within20PctRate: points.filter((point) => point.relative <= 0.2).length / count,
+    meanActualToEstimatedRatio: ratios.length > 0 ? mean(ratios) : null,
+    medianActualToEstimatedRatio: ratios.length > 0 ? quantile(ratios, 0.5) : null,
   };
 }
 
@@ -248,6 +274,50 @@ function groupBy(
   );
 }
 
+// ---------- a confiança significa alguma coisa? ----------
+
+const CONFIDENCE_ORDER = ["LOW", "MEDIUM", "HIGH"] as const;
+
+export type ConfidenceCalibration = {
+  /** Uma linha por banda de confiança (LOW/MEDIUM/HIGH), na ordem certa. */
+  byBand: { label: string; metrics: AccuracyMetrics }[];
+
+  /**
+   * true = as bandas estão na ordem esperada (LOW tem MedianAE maior que
+   * MEDIUM, que tem maior que HIGH). false = a confiança NÃO prevê o erro
+   * com estes dados; null = amostra insuficiente para dizer.
+   */
+  wellOrdered: boolean | null;
+};
+
+/**
+ * A confiança (LOW/MEDIUM/HIGH) guardada em cada observação prevê mesmo o
+ * erro? Só é possível responder com amostra: cada banda usa o seu próprio
+ * MedianAE (mais robusto que MAE a um único caso extremo).
+ */
+export function computeConfidenceCalibration(
+  rows: readonly MetricsRow[],
+): ConfidenceCalibration {
+  const byBand = CONFIDENCE_ORDER.map((label) => ({
+    label,
+    metrics: computeAccuracyMetrics(rows.filter((row) => row.confidence_label === label)),
+  }));
+
+  const known = byBand.filter((band) => band.metrics.medianAbsoluteError !== null);
+
+  const wellOrdered =
+    known.length < 2
+      ? null
+      : known.every(
+          (band, index) =>
+            index === 0 ||
+            (known[index - 1].metrics.medianAbsoluteError as number) >=
+              (band.metrics.medianAbsoluteError as number),
+        );
+
+  return { byBand, wellOrdered };
+}
+
 /** Uma "saída" do simulador: modelo base + calibração (ou a falta dela). */
 export type OutputGroup = {
   modelVersion: string;
@@ -334,6 +404,17 @@ export type AccuracyReport = {
   byCoverageTier: Record<string, AccuracyMetrics>;
   byProduct: Record<string, AccuracyMetrics>;
 
+  /**
+   * MANUAL_ENTRY (cotações genuínas, validação externa) vs
+   * RETROACTIVE_PORTFOLIO (recalculado do histórico, é o próprio backtest).
+   * Sem isto, uma carteira retroativa grande esconde o erro real: ver
+   * warnings quando as duas aparecem misturadas no `overall`.
+   */
+  bySource: Record<string, AccuracyMetrics>;
+
+  /** A confiança (LOW/MEDIUM/HIGH) prevê mesmo o erro, nestes dados? */
+  confidenceCalibration: ConfidenceCalibration;
+
   warnings: string[];
 };
 
@@ -350,6 +431,7 @@ function describeFilters(filters: MetricsFilters): MetricsFilters {
     modelVersion: filters.modelVersion ?? null,
     calibrationVersion: filters.calibrationVersion ?? null,
     calibrationMode: filters.calibrationMode ?? null,
+    source: filters.source ?? null,
     from: filters.from ?? null,
     to: filters.to ?? null,
     coverageTier: filters.coverageTier ?? null,
@@ -384,13 +466,17 @@ export function buildAccuracyReport(
   const valid = rows.filter(
     (row) => row.status === "VALID" && matchesCalibration(row, filters),
   );
-  const selected = filters.modelVersion
+  const withVersion = filters.modelVersion
     ? valid.filter((row) => row.model_version === filters.modelVersion)
     : valid;
+  const selected = filters.source
+    ? withVersion.filter((row) => row.source === filters.source)
+    : withVersion;
 
   const overall = computeAccuracyMetrics(selected);
   const calibration = compareBaseAndCalibrated(selected);
   const byOutput = groupByOutput(selected);
+  const confidenceCalibration = computeConfidenceCalibration(selected);
   const warnings: string[] = [];
 
   if (overall.count === 0) {
@@ -428,6 +514,14 @@ export function buildAccuracyReport(
     );
   }
 
+  const sources = new Set(selected.map((row) => row.source ?? "MANUAL_ENTRY"));
+
+  if (!filters.source && sources.size > 1) {
+    warnings.push(
+      "Os números acima MISTURAM cotações reais (MANUAL_ENTRY) com apólices recalculadas do histórico (RETROACTIVE_PORTFOLIO, que é o próprio backtest, não validação independente). Filtre por origem para uma leitura honesta; ver «Por origem» abaixo.",
+    );
+  }
+
   return {
     filters: describeFilters(filters),
     overall,
@@ -437,6 +531,8 @@ export function buildAccuracyReport(
     byBasis: groupBy(selected, (row) => row.real_quote_basis),
     byCoverageTier: groupBy(selected, (row) => row.coverage_tier ?? "—"),
     byProduct: groupBy(selected, (row) => row.real_product_code ?? "—"),
+    bySource: groupBy(withVersion, (row) => row.source ?? "MANUAL_ENTRY"),
+    confidenceCalibration,
     warnings,
   };
 }

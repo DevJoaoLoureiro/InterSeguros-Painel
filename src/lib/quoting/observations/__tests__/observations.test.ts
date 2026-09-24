@@ -55,6 +55,7 @@ import type {
   MetricsFilters,
   MetricsRow,
   ObservationStore,
+  QuoteObservationSource,
   RealQuoteData,
   ZurichQuoteObservationInsert,
   ZurichQuoteObservationRow,
@@ -188,7 +189,7 @@ function makeCalibration(overrides: Partial<EstimateCalibration> = {}): Estimate
     diagnostics: {
       totalValidObservations: 2,
       consideredObservations: 2,
-      rejected: { modelVersion: 0, basis: 0, tier: 0, invalid: 0 },
+      rejected: { modelVersion: 0, basis: 0, tier: 0, invalid: 0, retroactive: 0 },
       globalBias: null,
       medianResidual: null,
       meanAbsoluteError: null,
@@ -230,6 +231,13 @@ const REAL: RealQuoteData = {
 };
 
 /** Loja em memória que imita a BD (incluindo as colunas geradas). */
+/** Espelha supabase-store.ts: source vive dentro de insurer_quote_snapshot. */
+function sourceOf(row: ZurichQuoteObservationRow): QuoteObservationSource | null {
+  const value = (row.insurer_quote_snapshot as { source?: unknown } | null)?.source;
+
+  return value === "MANUAL_ENTRY" || value === "RETROACTIVE_PORTFOLIO" ? value : null;
+}
+
 class MemoryStore implements ObservationStore {
   rows: ZurichQuoteObservationRow[] = [];
   private counter = 0;
@@ -258,24 +266,32 @@ class MemoryStore implements ObservationStore {
   }
 
   async findDuplicateCandidates(query: { plate: string | null; reference: string | null }): Promise<DuplicateCandidate[]> {
-    return this.rows.filter(
-      (row) =>
-        ["VALID", "MANUAL_OVERRIDE"].includes(row.status) &&
-        ((query.plate !== null && row.vehicle_registration === query.plate) ||
-          (query.reference !== null &&
-            row.real_quote_reference?.toLowerCase() === query.reference.toLowerCase())),
-    );
+    return this.rows
+      .filter(
+        (row) =>
+          ["VALID", "MANUAL_OVERRIDE"].includes(row.status) &&
+          ((query.plate !== null && row.vehicle_registration === query.plate) ||
+            (query.reference !== null &&
+              row.real_quote_reference?.toLowerCase() === query.reference.toLowerCase())),
+      )
+      .map((row) => ({ ...row, source: sourceOf(row) }));
   }
 
   async listForCalibration(): Promise<CalibrationRow[]> {
-    return this.rows.filter((row) => row.status === "VALID");
+    return this.rows
+      .filter((row) => row.status === "VALID")
+      .map((row) => ({ ...row, source: sourceOf(row) }));
   }
 
   async listValidForMetrics(
     filters: Omit<MetricsFilters, "modelVersion" | "calibrationVersion" | "calibrationMode">,
   ): Promise<MetricsRow[]> {
     return this.rows
-      .map((r) => ({ ...r, calibration: r.prediction_snapshot.calibration ?? null }))
+      .map((r) => ({
+        ...r,
+        calibration: r.prediction_snapshot.calibration ?? null,
+        source: sourceOf(r),
+      }))
       .filter(
       (row) =>
         row.status === "VALID" &&
@@ -322,7 +338,9 @@ function row(overrides: Partial<MetricsRow> = {}): MetricsRow {
     signed_error: null,
     absolute_error: null,
     relative_error: null,
+    confidence_label: null,
     calibration: null,
+    source: "MANUAL_ENTRY",
     ...overrides,
   };
 }
@@ -643,6 +661,7 @@ describe("deduplicação", () => {
     real_quote_reference: "SIM-001",
     real_quote_amount: 400,
     real_quote_basis: "ANNUAL",
+    source: "MANUAL_ENTRY",
     ...overrides,
   });
 
