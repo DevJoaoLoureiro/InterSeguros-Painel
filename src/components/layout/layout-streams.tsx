@@ -5,7 +5,6 @@ import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { ExpiryAlertsPopup } from "@/components/alerts/expiry-alerts";
 
 import { getNotifications } from "@/lib/notifications/get-notifications";
-import { hasFullAccess } from "@/lib/auth/permissions";
 import { getExpiryAlerts, getOverdueCount } from "@/lib/alerts/expiry-alerts";
 
 /*
@@ -25,10 +24,7 @@ export async function SidebarWithBadge({
   storeId,
   ...props
 }: SidebarProps & { storeId: string | null }) {
-  // O badge é do menu Vencimentos, que só OWNER/ADMIN veem.
-  const overdueReceiptsCount = hasFullAccess(props.profile.role)
-    ? await getOverdueCount(storeId)
-    : 0;
+  const overdueReceiptsCount = await getOverdueCount(storeId);
 
   return <AppSidebar {...props} overdueReceiptsCount={overdueReceiptsCount} />;
 }

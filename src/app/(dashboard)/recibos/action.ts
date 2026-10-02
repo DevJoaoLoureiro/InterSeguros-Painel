@@ -1,11 +1,10 @@
 "use server";
 
-import { cookies } from "next/headers";
 import { unstable_cache } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireAdmin } from "@/lib/auth/access";
-import { getCurrentProfile } from "@/lib/auth/get-current-profile";
+import { requireProfile } from "@/lib/auth/access";
+import { getSelectedStoreId } from "@/lib/auth/store-selection";
 import {
   summarizeCommissions,
   type CommissionRow,
@@ -450,35 +449,11 @@ async function getCommissionsForReceipts(
 export async function getReceiptsData(
   filters: ReceiptFilters,
 ): Promise<ReceiptsPageData> {
-  // Recibos = área da agência (só OWNER/ADMIN).
-  await requireAdmin();
+  // Recibos de TODAS as lojas para qualquer funcionário; a loja é só
+  // o filtro escolhido no seletor do topo.
+  await requireProfile();
 
-  const [profile, cookieStore] = await Promise.all([
-    getCurrentProfile(),
-    cookies(),
-  ]);
-
-  if (!profile) {
-    throw new Error("Não autenticado.");
-  }
-
-  const canAccessAllStores =
-    profile.role === "OWNER" ||
-    profile.role === "ADMIN";
-
-  const cookieStoreId =
-    cookieStore.get("selected_store_id")?.value ??
-    "all";
-
-  const selectedStoreId = canAccessAllStores
-    ? cookieStoreId
-    : profile.store?.id ?? null;
-
-  if (!canAccessAllStores && !selectedStoreId) {
-    throw new Error(
-      "O utilizador não tem uma loja associada.",
-    );
-  }
+  const selectedStoreId = await getSelectedStoreId();
 
   const storeId =
     selectedStoreId &&

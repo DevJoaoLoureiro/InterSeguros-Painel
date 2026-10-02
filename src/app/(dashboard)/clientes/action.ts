@@ -1,11 +1,11 @@
 "use server";
 
 import { unstable_cache } from "next/cache";
-import { cookies } from "next/headers";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { requireAdmin } from "@/lib/auth/access";
+import { requireProfile } from "@/lib/auth/access";
+import { getSelectedStoreFilter } from "@/lib/auth/store-selection";
 
 import type {
   ClientsPortfolioData,
@@ -223,29 +223,11 @@ function mapPortfolioRows(rows: PortfolioRpcRow[]): PortfolioClient[] {
 export async function getClientsPortfolioData(
   filters: PortfolioFilters,
 ): Promise<ClientsPortfolioData> {
-  // Lista de clientes = área da agência (só OWNER/ADMIN).
-  await requireAdmin();
+  // Clientes de TODAS as lojas para qualquer funcionário; a loja é só
+  // o filtro escolhido no seletor do topo.
+  await requireProfile();
 
-  const [profile, cookieStore] = await Promise.all([
-    getCurrentProfile(),
-    cookies(),
-  ]);
-
-  if (!profile) throw new Error("Não autenticado.");
-
-  const canAccessAllStores =
-    profile.role === "OWNER" || profile.role === "ADMIN";
-  const cookieStoreId = cookieStore.get("selected_store_id")?.value ?? "all";
-  const selectedStoreId = canAccessAllStores
-    ? cookieStoreId
-    : profile.store?.id ?? null;
-
-  if (!canAccessAllStores && !selectedStoreId) {
-    throw new Error("O utilizador não tem uma loja associada.");
-  }
-
-  const storeId =
-    selectedStoreId && selectedStoreId !== "all" ? selectedStoreId : null;
+  const storeId = await getSelectedStoreFilter();
   const search = toNullable(filters.search);
   const from = toNullable(filters.from);
   const to = toNullable(filters.to);
@@ -382,8 +364,6 @@ export async function assignCurrentUserToPolicy(
   commercialUser: { id: string; full_name: string };
   issuingStore: { id: string; name: string } | null;
 }> {
-  await requireAdmin();
-
   const profile = await getCurrentProfile();
 
   if (!profile) throw new Error("Não autenticado.");
@@ -402,33 +382,10 @@ export async function assignCurrentUserToPolicy(
 
   if (!policy) throw new Error("Apólice não encontrada.");
 
-  const canAccessAllStores =
-    profile.role === "OWNER" || profile.role === "ADMIN";
-
+  // Sem restrição por loja: qualquer funcionário pode associar-se a
+  // uma apólice de qualquer loja. Se a apólice ainda não tem loja
+  // (caso típico da Zurich), fica com a loja de quem se associa.
   const profileStoreId = profile.store?.id ?? null;
-
-  if (!canAccessAllStores) {
-    if (!profileStoreId) {
-      throw new Error("O utilizador não tem uma loja associada.");
-    }
-
-    // Se a apólice JÁ tem loja definida (ex: veio da Prévoir, cuja
-    // API já permite resolver a loja automaticamente), só deixamos
-    // associar quem for dessa loja — comportamento inalterado.
-    //
-    // Se a apólice AINDA NÃO tem loja (ex: Zurich, cuja API não dá
-    // essa informação de forma alguma), não há loja "errada" para
-    // comparar — a loja da apólice passa a ser a do comercial que
-    // se associar agora (ver mais abaixo).
-    if (
-      policy.issuing_store_id &&
-      policy.issuing_store_id !== profileStoreId
-    ) {
-      throw new Error(
-        "Não tens permissão para te associares a uma apólice de outra loja.",
-      );
-    }
-  }
 
   if (
     policy.commercial_user_id &&

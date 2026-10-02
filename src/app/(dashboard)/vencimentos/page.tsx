@@ -1,8 +1,8 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { AlertTriangle, CalendarClock, RefreshCw } from "lucide-react";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
+import { getSelectedStoreId } from "@/lib/auth/store-selection";
 
 import {
   getUpcomingReceipts,
@@ -18,17 +18,8 @@ export default async function VencimentosPage() {
     redirect("/login");
   }
 
-  const cookieStore = await cookies();
-
-  const cookieStoreId =
-    cookieStore.get("selected_store_id")?.value ?? "all";
-
-  const canAccessAllStores =
-    profile.role === "OWNER" || profile.role === "ADMIN";
-
-  const selectedStoreId = canAccessAllStores
-    ? cookieStoreId
-    : profile.store?.id ?? null;
+  // Loja = filtro do seletor do topo, igual para todos.
+  const selectedStoreId = await getSelectedStoreId();
 
   const [renewals, upcomingReceipts] = await Promise.all([
     getUpcomingRenewals({ storeId: selectedStoreId }),

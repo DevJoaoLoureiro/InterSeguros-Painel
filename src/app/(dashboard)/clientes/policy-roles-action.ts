@@ -21,9 +21,9 @@ import {
  *
  * Permissões:
  * - OWNER/ADMIN alteram tudo.
- * - Restantes, só em apólices da sua loja (ou ainda sem loja):
- *   preenchem papéis vazios ou que são deles próprios — não
- *   sobrepõem o que já está atribuído a outra pessoa.
+ * - Restantes, em apólices de QUALQUER loja: preenchem papéis vazios
+ *   ou que são deles próprios — não sobrepõem o que já está
+ *   atribuído a outra pessoa.
  * - Gestor: cada um só se pode marcar a si próprio ("Fui eu que
  *   emiti"); só OWNER/ADMIN corrigem para outra pessoa.
  */
@@ -87,9 +87,10 @@ async function loadContext(policyId: string) {
 
   const isAdmin = hasFullAccess(profile.role);
 
-  // Os intervenientes editam-se no painel do cliente, que é uma área
-  // só de OWNER/ADMIN (sem lógica de lojas).
-  const canEdit = isAdmin;
+  // Qualquer funcionário edita, em apólices de qualquer loja (sem
+  // lógica de lojas). Não-admins seguem as regras de updatePolicyRoles:
+  // só preenchem papéis vazios ou os próprios.
+  const canEdit = true;
 
   return { admin, profile, policy, isAdmin, canEdit };
 }
@@ -191,7 +192,7 @@ export async function getPoliciesRoles(
       partners: activePartners,
       currentUserId: profile.id,
       isAdmin,
-      canEdit: isAdmin,
+      canEdit: true,
     };
   }
 

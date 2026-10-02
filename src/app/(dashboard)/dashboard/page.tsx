@@ -8,11 +8,11 @@
 } from "lucide-react";
 
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { DashboardCharts } from "@/components/dashboard/dashboard-charts";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
+import { getSelectedStoreId } from "@/lib/auth/store-selection";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getExpiryAlerts,
@@ -153,21 +153,8 @@ export default async function DashboardPage() {
   // LOJA ATIVA
   // ========================================
 
-  const cookieStore = await cookies();
-
-  const cookieStoreId =
-    cookieStore.get("selected_store_id")?.value ?? "all";
-
-  const canAccessAllStores =
-    profile.role === "OWNER" || profile.role === "ADMIN";
-
-  const selectedStoreId = canAccessAllStores
-    ? cookieStoreId
-    : profile.store?.id ?? null;
-
-  if (!canAccessAllStores && !selectedStoreId) {
-    throw new Error("O utilizador não tem uma loja associada.");
-  }
+  // Loja = filtro do seletor do topo, igual para todos.
+  const selectedStoreId = await getSelectedStoreId();
 
   const supabase = createAdminClient();
 

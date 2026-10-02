@@ -465,19 +465,14 @@ const tools = [
 /*
  * Ferramentas por função (mesma regra das páginas):
  * - OWNER/ADMIN: todas.
- * - Funcionários: tarefas, alertas e pesquisa/ficha de clientes (para
- *   simular e tratar oportunidades). Números da agência (produção,
- *   gestão, apólices por período, renovações, por associar) ficam de
- *   fora — senão a IA contornava as páginas escondidas.
+ * - Funcionários: todas exceto as que equivalem às páginas que não
+ *   veem (Estatísticas, Carteira por loja, Comissões) — senão a IA
+ *   contornava essas páginas.
  */
-const EMPLOYEE_TOOL_NAMES = new Set([
-  "get_tasks",
-  "get_expiry_alerts",
-  "search_client",
-  "get_client_policies",
-  "get_client_details",
-  "get_client_360",
-  "get_client_opportunities",
+const ADMIN_ONLY_TOOL_NAMES = new Set([
+  "get_production_summary",
+  "compare_production_periods",
+  "get_management_overview",
 ]);
 
 export async function runAiAgent(
@@ -489,7 +484,7 @@ export async function runAiAgent(
 
   const allowedTools = context.canAccessAllStores
     ? tools
-    : tools.filter((tool) => EMPLOYEE_TOOL_NAMES.has(tool.name));
+    : tools.filter((tool) => !ADMIN_ONLY_TOOL_NAMES.has(tool.name));
 
   const allowedToolNames = new Set<string>(
     allowedTools.map((tool) => tool.name),

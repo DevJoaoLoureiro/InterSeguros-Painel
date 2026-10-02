@@ -56,7 +56,7 @@ export const getAlertScope = cache(async () => {
     return null;
   }
 
-  // privileged = vê os dados da agência (recibos, renovações).
+  // privileged = OWNER/ADMIN (alertas de processos de toda a equipa).
   // Loja = filtro do seletor do topo, igual para todos.
   const privileged = hasFullAccess(profile.role);
   const storeId = await getSelectedStoreFilter();
@@ -140,14 +140,11 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
     processesQuery = processesQuery.eq("store_id", storeId);
   }
 
-  // Funcionários não veem recibos/renovações da agência: só os seus
-  // processos a começar.
-  const emptySnapshot = { receipts: [], renewals: [] } as Awaited<
-    ReturnType<typeof getVencimentosSnapshot>
-  >;
-
+  // Recibos e renovações para todos (funcionários veem Vencimentos de
+  // todas as lojas). Os processos: OWNER/ADMIN veem todos, os
+  // restantes os seus.
   const [{ receipts, renewals }, processesResult] = await Promise.all([
-    privileged ? getVencimentosSnapshot(storeId) : emptySnapshot,
+    getVencimentosSnapshot(storeId),
     processesQuery,
   ]);
 

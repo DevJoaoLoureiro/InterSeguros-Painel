@@ -47,11 +47,11 @@ export async function requireAdmin() {
 }
 
 /*
- * Loja para filtrar uma área da agência (só OWNER/ADMIN entram).
- * "all"/vazio → null (todas as lojas).
+ * Loja pedida → filtro de consulta ("all"/vazio = todas). Qualquer
+ * utilizador com sessão (sem restrição por loja).
  */
 export async function resolveStoreScope(requested: string | null | undefined) {
-  await requireAdmin();
+  await requireProfile();
 
   return requested && requested !== "all" ? requested : null;
 }
