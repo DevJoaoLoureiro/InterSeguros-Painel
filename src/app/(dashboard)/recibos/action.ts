@@ -5,6 +5,11 @@ import { unstable_cache } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
+import {
+  summarizeCommissions,
+  type CommissionRow,
+  type CommissionSummary,
+} from "@/lib/insurance/commissions";
 
 import {
   RECEIPTS_PAGE_SIZE,
@@ -85,23 +90,6 @@ type PremiumComparison = {
   increaseAlert: boolean;
 };
 
-type ReceiptsStatsRow = {
-  paid_count: number | string | null;
-  paid_commercial: number | string | null;
-  paid_total: number | string | null;
-
-  pending_count: number | string | null;
-  pending_commercial: number | string | null;
-  pending_total: number | string | null;
-
-  returned_count: number | string | null;
-  returned_commercial: number | string | null;
-  returned_total: number | string | null;
-
-  reversals_count: number | string | null;
-  reversals_commercial: number | string | null;
-  reversals_total: number | string | null;
-};
 
 type ReceiptsPageRpcResult = {
   stats: {
@@ -162,6 +150,7 @@ function mapRow(row: SearchReceiptsRow): ReceiptRow {
     previous_commercial_premium: null,
     commercial_premium_change_pct: null,
     commercial_premium_increase_alert: false,
+    commission: null,
 
     status: row.status,
 
@@ -417,6 +406,46 @@ const getReceiptCompanies = unstable_cache(
   },
 );
 
+/*
+ * Comissões dos recibos da página atual (no máximo uma página,
+ * por isso uma só consulta).
+ */
+async function getCommissionsForReceipts(
+  receiptIds: string[],
+): Promise<Map<string, CommissionSummary>> {
+  const result = new Map<string, CommissionSummary>();
+
+  if (receiptIds.length === 0) {
+    return result;
+  }
+
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase
+    .from("receipt_commissions")
+    .select("receipt_id, commission_type, amount, external_type")
+    .in("receipt_id", receiptIds);
+
+  // Sem comissões a página continua a funcionar.
+  if (error) {
+    console.error("[recibos] receipt_commissions", error.message);
+    return result;
+  }
+
+  const grouped = new Map<string, CommissionRow[]>();
+
+  for (const row of data ?? []) {
+    grouped.set(row.receipt_id, [...(grouped.get(row.receipt_id) ?? []), row]);
+  }
+
+  for (const [receiptId, rows] of grouped) {
+    const summary = summarizeCommissions(rows);
+    if (summary) result.set(receiptId, summary);
+  }
+
+  return result;
+}
+
 export async function getReceiptsData(
   filters: ReceiptFilters,
 ): Promise<ReceiptsPageData> {
@@ -563,10 +592,16 @@ export async function getReceiptsData(
     totalPages,
   );
 
-  const premiumComparisons = await getPremiumComparisons(rows);
+  const [premiumComparisons, commissionsByReceipt] = await Promise.all([
+    getPremiumComparisons(rows),
+    getCommissionsForReceipts(rows.map((row) => row.id)),
+  ]);
 
   const items = rows.map((row) => {
-    const mapped = mapRow(row);
+    const mapped = {
+      ...mapRow(row),
+      commission: commissionsByReceipt.get(row.id) ?? null,
+    };
     const comparison = premiumComparisons.get(row.id);
 
     if (!comparison) {

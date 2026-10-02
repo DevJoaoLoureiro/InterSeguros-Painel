@@ -13,9 +13,7 @@ import {
   getCurrentProfile,
 } from "@/lib/auth/get-current-profile";
 
-import {
-  createAdminClient,
-} from "@/lib/supabase/admin";
+import { getCachedStores } from "@/lib/cache/reference-data";
 
 import {
   AssistantProvider,
@@ -23,9 +21,13 @@ import {
 
 import AssistantPanel from "@/components/ai/assistant-panel";
 
-import { getNotifications } from "@/lib/notifications/get-notifications";
+import { Suspense } from "react";
 
-import { getOverdueReceiptsCount } from "@/app/(dashboard)/vencimentos/action";
+import {
+  ExpiryAlertsLoader,
+  HeaderWithNotifications,
+  SidebarWithBadge,
+} from "@/components/layout/layout-streams";
 
 export default async function DashboardLayout({
   children,
@@ -47,35 +49,13 @@ export default async function DashboardLayout({
   // SUPABASE
   // ==========================================
 
-  const supabase =
-    createAdminClient();
-
   // ==========================================
-  // LOJAS
+  // LOJAS (cache de referência: o layout corre
+  // em todas as páginas, as lojas mudam raramente)
   // ==========================================
-
-  const {
-    data: storesData,
-    error: storesError,
-  } = await supabase
-    .from("stores")
-    .select(`
-      id,
-      name,
-      code
-    `)
-    .order("name", {
-      ascending: true,
-    });
-
-  if (storesError) {
-    throw new Error(
-      `Erro ao carregar lojas: ${storesError.message}`,
-    );
-  }
 
   const allStores =
-    storesData ?? [];
+    await getCachedStores();
 
   // ==========================================
   // COOKIE DA LOJA SELECIONADA
@@ -145,14 +125,12 @@ export default async function DashboardLayout({
   // ==========================================
   // NOTIFICAÇÕES + BADGE DE VENCIMENTOS
   // ==========================================
+  //
+  // Não se esperam aqui: sino, badge e alertas carregam em
+  // <Suspense> (layout-streams.tsx) e a página aparece logo.
 
-
- const [notifications, overdueReceiptsCount] = await Promise.all([
-  getNotifications(),
-  getOverdueReceiptsCount({
-    storeId: selectedStoreId === "all" ? null : selectedStoreId,
-  }),
-]);
+  const scopedStoreId =
+    selectedStoreId === "all" ? null : selectedStoreId;
 
   // ==========================================
   // LAYOUT
@@ -162,32 +140,48 @@ export default async function DashboardLayout({
     <AssistantProvider>
       <div className="min-h-dvh w-full overflow-x-clip bg-[#f7f8fc]">
         <aside className="fixed inset-y-0 left-0 z-40 hidden w-[270px] lg:block">
-          <AppSidebar
-            profile={profile}
-            overdueReceiptsCount={
-              overdueReceiptsCount
+          <Suspense
+            fallback={
+              <AppSidebar
+                profile={profile}
+                overdueReceiptsCount={0}
+              />
             }
-          />
+          >
+            <SidebarWithBadge
+              profile={profile}
+              storeId={scopedStoreId}
+            />
+          </Suspense>
         </aside>
 
         <div className="min-w-0 max-w-full lg:pl-[270px]">
-          <DashboardHeader
-            profile={profile}
-            stores={
-              availableStores
+          <Suspense
+            fallback={
+              <DashboardHeader
+                profile={profile}
+                stores={availableStores}
+                selectedStoreId={selectedStoreId}
+                notifications={[]}
+              />
             }
-            selectedStoreId={
-              selectedStoreId
-            }
-            notifications={
-              notifications
-            }
-          />
+          >
+            <HeaderWithNotifications
+              profile={profile}
+              stores={availableStores}
+              selectedStoreId={selectedStoreId}
+            />
+          </Suspense>
 
           <main className="min-w-0 max-w-full overflow-x-clip p-3 sm:p-5 lg:p-7">
             {children}
           </main>
         </div>
+
+        {/* ALERTAS DE VENCIMENTO (≤ 5 dias) */}
+        <Suspense fallback={null}>
+          <ExpiryAlertsLoader userId={profile.id} />
+        </Suspense>
 
         {/* ASSISTENTE GLOBAL */}
         <AssistantPanel />

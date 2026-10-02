@@ -351,7 +351,7 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px]">
+          <table className="w-full min-w-[1220px]">
             <thead>
               <tr className="border-b border-[#e8eaed] bg-[#fafafa]">
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#7a818c]">
@@ -389,6 +389,10 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
                 <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-[#7a818c]">
                   Prémio Total
                 </th>
+
+                <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-[#7a818c]">
+                  Comissão
+                </th>
               </tr>
             </thead>
 
@@ -396,7 +400,7 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
               {data.items.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={9}
+                    colSpan={10}
                     className="px-5 py-16 text-center text-sm text-[#8a9099]"
                   >
                     Nenhum recibo encontrado.
@@ -445,7 +449,7 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
                     </td>
 
                     <td className="px-5 py-4 text-right">
-                      <p className="text-sm font-medium text-[#343941]">
+                      <p className="text-sm text-[#7a818c]">
                         {formatCurrency(receipt.commercial_premium ?? 0)}
                       </p>
 
@@ -465,8 +469,41 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
                         )}
                     </td>
 
-                    <td className="px-5 py-4 text-right text-sm font-semibold text-[#24272d]">
+                    <td className="px-5 py-4 text-right text-base font-bold text-[#17191d]">
                       {formatCurrency(receipt.total_premium ?? 0)}
+                    </td>
+
+                    <td className="px-5 py-4 text-right">
+                      {receipt.commission ? (
+                        <div
+                          title={
+                            receipt.commission.parts.length > 0
+                              ? receipt.commission.parts
+                                  .map(
+                                    (part) =>
+                                      `${part.label}: ${formatCurrency(part.amount)}`,
+                                  )
+                                  .join(" · ")
+                              : undefined
+                          }
+                        >
+                          <p className="text-sm font-semibold text-emerald-700">
+                            {formatCurrency(receipt.commission.total)}
+                          </p>
+                          {receipt.commercial_premium ? (
+                            <p className="mt-0.5 text-xs text-[#8a9099]">
+                              {(
+                                (receipt.commission.total /
+                                  receipt.commercial_premium) *
+                                100
+                              ).toFixed(2)}
+                              % do comercial
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span className="text-sm text-[#c0c4c9]">—</span>
+                      )}
                     </td>
                   </tr>
                 ))

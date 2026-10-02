@@ -25,7 +25,7 @@ export default async function TarefasPage() {
     ? cookieStoreId
     : profile.store?.id ?? null;
 
-  const { tasks, profiles, privileged, currentProfileId } =
+  const { tasks, profiles, insuranceLines, privileged, currentProfileId } =
     await getTasksData({ selectedStoreId });
 
   return (
@@ -40,13 +40,14 @@ export default async function TarefasPage() {
         </h1>
 
         <p className="mt-1 text-sm text-[#737a84]">
-          Acompanhamento de tarefas e follow-ups da equipa.
+          Tarefas, follow-ups e processos de simulação da equipa.
         </p>
       </div>
 
       <TasksBoard
         initialTasks={tasks}
         profiles={profiles}
+        insuranceLines={insuranceLines}
         privileged={privileged}
         currentProfileId={currentProfileId}
       />

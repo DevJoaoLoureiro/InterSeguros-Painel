@@ -1,5 +1,6 @@
 import type { ZurichApoliceFicheiro, ZurichClienteFicheiro } from "./file-parser";
 import { parseZurichFileDecimal } from "./file-parser";
+import { compactMetadata } from "@/lib/insurance/sync/client-metadata";
 
 /*
  * Mesma "forma" que NormalizedPrevoirPolicy / NormalizedPolicy
@@ -57,6 +58,9 @@ export type NormalizedZurichPolicy = {
     street: string | null;
     postalCode: string | null;
     city: string | null;
+    // Tudo o que a companhia envia sobre o cliente (para a aba
+    // "Dados do cliente"). Guardado em client_external_refs.
+    metadata?: Record<string, unknown>;
   };
 
   providerMetadata: Record<string, unknown>;
@@ -216,6 +220,9 @@ export function mapZurichPolicy(
         cliente?.LocalidadePostal.trim() ||
         cliente?.Localidade.trim() ||
         null,
+      // Ficha completa do cliente (sexo, profissão, contactos, CC,
+      // NIB, ...), sem campos vazios.
+      metadata: cliente ? compactMetadata({ ...cliente }) : undefined,
     },
 
     providerMetadata: {

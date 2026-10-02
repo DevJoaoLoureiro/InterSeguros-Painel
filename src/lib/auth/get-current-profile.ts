@@ -5,17 +5,28 @@ export const getCurrentProfile = cache(async () => {
   const supabase = await createClient();
 
   // 1. Utilizador autenticado
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
+  //
+  // getClaims() valida o JWT localmente (o projeto usa chaves
+  // assimétricas ES256, JWKS em cache) — sem ida ao servidor de Auth
+  // em cada pedido, ao contrário do getUser(). Utilizadores
+  // desativados continuam bloqueados pelo profile.active abaixo.
+  const { data: claimsData, error: claimsError } =
+    await supabase.auth.getClaims();
 
-  if (userError || !user) {
-    console.error("Erro ao carregar utilizador:", userError);
+  const userId = claimsData?.claims?.sub;
+  const userEmail =
+    typeof claimsData?.claims?.email === "string"
+      ? claimsData.claims.email
+      : null;
+
+  if (claimsError || !userId) {
+    if (claimsError) {
+      console.error("Erro ao carregar utilizador:", claimsError);
+    }
     return null;
   }
 
-  // 2. Profile
+  // 2. Profile + loja numa só consulta
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
     .select(`
@@ -24,9 +35,10 @@ export const getCurrentProfile = cache(async () => {
       email,
       role,
       active,
-      store_id
+      store_id,
+      store:stores ( id, name, code )
     `)
-    .eq("id", user.id)
+    .eq("id", userId)
     .maybeSingle();
 
   if (profileError) {
@@ -39,47 +51,29 @@ export const getCurrentProfile = cache(async () => {
   }
 
   if (!profile) {
-    console.error("Profile não encontrado para o utilizador:", user.id);
+    console.error("Profile não encontrado para o utilizador:", userId);
     return null;
   }
 
   if (!profile.active) {
-    console.error("Profile inativo:", user.id);
+    console.error("Profile inativo:", userId);
     return null;
   }
 
-  // 3. Loja
-  let store: {
-    id: string;
-    name: string;
-    code: string | null;
-  } | null = null;
+  // 3. Loja (já veio no join)
+  const storeRelation = profile.store as
+    | { id: string; name: string; code: string | null }
+    | { id: string; name: string; code: string | null }[]
+    | null;
 
-  if (profile.store_id) {
-    const { data: storeData, error: storeError } = await supabase
-      .from("stores")
-      .select(`
-        id,
-        name,
-        code
-      `)
-      .eq("id", profile.store_id)
-      .maybeSingle();
-
-    if (storeError) {
-      console.error(
-        "Erro ao carregar loja:",
-        JSON.stringify(storeError, null, 2)
-      );
-    } else {
-      store = storeData;
-    }
-  }
+  const store = Array.isArray(storeRelation)
+    ? (storeRelation[0] ?? null)
+    : storeRelation;
 
   return {
     id: profile.id,
     full_name: profile.full_name,
-    email: profile.email ?? user.email ?? null,
+    email: profile.email ?? userEmail ?? null,
     role: profile.role,
     active: profile.active,
     store,

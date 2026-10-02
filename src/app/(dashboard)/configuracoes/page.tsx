@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Cable, ChevronRight, Tags } from "lucide-react";
+import { Cable, ChevronRight, Handshake, Tags } from "lucide-react";
 
 export default function ConfiguracoesPage() {
   return (
@@ -32,6 +32,28 @@ export default function ConfiguracoesPage() {
               <p className="mt-0.5 text-sm text-[#7d848e]">
                 Atribuir ramo (Vida / Não Vida / Financeiros) aos
                 produtos por classificar.
+              </p>
+            </div>
+          </div>
+
+          <ChevronRight className="h-5 w-5 shrink-0 text-[#a0a5ac] transition group-hover:translate-x-0.5 group-hover:text-[#ff4b0a]" />
+        </Link>
+
+        <Link
+          href="/configuracoes/parceiros"
+          className="group flex items-center justify-between rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)] transition hover:border-[#ff4b0a]/30 hover:bg-gray-50"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[#ff4b0a]">
+              <Handshake className="h-5 w-5" />
+            </div>
+
+            <div>
+              <p className="font-medium text-[#20242a]">Parceiros</p>
+
+              <p className="mt-0.5 text-sm text-[#7d848e]">
+                Parceiros, empresas e pessoas que podem ser a origem de
+                uma apólice.
               </p>
             </div>
           </div>

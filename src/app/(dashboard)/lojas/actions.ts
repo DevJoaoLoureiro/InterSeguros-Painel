@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { invalidateReference } from "@/lib/cache/reference-data";
 
 type StoreInput = {
   name: string;
@@ -99,6 +100,7 @@ export async function createStore(
   }
 
   revalidatePath("/lojas");
+  invalidateReference("stores");
 
   return {
     success: true,
@@ -168,6 +170,7 @@ export async function updateStore(
   }
 
   revalidatePath("/lojas");
+  invalidateReference("stores");
 
   return {
     success: true,
@@ -200,6 +203,7 @@ export async function toggleStoreStatus(
   }
 
   revalidatePath("/lojas");
+  invalidateReference("stores");
 
   return {
     success: true,

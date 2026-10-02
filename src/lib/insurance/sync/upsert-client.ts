@@ -39,6 +39,12 @@ export async function upsertClient({
     policy.client.nif,
   );
 
+  const clientMetadata =
+    policy.client.metadata &&
+    Object.keys(policy.client.metadata).length > 0
+      ? policy.client.metadata
+      : null;
+
   // ========================================
   // 1. REFERÊNCIA EXTERNA
   // ========================================
@@ -86,6 +92,25 @@ export async function upsertClient({
       throw new Error(
         `Erro ao atualizar cliente: ${error.message}`,
       );
+    }
+
+    // Ficha completa do cliente desta companhia (aba "Dados do
+    // cliente"). Só escreve quando a companhia enviou dados.
+    if (clientMetadata) {
+      const { error: metadataError } = await supabase
+        .from("client_external_refs")
+        .update({
+          provider_metadata: clientMetadata,
+          last_synced_at: new Date().toISOString(),
+        })
+        .eq("company_id", companyId)
+        .eq("external_id", externalClientId);
+
+      if (metadataError) {
+        throw new Error(
+          `Erro ao guardar dados do cliente: ${metadataError.message}`,
+        );
+      }
     }
 
     return {
@@ -186,6 +211,9 @@ export async function upsertClient({
             externalClientId,
           last_synced_at:
             new Date().toISOString(),
+          ...(clientMetadata
+            ? { provider_metadata: clientMetadata }
+            : {}),
         },
         {
           onConflict:

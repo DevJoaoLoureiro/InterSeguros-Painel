@@ -189,10 +189,7 @@ function mapPolicy(
   };
 }
 
-function mapPortfolioRows(
-  rows: PortfolioRpcRow[],
-  vehicleRegistrations: Map<string, string>,
-): PortfolioClient[] {
+function mapPortfolioRows(rows: PortfolioRpcRow[]): PortfolioClient[] {
   return rows.map((row) => ({
     client: {
       id: row.client_id,
@@ -209,11 +206,7 @@ function mapPortfolioRows(
       updated_at: "",
     },
     policies: (row.policies ?? []).map((policy) =>
-      mapPolicy(
-        policy,
-        row.client_id,
-        vehicleRegistrations.get(policy.id) ?? null,
-      ),
+      mapPolicy(policy, row.client_id, null),
     ),
     opportunity: {
       hasOpportunity: false,
@@ -224,70 +217,6 @@ function mapPortfolioRows(
       reason: null,
     },
   }));
-}
-
-function getVehicleRegistrationFromMetadata(
-  metadata: unknown,
-): string | null {
-  if (
-    !metadata ||
-    typeof metadata !== "object" ||
-    Array.isArray(metadata)
-  ) {
-    return null;
-  }
-
-  const value = (metadata as Record<string, unknown>).vehicleRegistration;
-
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const normalized = value.trim().toUpperCase();
-
-  return normalized || null;
-}
-
-async function getVehicleRegistrationsForRows(
-  admin: ReturnType<typeof createAdminClient>,
-  rows: PortfolioRpcRow[],
-): Promise<Map<string, string>> {
-  const policyIds = Array.from(
-    new Set(
-      rows.flatMap((row) =>
-        (row.policies ?? []).map((policy) => policy.id),
-      ),
-    ),
-  );
-
-  const result = new Map<string, string>();
-
-  if (policyIds.length === 0) {
-    return result;
-  }
-
-  const { data, error } = await admin
-    .from("policies")
-    .select("id, provider_metadata")
-    .in("id", policyIds);
-
-  if (error) {
-    throw new Error(
-      `Erro ao carregar matrículas das apólices: ${error.message}`,
-    );
-  }
-
-  for (const policy of data ?? []) {
-    const registration = getVehicleRegistrationFromMetadata(
-      policy.provider_metadata,
-    );
-
-    if (registration) {
-      result.set(policy.id, registration);
-    }
-  }
-
-  return result;
 }
 
 export async function getClientsPortfolioData(
@@ -427,14 +356,12 @@ export async function getClientsPortfolioData(
   const totalPages = Math.max(1, Math.ceil(totalCount / CLIENTS_PAGE_SIZE));
   const page = Math.min(requestedPage, totalPages);
 
-  const vehicleRegistrations = await getVehicleRegistrationsForRows(
-    admin,
-    rows,
-  );
-
+  // A matrícula já não é pedida aqui: só o painel do cliente a mostra
+  // e esse carrega-a no seu próprio pedido (getClientPanel). Poupa
+  // uma consulta em série em cada página/filtro.
   return {
     stats,
-    items: mapPortfolioRows(rows, vehicleRegistrations),
+    items: mapPortfolioRows(rows),
     page,
     totalPages,
     totalCount,

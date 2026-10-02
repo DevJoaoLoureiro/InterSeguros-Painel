@@ -99,9 +99,12 @@ if (pathname === "/api/zurich/login-code") {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // getClaims() valida o JWT localmente (chaves ES256, JWKS em cache)
+  // e renova a sessão quando está a expirar — sem ida ao servidor de
+  // Auth em cada pedido, como fazia o getUser().
+  const { data: claimsData } = await supabase.auth.getClaims();
+
+  const user = claimsData?.claims?.sub ? claimsData.claims : null;
 
   // =====================================================
   // LOGIN
@@ -126,6 +129,60 @@ if (pathname === "/api/zurich/login-code") {
     url.pathname = "/dashboard";
 
     return NextResponse.redirect(url);
+  }
+
+  // =====================================================
+  // ROTAS DE DEV — SÓ OWNER/ADMIN
+  // =====================================================
+  //
+  // Vários endpoints /api/dev/* chamam a Zurich (token
+  // partilhado) ou escrevem na BD, e nem todos verificam a
+  // função do utilizador. Bloqueamos aqui, num só sítio, para
+  // cobrir também os que forem criados no futuro.
+
+  // Páginas da secção GESTÃO (a sidebar já as esconde a não-admins;
+  // aqui impede-se o acesso direto pelo URL).
+  const adminOnlyPage =
+    pathname.startsWith("/lojas") ||
+    pathname.startsWith("/utilizadores") ||
+    pathname.startsWith("/configuracoes");
+
+  if (user && adminOnlyPage && request.method === "GET") {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role, active")
+      .eq("id", user.sub)
+      .maybeSingle();
+
+    const allowed =
+      profile?.active === true &&
+      (profile.role === "OWNER" || profile.role === "ADMIN");
+
+    if (!allowed) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
+  }
+
+  if (user && pathname.startsWith("/api/dev/")) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role, active")
+      .eq("id", user.sub)
+      .maybeSingle();
+
+    const allowed =
+      profile?.active === true &&
+      (profile.role === "OWNER" || profile.role === "ADMIN");
+
+    if (!allowed) {
+      return NextResponse.json(
+        { success: false, error: "Sem permissões." },
+        { status: 403 },
+      );
+    }
   }
 
   return response;

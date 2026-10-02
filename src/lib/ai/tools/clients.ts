@@ -21,6 +21,14 @@ export async function searchClient(
 
   const normalized = search.toLowerCase();
 
+  // O texto vem da conversa: vírgulas, parênteses e afins mudariam o
+  // filtro do PostgREST (.or) — ficam só letras, números e espaços.
+  const safeSearch = search.replace(/[^\p{L}\p{N}@.\s+-]/gu, "").trim();
+
+  if (!safeSearch) {
+    return { clients: [] };
+  }
+
   // ==========================================
   // 1. PROCURAR CLIENTES
   // ==========================================
@@ -36,10 +44,10 @@ export async function searchClient(
     `)
     .or(
       [
-        `name.ilike.%${search}%`,
-        `nif.ilike.%${search}%`,
-        `email.ilike.%${search}%`,
-        `phone.ilike.%${search}%`,
+        `name.ilike.%${safeSearch}%`,
+        `nif.ilike.%${safeSearch}%`,
+        `email.ilike.%${safeSearch}%`,
+        `phone.ilike.%${safeSearch}%`,
       ].join(","),
     )
     .limit(20);

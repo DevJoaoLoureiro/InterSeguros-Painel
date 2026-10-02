@@ -5,9 +5,7 @@ import {
   FileText,
   Search,
   ShieldCheck,
-  UserRound,
   Users,
-  X,
 } from "lucide-react";
 
 import { PolicyDetailsDrawer } from "@/components/clientes/policy-details-drawer";
@@ -479,6 +477,8 @@ export default function ClientsList({
       )}
 
       <PolicyDetailsDrawer
+        key={selectedClient?.client.id ?? "none"}
+        clientId={selectedClient?.client.id ?? null}
         clientName={selectedClient?.client.name ?? ""}
         clientNif={selectedClient?.client.nif ?? null}
         policies={selectedClient?.policies ?? []}

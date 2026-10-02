@@ -1,4 +1,4 @@
-import { LockKeyhole, Mail, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { LoginForm } from "@/components/auth/login-form";
 
 export default function LoginPage() {

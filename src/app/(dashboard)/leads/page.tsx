@@ -1,7 +1,6 @@
 import { LeadsPage } from "@/components/leads/leads-page";
 import { createClient } from "@/lib/supabase/server";
 import type { Lead } from "@/types/lead";
-import { cookies } from "next/headers";
 export default async function Page() {
   const supabase = await createClient();
 

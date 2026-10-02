@@ -1,6 +1,11 @@
 import {
   NextResponse,
 } from "next/server";
+import { revalidateTag } from "next/cache";
+
+import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
+import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 import {
   syncPrevoirPolicies,
@@ -82,6 +87,17 @@ export async function POST() {
   }
 
   const ok = !policiesError && !receiptsError;
+
+  // Alertas/sino/vencimentos em cache passam a refletir o sync
+  // (mesmo parcial: o que entrou já está na BD).
+  revalidateTag(VENCIMENTOS_TAG, "max");
+
+  // Processos de simulação: ligar aos recibos que acabaram de chegar.
+  try {
+    await reconcileProcessReceipts(createAdminClient());
+  } catch (error) {
+    console.error("[cron prévoir] reconcileProcessReceipts", error);
+  }
 
   return NextResponse.json(
     {

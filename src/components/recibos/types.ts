@@ -1,3 +1,5 @@
+import type { CommissionSummary } from "@/lib/insurance/commissions";
+
 export const RECEIPTS_PAGE_SIZE = 25;
 
 export type ReceiptStatus =
@@ -81,6 +83,9 @@ export type ReceiptRow = {
 
   external_nature: string | null;
   external_payment_method: string | null;
+
+  // Comissão do recibo (receipt_commissions), quando a companhia envia.
+  commission: CommissionSummary | null;
 
   company: ReceiptCompany | null;
   policy: ReceiptPolicy | null;

@@ -39,6 +39,11 @@ import {
   getManagementOverview,
 } from "@/lib/ai/tools/management";
 
+import {
+  getTasks,
+  getExpiryAlertsForAi,
+} from "@/lib/ai/tools/tasks";
+
 const tools = [
   {
     type: "function" as const,
@@ -375,7 +380,7 @@ const tools = [
     "get_client_opportunities",
 
   description:
-    "Analisa oportunidades comerciais de cross-sell para um cliente específico com base nos ramos que já possui, valor da carteira e proximidade das renovações. O clientId deve ser obtido através de search_client.",
+    "Conselhos comerciais para um cliente (os mesmos da lâmpada do painel do cliente): recibos devolvidos ou em atraso, renovações próximas (com aumento de prémio), apólices anuladas a recuperar, oportunidades de cross-sell (ex.: tem Automóvel mas não tem Multirriscos connosco; empresa sem Acidentes de Trabalho) e dados em falta. O clientId deve ser obtido através de search_client.",
 
   parameters: {
     type: "object",
@@ -398,6 +403,61 @@ const tools = [
       false,
   },
 
+  strict: true,
+},
+
+{
+  type: "function" as const,
+  name: "get_tasks",
+  description:
+    "Consulta tarefas e processos de simulação/renegociação do utilizador (nome e NIF do cliente, tipo de seguro, data de início do seguro, apólice nova ou renegociação, simulação apresentada, emitido, recibo cobrado e recibo da companhia). Num processo a data é a data de início do seguro; numa tarefa é o prazo.",
+  parameters: {
+    type: "object",
+    properties: {
+      from: {
+        type: ["string", "null"],
+        description:
+          "Data inicial (YYYY-MM-DD) da data de início/prazo, ou null.",
+      },
+      to: {
+        type: ["string", "null"],
+        description:
+          "Data final (YYYY-MM-DD) da data de início/prazo, ou null.",
+      },
+      kind: {
+        type: "string",
+        enum: ["ALL", "TASK", "PROCESS"],
+        description:
+          "PROCESS para simulações/renegociações, TASK para tarefas normais, ALL para ambos.",
+      },
+      status: {
+        type: "string",
+        enum: ["OPEN", "COMPLETED", "ALL"],
+        description:
+          "OPEN = por fechar (pendentes ou em progresso), COMPLETED = fechados, ALL = todos.",
+      },
+      search: {
+        type: ["string", "null"],
+        description:
+          "Nome do cliente, NIF ou texto do título, ou null.",
+      },
+    },
+    required: ["from", "to", "kind", "status", "search"],
+    additionalProperties: false,
+  },
+  strict: true,
+},
+
+{
+  type: "function" as const,
+  name: "get_expiry_alerts",
+  description:
+    "Devolve os alertas de vencimento dos próximos 5 dias: renovações de apólices, recibos por cobrar e processos com início de seguro a chegar.",
+  parameters: {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  },
   strict: true,
 },
 ];
@@ -527,6 +587,9 @@ OPORTUNIDADES COMERCIAIS
 - Não peças confirmação desnecessária.
 - As oportunidades são potenciais oportunidades comerciais, não necessidades confirmadas do cliente.
 - Nunca afirmes que o cliente precisa, quer ou deve contratar determinado seguro.
+- "Não tem X connosco" não significa que não tenha X: pode estar noutro mediador. Sugere perguntar.
+- Os conselhos já vêm ordenados por importância: apresenta primeiro os de cobrança/renovação e só depois as vendas.
+- Quando canCreateProcess for verdadeiro, podes dizer que na lâmpada do painel do cliente há um botão para criar o processo de simulação já preenchido.
 - Quando existirem oportunidades, apresenta primeiro a de maior score.
 - Não mostres o score técnico a menos que o utilizador o peça.
 - Mantém a resposta curta e comercialmente útil.
@@ -538,6 +601,17 @@ RESUMO EXECUTIVO
 - Para um resumo normal, responde em no máximo 3 a 5 linhas curtas.
 - Destaca números importantes.
 - Não inventes problemas ou alertas que não estejam presentes nos dados.
+
+TAREFAS E PROCESSOS
+- Um "processo" é o acompanhamento de uma simulação: apólice nova ou renegociação (quando não é apólice nova já é renegociação de preço de uma apólice existente).
+- Cada processo tem: nome e NIF do cliente, tipo de seguro, data de criação, data de início do seguro, simulação apresentada (sim/não), emitido (sim/não) e recibo cobrado (sim/não).
+- Um processo só fica fechado quando o recibo está pago. O recibo vindo do webservice da companhia tem prioridade sobre a marcação manual.
+- Para "que tarefas tenho", "o que tenho esta semana", "processos a começar", "simulações por apresentar", "o que falta emitir" ou "recibos por cobrar dos processos", usa get_tasks.
+- Para "próximos 7 dias", usa from = hoje e to = hoje + 7 dias.
+- Para perguntas sobre o que falta num processo, indica o próximo passo em falta (simulação → emissão → recibo).
+
+ALERTAS DE VENCIMENTO
+- Para "o que vence nos próximos dias", "alertas", "o que está a vencer" ou no resumo do dia, usa get_expiry_alerts (janela de 5 dias).
 `;
   let response =
   await openai.responses.create({
@@ -788,6 +862,44 @@ RESUMO EXECUTIVO
 
     break;
 
+
+    case "get_tasks":
+        result =
+            await getTasks(
+            context,
+            {
+                from:
+                args.from
+                    ? String(args.from)
+                    : null,
+                to:
+                args.to
+                    ? String(args.to)
+                    : null,
+                kind:
+                args.kind === "TASK" ||
+                args.kind === "PROCESS"
+                    ? args.kind
+                    : "ALL",
+                status:
+                args.status === "OPEN" ||
+                args.status === "COMPLETED"
+                    ? args.status
+                    : "ALL",
+                search:
+                args.search
+                    ? String(args.search)
+                    : null,
+            },
+            );
+
+        break;
+
+    case "get_expiry_alerts":
+        result =
+            await getExpiryAlertsForAi();
+
+        break;
 
     case "get_client_opportunities":
         result =

@@ -2,20 +2,42 @@
 
 import { useMemo, useState, useTransition } from "react";
 import {
-  Calendar,
-  Loader2,
-  MoreHorizontal,
+  AlertCircle,
+  Briefcase,
+  CalendarDays,
   Plus,
   Search,
-  Trash2,
-  X,
+  Sun,
 } from "lucide-react";
 
+import { TaskCard } from "@/components/tarefas/task-card";
 import {
-  createTask,
+  CreateTaskModal,
+  EditTaskModal,
+  ProcessModal,
+  type TaskEditInput,
+} from "@/components/tarefas/task-modals";
+import { Toaster, useToasts } from "@/components/tarefas/toasts";
+import {
+  applyProcessPatch,
+  columns,
+  isInNextDays,
+  isOpen,
+  isOverdue,
+  isToday,
+  processStatusFor,
+  statusLabel,
+} from "@/components/tarefas/utils";
+
+import {
   deleteTask,
+  updateProcess,
+  updateTask,
   updateTaskStatus,
+  type InsuranceLineOption,
+  type ProcessPatch,
   type ProfileOption,
+  type TaskKind,
   type TaskPriority,
   type TaskRow,
   type TaskStatus,
@@ -24,238 +46,397 @@ import {
 type Props = {
   initialTasks: TaskRow[];
   profiles: ProfileOption[];
+  insuranceLines: InsuranceLineOption[];
   privileged: boolean;
   currentProfileId: string;
 };
 
-const columns: {
-  status: TaskStatus;
-  label: string;
-  dot: string;
-}[] = [
-  { status: "PENDING", label: "Pendente", dot: "bg-[#9aa0a8]" },
-  { status: "IN_PROGRESS", label: "Em Progresso", dot: "bg-blue-500" },
-  { status: "COMPLETED", label: "Concluída", dot: "bg-green-500" },
-  { status: "CANCELLED", label: "Cancelada", dot: "bg-[#c0c4c9]" },
-];
+type KindFilter = "ALL" | TaskKind;
+type FocusFilter = "ALL" | "TODAY" | "OVERDUE" | "NEXT7" | "OPEN_PROCESSES";
 
-const priorityConfig: Record<
-  TaskPriority,
-  { label: string; border: string; badge: string }
-> = {
-  LOW: {
-    label: "Baixa",
-    border: "border-l-[#c0c4c9]",
-    badge: "bg-[#f4f5f7] text-[#59616d]",
-  },
-  MEDIUM: {
-    label: "Média",
-    border: "border-l-amber-400",
-    badge: "bg-amber-50 text-amber-700",
-  },
-  HIGH: {
-    label: "Alta",
-    border: "border-l-red-500",
-    badge: "bg-red-50 text-red-700",
-  },
-};
-
-const avatarPalette = [
-  "bg-[#ff4b0a]",
-  "bg-blue-500",
-  "bg-emerald-500",
-  "bg-violet-500",
-  "bg-amber-500",
-  "bg-pink-500",
-  "bg-cyan-600",
-];
-
-function avatarColor(seed: string) {
-  let hash = 0;
-
-  for (let i = 0; i < seed.length; i++) {
-    hash = seed.charCodeAt(i) + ((hash << 5) - hash);
-  }
-
-  return avatarPalette[Math.abs(hash) % avatarPalette.length];
-}
-
-function initials(name: string) {
-  return name
-    .trim()
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
-
-function relativeDueLabel(value: string | null) {
-  if (!value) {
-    return null;
-  }
-
-  const due = new Date(value);
-  const today = new Date();
-
-  const dueDay = new Date(
-    due.getFullYear(),
-    due.getMonth(),
-    due.getDate(),
-  );
-
-  const todayDay = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  );
-
-  const diffDays = Math.round(
-    (dueDay.getTime() - todayDay.getTime()) / 86400000,
-  );
-
-  if (diffDays === 0) return "Hoje";
-  if (diffDays === 1) return "Amanhã";
-  if (diffDays === -1) return "Ontem";
-
-  if (diffDays > 1 && diffDays <= 7) return `Em ${diffDays} dias`;
-  if (diffDays < -1 && diffDays >= -7) return `Há ${Math.abs(diffDays)} dias`;
-
-  return new Intl.DateTimeFormat("pt-PT", {
-    day: "2-digit",
-    month: "2-digit",
-  }).format(due);
-}
-
-function isOverdue(dueAt: string | null, status: TaskStatus) {
-  if (!dueAt || status === "COMPLETED" || status === "CANCELLED") {
-    return false;
-  }
-
-  return new Date(dueAt) < new Date();
-}
+const COLUMN_PAGE = 12;
 
 export function TasksBoard({
   initialTasks,
   profiles,
+  insuranceLines,
   privileged,
   currentProfileId,
 }: Props) {
   const [tasks, setTasks] = useState(initialTasks);
-  const [showForm, setShowForm] = useState(false);
+  const [syncedTasks, setSyncedTasks] = useState(initialTasks);
+
+  // Depois de cada ação o servidor (revalidatePath) devolve dados
+  // novos: substituem o estado otimista local sem recarregar a página.
+  if (initialTasks !== syncedTasks) {
+    setSyncedTasks(initialTasks);
+    setTasks(initialTasks);
+  }
+
+  const [creating, setCreating] = useState(false);
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+
   const [search, setSearch] = useState("");
-  const [priorityFilter, setPriorityFilter] = useState<
-    TaskPriority | "ALL"
-  >("ALL");
-  const [isPending, startTransition] = useTransition();
+  const [kindFilter, setKindFilter] = useState<KindFilter>("ALL");
+  const [focus, setFocus] = useState<FocusFilter>("ALL");
+  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "ALL">(
+    "ALL",
+  );
+  const [assigneeFilter, setAssigneeFilter] = useState<string>("ALL");
+
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [overColumn, setOverColumn] = useState<TaskStatus | null>(null);
+  const [expanded, setExpanded] = useState<Partial<Record<TaskStatus, boolean>>>(
+    {},
+  );
+
+  const [, startTransition] = useTransition();
+  const { toasts, push, dismiss } = useToasts();
 
   const profileMap = useMemo(
     () => new Map(profiles.map((p) => [p.id, p.full_name])),
     [profiles],
   );
 
+  const lineMap = useMemo(
+    () => new Map(insuranceLines.map((l) => [l.id, l.name])),
+    [insuranceLines],
+  );
+
+  const openTask = tasks.find((t) => t.id === openTaskId) ?? null;
+
+  function canModify(task: TaskRow) {
+    return privileged || task.assigned_user_id === currentProfileId;
+  }
+
+  // ----------------------------------------
+  // CONTADORES / FILTROS
+  // ----------------------------------------
+
+  const counts = useMemo(
+    () => ({
+      today: tasks.filter(isToday).length,
+      overdue: tasks.filter(isOverdue).length,
+      next7: tasks.filter((t) => isInNextDays(t, 7)).length,
+      openProcesses: tasks.filter((t) => t.kind === "PROCESS" && isOpen(t))
+        .length,
+    }),
+    [tasks],
+  );
+
   const filteredTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
 
     return tasks.filter((task) => {
-      const matchesSearch =
-        !query ||
-        task.title.toLowerCase().includes(query) ||
-        (task.description ?? "").toLowerCase().includes(query);
+      if (
+        query &&
+        !task.title.toLowerCase().includes(query) &&
+        !(task.description ?? "").toLowerCase().includes(query) &&
+        !(task.client_name ?? "").toLowerCase().includes(query) &&
+        !(task.client_nif ?? "").includes(query)
+      ) {
+        return false;
+      }
 
-      const matchesPriority =
-        priorityFilter === "ALL" || task.priority === priorityFilter;
+      if (priorityFilter !== "ALL" && task.priority !== priorityFilter) {
+        return false;
+      }
 
-      return matchesSearch && matchesPriority;
+      if (kindFilter !== "ALL" && task.kind !== kindFilter) return false;
+
+      if (assigneeFilter !== "ALL" && task.assigned_user_id !== assigneeFilter) {
+        return false;
+      }
+
+      switch (focus) {
+        case "TODAY":
+          return isToday(task);
+        case "OVERDUE":
+          return isOverdue(task);
+        case "NEXT7":
+          return isInNextDays(task, 7);
+        case "OPEN_PROCESSES":
+          return task.kind === "PROCESS" && isOpen(task);
+        default:
+          return true;
+      }
     });
-  }, [tasks, search, priorityFilter]);
+  }, [tasks, search, priorityFilter, kindFilter, assigneeFilter, focus]);
 
-  const overdueCount = tasks.filter((t) =>
-    isOverdue(t.due_at, t.status),
-  ).length;
+  const hasFilters =
+    search.trim() !== "" ||
+    priorityFilter !== "ALL" ||
+    kindFilter !== "ALL" ||
+    assigneeFilter !== "ALL" ||
+    focus !== "ALL";
 
-  function handleStatusChange(taskId: string, status: TaskStatus) {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, status } : t)),
-    );
+  function clearFilters() {
+    setSearch("");
+    setPriorityFilter("ALL");
+    setKindFilter("ALL");
+    setAssigneeFilter("ALL");
+    setFocus("ALL");
+  }
 
+  // ----------------------------------------
+  // AÇÕES (otimistas, com reversão em erro)
+  // ----------------------------------------
+
+  function replaceTask(next: TaskRow) {
+    setTasks((prev) => prev.map((t) => (t.id === next.id ? next : t)));
+  }
+
+  function run(
+    previous: TaskRow | null,
+    action: () => Promise<unknown>,
+    successMessage?: string,
+  ) {
     startTransition(async () => {
       try {
-        await updateTaskStatus(taskId, status);
+        await action();
+        if (successMessage) push("success", successMessage);
       } catch (error) {
-        alert(
-          error instanceof Error
-            ? error.message
-            : "Erro ao atualizar tarefa.",
+        if (previous) {
+          setTasks((prev) => {
+            const exists = prev.some((t) => t.id === previous.id);
+            return exists
+              ? prev.map((t) => (t.id === previous.id ? previous : t))
+              : [previous, ...prev];
+          });
+        }
+
+        push(
+          "error",
+          error instanceof Error ? error.message : "Não foi possível guardar.",
         );
       }
     });
   }
 
-  function handleDelete(taskId: string) {
-    if (!confirm("Apagar esta tarefa?")) {
-      return;
+  function handleMove(task: TaskRow, target: TaskStatus) {
+    if (task.status === target || !canModify(task)) return;
+
+    let nextStatus = target;
+
+    if (task.kind === "PROCESS") {
+      nextStatus = processStatusFor(task, target);
+
+      if (nextStatus !== target && task.status !== "CANCELLED") {
+        push(
+          "info",
+          target === "COMPLETED"
+            ? "O processo fecha sozinho quando o recibo estiver pago."
+            : "O estado de um processo segue os passos da checklist.",
+        );
+        return;
+      }
+
+      if (nextStatus === task.status) return;
     }
 
-    setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    replaceTask({ ...task, status: nextStatus });
 
-    startTransition(async () => {
-      try {
-        await deleteTask(taskId);
-      } catch (error) {
-        alert(
-          error instanceof Error
-            ? error.message
-            : "Erro ao apagar tarefa.",
-        );
-      }
-    });
+    run(
+      task,
+      () => updateTaskStatus(task.id, nextStatus),
+      task.kind === "PROCESS"
+        ? nextStatus === "CANCELLED"
+          ? "Processo cancelado."
+          : `Processo reaberto (${statusLabel[nextStatus]}).`
+        : nextStatus === "COMPLETED"
+          ? "Tarefa concluída."
+          : undefined,
+    );
   }
+
+  function handleProcessPatch(task: TaskRow, patch: ProcessPatch) {
+    const next = applyProcessPatch(task, patch);
+    replaceTask(next);
+
+    run(
+      task,
+      () => updateProcess(task.id, patch),
+      next.status !== task.status
+        ? next.status === "COMPLETED"
+          ? "Recibo pago — processo fechado."
+          : `Processo passou para "${statusLabel[next.status]}".`
+        : undefined,
+    );
+  }
+
+  function applyEdit(task: TaskRow, input: TaskEditInput): TaskRow {
+    return {
+      ...task,
+      title: input.title?.trim() || task.title,
+      description:
+        input.description !== undefined ? input.description : task.description,
+      priority: input.priority ?? task.priority,
+      due_at:
+        input.dueAt !== undefined && task.kind === "TASK"
+          ? input.dueAt
+          : task.due_at,
+      assigned_user_id: input.assignedUserId ?? task.assigned_user_id,
+    };
+  }
+
+  function handleEditTask(task: TaskRow, input: TaskEditInput) {
+    replaceTask(applyEdit(task, input));
+    run(task, () => updateTask(task.id, input), "Tarefa atualizada.");
+  }
+
+  function handleSaveProcess(
+    task: TaskRow,
+    base: TaskEditInput,
+    patch: ProcessPatch,
+  ) {
+    replaceTask(applyProcessPatch(applyEdit(task, base), patch));
+
+    run(
+      task,
+      async () => {
+        await updateTask(task.id, base);
+        await updateProcess(task.id, patch);
+      },
+      "Processo guardado.",
+    );
+  }
+
+  function handleDelete(task: TaskRow) {
+    setTasks((prev) => prev.filter((t) => t.id !== task.id));
+    run(task, () => deleteTask(task.id), "Tarefa apagada.");
+  }
+
+  // ----------------------------------------
+  // DRAG & DROP
+  // ----------------------------------------
+
+  function handleDrop(target: TaskStatus) {
+    const task = tasks.find((t) => t.id === draggingId);
+
+    setDraggingId(null);
+    setOverColumn(null);
+
+    if (task) handleMove(task, target);
+  }
+
+  // ----------------------------------------
+  // RENDER
+  // ----------------------------------------
+
+  const focusCards: {
+    key: FocusFilter;
+    label: string;
+    value: number;
+    icon: typeof Sun;
+    tone: string;
+  }[] = [
+    {
+      key: "TODAY",
+      label: "Para hoje",
+      value: counts.today,
+      icon: Sun,
+      tone: "text-amber-600 bg-amber-50",
+    },
+    {
+      key: "OVERDUE",
+      label: "Atrasadas",
+      value: counts.overdue,
+      icon: AlertCircle,
+      tone: "text-red-600 bg-red-50",
+    },
+    {
+      key: "NEXT7",
+      label: "Próximos 7 dias",
+      value: counts.next7,
+      icon: CalendarDays,
+      tone: "text-blue-600 bg-blue-50",
+    },
+    {
+      key: "OPEN_PROCESSES",
+      label: "Processos abertos",
+      value: counts.openProcesses,
+      icon: Briefcase,
+      tone: "text-violet-600 bg-violet-50",
+    },
+  ];
 
   return (
     <div className="space-y-5">
-      {/* RESUMO */}
+      {/* FOCO — clicáveis como filtro */}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {columns.map((column) => {
-          const count = tasks.filter(
-            (t) => t.status === column.status,
-          ).length;
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {focusCards.map((card) => {
+          const active = focus === card.key;
+          const Icon = card.icon;
 
           return (
-            <div
-              key={column.status}
-              className="rounded-2xl border border-[#e5e8ec] bg-white p-4 shadow-[0_2px_10px_rgba(20,25,35,0.04)]"
+            <button
+              key={card.key}
+              type="button"
+              onClick={() => setFocus(active ? "ALL" : card.key)}
+              aria-pressed={active}
+              className={[
+                "flex items-center gap-3 rounded-2xl border bg-white p-4 text-left shadow-[0_2px_10px_rgba(20,25,35,0.04)] transition hover:border-[#ffb899]",
+                active
+                  ? "border-[#ff4b0a] ring-2 ring-[#ff4b0a]/15"
+                  : "border-[#e5e8ec]",
+              ].join(" ")}
             >
-              <div className="flex items-center gap-2">
-                <span
-                  className={`h-2 w-2 rounded-full ${column.dot}`}
-                />
-                <p className="text-xs font-medium text-[#7d848e]">
-                  {column.label}
-                </p>
-              </div>
+              <span
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${card.tone}`}
+              >
+                <Icon className="h-5 w-5" />
+              </span>
 
-              <p className="mt-2 text-2xl font-semibold text-[#17191d]">
-                {count}
-              </p>
-            </div>
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-[#7d848e]">
+                  {card.label}
+                </span>
+                <span className="block text-2xl font-semibold text-[#17191d]">
+                  {card.value}
+                </span>
+              </span>
+            </button>
           );
         })}
       </div>
 
       {/* TOOLBAR */}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center">
-          <div className="relative flex-1 sm:max-w-xs">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl border border-[#e4e6e9] bg-white p-1">
+            {(
+              [
+                { value: "ALL", label: "Todas" },
+                { value: "TASK", label: "Tarefas" },
+                { value: "PROCESS", label: "Processos" },
+              ] as { value: KindFilter; label: string }[]
+            ).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setKindFilter(option.value)}
+                className={[
+                  "h-8 rounded-lg px-3 text-xs font-medium transition",
+                  kindFilter === option.value
+                    ? "bg-[#ff4b0a] text-white"
+                    : "text-[#59616d] hover:bg-[#f4f5f7]",
+                ].join(" ")}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#a0a5ac]" />
 
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Pesquisar tarefas..."
+              placeholder="Pesquisar título, cliente ou NIF..."
               className="h-10 w-full rounded-xl border border-[#e4e6e9] bg-white pl-9 pr-3 text-sm outline-none transition focus:border-[#ff4b0a]"
             />
           </div>
@@ -273,22 +454,46 @@ export function TasksBoard({
             <option value="LOW">Baixa</option>
           </select>
 
-          {overdueCount > 0 && (
-            <span className="inline-flex h-10 items-center rounded-xl bg-red-50 px-3 text-xs font-medium text-red-700">
-              {overdueCount} atrasada(s)
-            </span>
+          {privileged && profiles.length > 1 && (
+            <select
+              value={assigneeFilter}
+              onChange={(e) => setAssigneeFilter(e.target.value)}
+              className="h-10 rounded-xl border border-[#e4e6e9] bg-white px-3 text-sm text-[#59616d] outline-none transition focus:border-[#ff4b0a]"
+            >
+              <option value="ALL">Todos os responsáveis</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.full_name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="h-10 rounded-xl px-3 text-xs font-medium text-[#ff4b0a] transition hover:bg-[#fff3ee]"
+            >
+              Limpar filtros
+            </button>
           )}
         </div>
 
         <button
           type="button"
-          onClick={() => setShowForm(true)}
+          onClick={() => setCreating(true)}
           className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#ff4b0a] px-4 text-sm font-medium text-white shadow-sm transition hover:bg-[#e64409]"
         >
           <Plus className="h-4 w-4" />
-          Nova tarefa
+          {kindFilter === "PROCESS" ? "Novo processo" : "Nova tarefa"}
         </button>
       </div>
+
+      <p className="hidden text-[11px] text-[#a0a5ac] md:block">
+        Arrasta os cartões entre colunas. Nos processos, o estado segue a
+        checklist — clica nos passos para marcar ou desmarcar.
+      </p>
 
       {/* BOARD */}
 
@@ -298,13 +503,18 @@ export function TasksBoard({
             (t) => t.status === column.status,
           );
 
+          const isExpanded = expanded[column.status] ?? false;
+          const visible = isExpanded
+            ? columnTasks
+            : columnTasks.slice(0, COLUMN_PAGE);
+
+          const isDropTarget = draggingId !== null && overColumn === column.status;
+
           return (
             <div key={column.status} className="flex flex-col gap-3">
               <div className="flex items-center justify-between px-1">
                 <div className="flex items-center gap-2">
-                  <span
-                    className={`h-2 w-2 rounded-full ${column.dot}`}
-                  />
+                  <span className={`h-2 w-2 rounded-full ${column.dot}`} />
                   <h3 className="text-sm font-semibold text-[#20242a]">
                     {column.label}
                   </h3>
@@ -315,32 +525,81 @@ export function TasksBoard({
                 </span>
               </div>
 
-              <div className="flex min-h-[120px] flex-col gap-2.5 rounded-2xl bg-[#f7f8f9] p-2.5">
+              <div
+                onDragOver={(event) => {
+                  if (!draggingId) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  if (overColumn !== column.status) setOverColumn(column.status);
+                }}
+                onDragLeave={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                    setOverColumn(null);
+                  }
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  handleDrop(column.status);
+                }}
+                className={[
+                  "flex min-h-[140px] flex-col gap-2.5 rounded-2xl bg-[#f7f8f9] p-2.5 transition",
+                  isDropTarget ? `ring-2 ${column.ring} bg-[#f1f3f5]` : "",
+                ].join(" ")}
+              >
                 {columnTasks.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-[#dfe2e6] py-10">
                     <p className="text-xs text-[#a0a5ac]">
-                      Sem tarefas
+                      {draggingId ? "Largar aqui" : "Sem tarefas"}
                     </p>
                   </div>
                 ) : (
-                  columnTasks.map((task) => (
-                    <TaskCard
+                  visible.map((task) => (
+                    <div
                       key={task.id}
-                      task={task}
-                      assignedName={
-                        task.assigned_user_id
-                          ? profileMap.get(task.assigned_user_id) ?? null
-                          : null
-                      }
-                      canModify={
-                        privileged ||
-                        task.assigned_user_id === currentProfileId
-                      }
-                      isPending={isPending}
-                      onStatusChange={handleStatusChange}
-                      onDelete={handleDelete}
-                    />
+                      className={draggingId === task.id ? "opacity-40" : ""}
+                    >
+                      <TaskCard
+                        task={task}
+                        lineName={
+                          task.insurance_line_id
+                            ? lineMap.get(task.insurance_line_id) ?? null
+                            : null
+                        }
+                        assignedName={
+                          task.assigned_user_id
+                            ? profileMap.get(task.assigned_user_id) ?? null
+                            : null
+                        }
+                        canModify={canModify(task)}
+                        onOpen={(t) => setOpenTaskId(t.id)}
+                        onMove={handleMove}
+                        onProcessPatch={handleProcessPatch}
+                        onDelete={handleDelete}
+                        onDragStart={(t) => setDraggingId(t.id)}
+                        onDragEnd={() => {
+                          setDraggingId(null);
+                          setOverColumn(null);
+                        }}
+                      />
+                    </div>
                   ))
+                )}
+
+                {columnTasks.length > COLUMN_PAGE && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setExpanded((prev) => ({
+                        ...prev,
+                        [column.status]: !isExpanded,
+                      }))
+                    }
+                    className="rounded-lg py-1.5 text-xs font-medium text-[#7d848e] transition hover:bg-white hover:text-[#40464f]"
+                  >
+                    {isExpanded
+                      ? "Mostrar menos"
+                      : `Ver mais ${columnTasks.length - COLUMN_PAGE}`}
+                  </button>
                 )}
               </div>
             </div>
@@ -348,332 +607,56 @@ export function TasksBoard({
         })}
       </div>
 
-      {showForm && (
-        <TaskFormModal
+      {/* MODAIS */}
+
+      {creating && (
+        <CreateTaskModal
           profiles={profiles}
+          insuranceLines={insuranceLines}
           privileged={privileged}
-          onClose={() => setShowForm(false)}
+          currentProfileId={currentProfileId}
+          initialKind={kindFilter === "PROCESS" ? "PROCESS" : "TASK"}
+          onCreated={(kind) =>
+            push(
+              "success",
+              kind === "PROCESS" ? "Processo criado." : "Tarefa criada.",
+            )
+          }
+          onClose={() => setCreating(false)}
         />
       )}
-    </div>
-  );
-}
 
-// ============================================================
-// CARD
-// ============================================================
-
-function TaskCard({
-  task,
-  assignedName,
-  canModify,
-  isPending,
-  onStatusChange,
-  onDelete,
-}: {
-  task: TaskRow;
-  assignedName: string | null;
-  canModify: boolean;
-  isPending: boolean;
-  onStatusChange: (taskId: string, status: TaskStatus) => void;
-  onDelete: (taskId: string) => void;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  const overdue = isOverdue(task.due_at, task.status);
-  const dueLabel = relativeDueLabel(task.due_at);
-  const priority = priorityConfig[task.priority];
-
-  return (
-    <div
-      className={`group relative rounded-xl border border-l-[3px] ${priority.border} border-[#e5e8ec] bg-white p-3.5 shadow-[0_1px_4px_rgba(20,25,35,0.05)] transition hover:shadow-[0_4px_14px_rgba(20,25,35,0.08)]`}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-sm font-medium leading-snug text-[#20242a]">
-          {task.title}
-        </p>
-
-        {canModify && (
-          <div className="relative shrink-0">
-            <button
-              type="button"
-              onClick={() => setMenuOpen((v) => !v)}
-              className="rounded-md p-1 text-[#c0c4c9] opacity-0 transition hover:bg-[#f4f5f7] hover:text-[#606771] group-hover:opacity-100"
-              aria-label="Mais opções"
-            >
-              <MoreHorizontal className="h-4 w-4" />
-            </button>
-
-            {menuOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-10"
-                  onClick={() => setMenuOpen(false)}
-                />
-
-                <div className="absolute right-0 top-7 z-20 w-36 overflow-hidden rounded-lg border border-[#e5e8ec] bg-white shadow-lg">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onDelete(task.id);
-                    }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-xs text-red-600 transition hover:bg-red-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Apagar
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-
-      {task.description && (
-        <p className="mt-1 line-clamp-2 text-xs text-[#8a9099]">
-          {task.description}
-        </p>
-      )}
-
-      <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <span
-          className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${priority.badge}`}
-        >
-          {priority.label}
-        </span>
-
-        {dueLabel && (
-          <span
-            className={[
-              "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium",
-              overdue
-                ? "bg-red-50 text-red-700"
-                : "bg-[#f4f5f7] text-[#7d848e]",
-            ].join(" ")}
-          >
-            <Calendar className="h-2.5 w-2.5" />
-            {dueLabel}
-          </span>
-        )}
-      </div>
-
-      <div className="mt-3 flex items-center justify-between gap-2">
-        {assignedName ? (
-          <div className="flex min-w-0 items-center gap-1.5">
-            <div
-              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold text-white ${avatarColor(assignedName)}`}
-            >
-              {initials(assignedName)}
-            </div>
-
-            <span className="truncate text-[11px] text-[#8a9099]">
-              {assignedName}
-            </span>
-          </div>
-        ) : (
-          <span className="text-[11px] text-[#c0c4c9]">
-            Sem responsável
-          </span>
-        )}
-      </div>
-
-      {canModify && (
-        <select
-          value={task.status}
-          onChange={(event) =>
-            onStatusChange(task.id, event.target.value as TaskStatus)
+      {openTask && openTask.kind === "PROCESS" && (
+        <ProcessModal
+          key={openTask.id}
+          task={openTask}
+          lineName={
+            openTask.insurance_line_id
+              ? lineMap.get(openTask.insurance_line_id) ?? null
+              : null
           }
-          disabled={isPending}
-          className="mt-2.5 h-8 w-full rounded-lg border border-[#e4e6e9] bg-white px-2 text-xs text-[#59616d] outline-none transition focus:border-[#ff4b0a]"
-        >
-          {columns.map((c) => (
-            <option key={c.status} value={c.status}>
-              {c.label}
-            </option>
-          ))}
-        </select>
+          insuranceLines={insuranceLines}
+          profiles={profiles}
+          privileged={privileged}
+          canModify={canModify(openTask)}
+          onSave={(base, patch) => handleSaveProcess(openTask, base, patch)}
+          onClose={() => setOpenTaskId(null)}
+        />
       )}
-    </div>
-  );
-}
 
-// ============================================================
-// MODAL
-// ============================================================
+      {openTask && openTask.kind === "TASK" && (
+        <EditTaskModal
+          key={openTask.id}
+          task={openTask}
+          profiles={profiles}
+          privileged={privileged}
+          canModify={canModify(openTask)}
+          onSave={(input) => handleEditTask(openTask, input)}
+          onClose={() => setOpenTaskId(null)}
+        />
+      )}
 
-function TaskFormModal({
-  profiles,
-  privileged,
-  onClose,
-}: {
-  profiles: ProfileOption[];
-  privileged: boolean;
-  onClose: () => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [priority, setPriority] = useState<TaskPriority>("MEDIUM");
-  const [dueAt, setDueAt] = useState("");
-  const [assignedUserId, setAssignedUserId] = useState(
-    profiles[0]?.id ?? "",
-  );
-  const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-
-  function handleSubmit(event: React.FormEvent) {
-    event.preventDefault();
-
-    if (!title.trim()) {
-      setError("O título é obrigatório.");
-      return;
-    }
-
-    setError(null);
-
-    startTransition(async () => {
-      try {
-        await createTask({
-          title,
-          description: description || null,
-          priority,
-          dueAt: dueAt || null,
-          assignedUserId: privileged ? assignedUserId || null : null,
-        });
-
-        window.location.reload();
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : "Erro ao criar tarefa.",
-        );
-      }
-    });
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]">
-      <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-[#edf0f2] px-5 py-4">
-          <div>
-            <h2 className="font-semibold text-[#20242a]">Nova tarefa</h2>
-            <p className="mt-0.5 text-xs text-[#8a9099]">
-              Cria um follow-up para a equipa.
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-[#a0a5ac] transition hover:bg-[#f4f5f7] hover:text-[#606771]"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-3.5 px-5 py-4">
-          <div>
-            <label className="text-xs font-medium text-[#7d848e]">
-              Título
-            </label>
-
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              autoFocus
-              className="mt-1.5 h-10 w-full rounded-lg border border-[#e4e6e9] px-3 text-sm outline-none transition focus:border-[#ff4b0a]"
-              placeholder="Ex: Ligar ao cliente sobre renovação"
-            />
-          </div>
-
-          <div>
-            <label className="text-xs font-medium text-[#7d848e]">
-              Descrição (opcional)
-            </label>
-
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={2}
-              className="mt-1.5 w-full rounded-lg border border-[#e4e6e9] px-3 py-2 text-sm outline-none transition focus:border-[#ff4b0a]"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-[#7d848e]">
-                Prioridade
-              </label>
-
-              <select
-                value={priority}
-                onChange={(e) =>
-                  setPriority(e.target.value as TaskPriority)
-                }
-                className="mt-1.5 h-10 w-full rounded-lg border border-[#e4e6e9] px-3 text-sm outline-none transition focus:border-[#ff4b0a]"
-              >
-                <option value="LOW">Baixa</option>
-                <option value="MEDIUM">Média</option>
-                <option value="HIGH">Alta</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-[#7d848e]">
-                Prazo (opcional)
-              </label>
-
-              <input
-                type="date"
-                value={dueAt}
-                onChange={(e) => setDueAt(e.target.value)}
-                className="mt-1.5 h-10 w-full rounded-lg border border-[#e4e6e9] px-3 text-sm outline-none transition focus:border-[#ff4b0a]"
-              />
-            </div>
-          </div>
-
-          {privileged && (
-            <div>
-              <label className="text-xs font-medium text-[#7d848e]">
-                Responsável
-              </label>
-
-              <select
-                value={assignedUserId}
-                onChange={(e) => setAssignedUserId(e.target.value)}
-                className="mt-1.5 h-10 w-full rounded-lg border border-[#e4e6e9] px-3 text-sm outline-none transition focus:border-[#ff4b0a]"
-              >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.full_name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          {error && <p className="text-xs text-red-600">{error}</p>}
-
-          <div className="flex justify-end gap-2 border-t border-[#edf0f2] pt-3.5">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-10 rounded-lg px-4 text-sm font-medium text-[#606771] transition hover:bg-[#f4f5f7]"
-            >
-              Cancelar
-            </button>
-
-            <button
-              type="submit"
-              disabled={isPending}
-              className="inline-flex h-10 items-center gap-2 rounded-lg bg-[#ff4b0a] px-4 text-sm font-medium text-white shadow-sm transition hover:bg-[#e64409] disabled:opacity-50"
-            >
-              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Criar tarefa
-            </button>
-          </div>
-        </form>
-      </div>
+      <Toaster toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }

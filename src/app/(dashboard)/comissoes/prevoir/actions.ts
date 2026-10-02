@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertStoreAccess, requireAdmin } from "@/lib/auth/access";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
 export type StoreOption = {
@@ -685,6 +686,8 @@ export async function getCommissionsDetail(
   storeId: string,
   month: string,
 ): Promise<CommissionReceiptRow[]> {
+  await assertStoreAccess(storeId);
+
   const { monthStart, monthEnd } = getMonthBounds(month);
   const receipts = await getCalculatedCommissionReceipts();
   const rows: CommissionReceiptRow[] = [];
@@ -730,6 +733,9 @@ export async function getCommissionsDetail(
 export async function getOfficialClosing(
   month: string,
 ): Promise<OfficialClosing | null> {
+  // Fecho oficial = totais da agência inteira.
+  await requireAdmin();
+
   const admin = createAdminClient();
 
   const { data, error } = await admin
@@ -779,6 +785,8 @@ export async function getOfficialClosing(
 export async function getOfficialCommissionMovements(
   month: string,
 ): Promise<OfficialCommissionMovement[]> {
+  await requireAdmin();
+
   const admin = createAdminClient();
 
   const { data, error } = await admin
@@ -985,11 +993,6 @@ function extractValue(
 
 
 
-type PolicyRef = {
-  agentCode: string;
-  policyPrefix: string;
-  policyNumber: string;
-};
 
 
 function normalizePdfLine(line: string) {

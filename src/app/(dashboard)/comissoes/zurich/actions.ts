@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertStoreAccess } from "@/lib/auth/access";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
 export type StoreOption = {
@@ -350,6 +351,9 @@ export async function getZurichCommissionsDetail(
   storeId: string,
   month: string,
 ): Promise<CommissionReceiptRow[]> {
+  // "GERAL" já é limitado mais abaixo às lojas acessíveis.
+  if (storeId !== "GERAL") await assertStoreAccess(storeId);
+
   const { monthStart, monthEnd } = getMonthBounds(month);
   const receipts = await getCalculatedZurichCommissionReceipts();
   const rows: CommissionReceiptRow[] = [];

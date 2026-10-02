@@ -1,9 +1,7 @@
 ﻿import {
   AlertCircle,
-  ArrowUpRight,
   CalendarDays,
   CheckSquare,
-  CircleUserRound,
   FileCheck2,
   TrendingUp,
   Users,
@@ -16,7 +14,11 @@ import { redirect } from "next/navigation";
 import { DashboardCharts } from "@/components/dashboard/dashboard-charts";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getUpcomingReceipts } from "@/app/(dashboard)/vencimentos/action";
+import {
+  getExpiryAlerts,
+  getVencimentosSnapshot,
+} from "@/lib/alerts/expiry-alerts";
+import { ExpiryAlertsBanner } from "@/components/alerts/expiry-alerts";
 type LeadRow = {
   id: string;
   name: string;
@@ -26,12 +28,6 @@ type LeadRow = {
   created_at: string;
   converted_at: string | null;
   store_id: string | null;
-};
-
-type ClientRow = {
-  id: string;
-  name: string;
-  created_at: string;
 };
 
 type RelatedCompany = {
@@ -70,6 +66,7 @@ type PolicyRow = {
 
   created_at: string;
 
+  client: { name: string } | { name: string }[] | null;
   company: RelatedCompany | RelatedCompany[] | null;
   insurance_line: RelatedLine | RelatedLine[] | null;
 };
@@ -103,11 +100,18 @@ function formatDate(value: string | null) {
     return "—";
   }
 
+  const date = new Date(`${value.slice(0, 10)}T12:00:00`);
+
+  // Datas mal escritas (ex.: ano 20226) não podem rebentar a página.
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
   return new Intl.DateTimeFormat("pt-PT", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-  }).format(new Date(`${value.slice(0, 10)}T12:00:00`));
+  }).format(date);
 }
 
 function getRelation<T>(relation: T | T[] | null): T | null {
@@ -198,6 +202,7 @@ export default async function DashboardPage() {
       issued_by_user_id,
       issuing_store_id,
       created_at,
+      client:clients ( name ),
       company:companies (
         id,
         name,
@@ -211,7 +216,7 @@ export default async function DashboardPage() {
       )
     `);
 
-  let tasksQuery = supabase
+  const tasksQuery = supabase
     .from("tasks")
     .select("id, title, status, priority, due_at")
     .eq("assigned_user_id", profile.id)
@@ -235,18 +240,9 @@ export default async function DashboardPage() {
   // CARREGAR
   // ========================================
 
-const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts] =
+const [leadsResult, policiesResult, tasksResult, upcomingReceipts, expiryAlerts] =
   await Promise.all([
       leadsQuery.order("created_at", { ascending: false }),
-
-      supabase
-        .from("clients")
-        .select(`
-          id,
-          name,
-          created_at
-        `)
-        .order("created_at", { ascending: false }),
 
       policiesQuery.order("issue_date", {
         ascending: false,
@@ -254,17 +250,15 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
       }),
 
       tasksQuery,
-      getUpcomingReceipts({ storeId: selectedStoreId === "all" ? null : selectedStoreId }),
+      // Mesma cache do layout (sino/alertas): não recalcula.
+      getVencimentosSnapshot(
+        selectedStoreId === "all" ? null : selectedStoreId,
+      ).then((snapshot) => snapshot.receipts),
+      getExpiryAlerts(),
     ]);
 
   if (leadsResult.error) {
     throw new Error(`Erro ao carregar leads: ${leadsResult.error.message}`);
-  }
-
-  if (clientsResult.error) {
-    throw new Error(
-      `Erro ao carregar clientes: ${clientsResult.error.message}`,
-    );
   }
 
   if (policiesResult.error) {
@@ -280,22 +274,8 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
   }
 
   const leads = (leadsResult.data ?? []) as LeadRow[];
-  const allClients = (clientsResult.data ?? []) as ClientRow[];
   const policies = (policiesResult.data ?? []) as PolicyRow[];
   const myTasks = (tasksResult.data ?? []) as TaskRow[];
-
-  // ========================================
-  // CLIENTES VISÍVEIS
-  // ========================================
-
-  const visibleClientIds = new Set(
-    policies.map((policy) => policy.client_id),
-  );
-
-  const clients =
-    selectedStoreId === "all"
-      ? allClients
-      : allClients.filter((client) => visibleClientIds.has(client.id));
 
   const today = getPortugalDateKey();
   const monthStart = `${today.slice(0, 7)}-01`;
@@ -305,10 +285,6 @@ const [leadsResult, clientsResult, policiesResult, tasksResult, upcomingReceipts
   // ========================================
 
   const newLeads = leads.filter((lead) => lead.status === "nova").length;
-
-  const convertedLeads = leads.filter(
-    (lead) => lead.status === "convertida" || Boolean(lead.converted_at),
-  ).length;
 
     const policiesToday = policies.filter(
       (policy) => policy.issue_date === today,
@@ -335,10 +311,6 @@ const policiesThisMonth = policies.filter(
     0,
   );
 
-  const conversionRate =
-    leads.length > 0
-      ? ((convertedLeads / leads.length) * 100).toFixed(1)
-      : "0.0";
 
   // ========================================
   // ÚLTIMOS 30 DIAS
@@ -434,13 +406,9 @@ for (const policy of policies) {
   // APÓLICES RECENTES
   // ========================================
 
-  const clientMap = new Map(
-    clients.map((client) => [client.id, client.name]),
-  );
-
   const recentPolicies = policies.slice(0, 6).map((policy) => ({
     ...policy,
-    clientName: clientMap.get(policy.client_id) ?? "Cliente",
+    clientName: getRelation(policy.client)?.name ?? "Cliente",
     companyName: getRelation(policy.company)?.name ?? "—",
     lineName:
       getRelation(policy.insurance_line)?.name ?? policy.product_name ?? "—",
@@ -508,6 +476,10 @@ for (const policy of policies) {
           A tua atividade comercial de hoje.
         </p>
       </div>
+
+      {/* ALERTAS DE VENCIMENTO */}
+
+      <ExpiryAlertsBanner alerts={expiryAlerts} />
 
       {/* MÉTRICAS RÁPIDAS */}
 

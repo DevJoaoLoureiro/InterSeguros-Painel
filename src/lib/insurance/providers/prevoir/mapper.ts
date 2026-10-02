@@ -2,6 +2,8 @@ import type {
   PrevoirPolicy,
 } from "./client";
 
+import { compactMetadata } from "@/lib/insurance/sync/client-metadata";
+
 export type NormalizedPrevoirPolicy = {
   externalId: string;
   externalVersion: string | null;
@@ -77,6 +79,9 @@ export type NormalizedPrevoirPolicy = {
     street: string | null;
     postalCode: string | null;
     city: string | null;
+    // Tudo o que a companhia envia sobre o cliente (para a aba
+    // "Dados do cliente"). Guardado em client_external_refs.
+    metadata?: Record<string, unknown>;
   };
 
   providerMetadata:
@@ -388,6 +393,15 @@ export function mapPrevoirPolicy(
       city:
         source.localidadeTitular?.trim() ||
         null,
+
+      metadata: compactMetadata({
+        nome: source.nomeTitular,
+        sexo: source.sexoTitular,
+        nif: source.nifTitular,
+        morada: source.ruaTitular,
+        codigoPostal: source.codPostalTitular,
+        localidade: source.localidadeTitular,
+      }),
     },
 
     providerMetadata: {

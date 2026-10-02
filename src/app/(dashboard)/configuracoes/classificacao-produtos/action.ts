@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireAdmin } from "@/lib/auth/access";
 
 export type UnclassifiedProduct = {
   productCode: string;
@@ -28,6 +29,8 @@ export type CompanyOption = {
  * seletor de filtro na página.
  */
 export async function getCompanies(): Promise<CompanyOption[]> {
+  await requireAdmin();
+
   const supabase = createAdminClient();
 
   const { data, error } = await supabase
@@ -55,6 +58,8 @@ export async function getCompanies(): Promise<CompanyOption[]> {
 export async function getUnclassifiedProducts(
   companyCode: string,
 ): Promise<UnclassifiedProduct[]> {
+  await requireAdmin();
+
   const supabase = createAdminClient();
 
   const { data: company, error: companyError } = await supabase
@@ -109,6 +114,8 @@ export async function getUnclassifiedProducts(
 export async function getInsuranceLineOptions(): Promise<
   InsuranceLineOption[]
 > {
+  await requireAdmin();
+
   const supabase = createAdminClient();
 
   const { data, error } = await supabase
@@ -153,6 +160,8 @@ export async function classifyProduct({
   productName: string | null;
   insuranceLineId: string;
 }) {
+  await requireAdmin();
+
   const supabase = createAdminClient();
 
   const { data: company, error: companyError } = await supabase

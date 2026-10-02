@@ -1,18 +1,12 @@
 import type { AiUserContext } from "@/lib/ai/context";
 
-import { calculateClientOpportunities } from "@/lib/opportunities/client-opportunities";
+import { getClientPanel } from "@/app/(dashboard)/clientes/receipts-action";
 
-function firstRelation<T>(value: T | T[] | null | undefined): T | null {
-  if (!value) return null;
-  return Array.isArray(value) ? (value[0] ?? null) : value;
-}
-
-type OpportunityPolicyRow = {
-  line_name: string | null;
-  premium: number | null;
-  renew_date: string | null;
-};
-
+/*
+ * Conselhos do cliente para o assistente — as MESMAS regras da
+ * lâmpada no painel do cliente (src/lib/opportunities/client-advice.ts):
+ * cobranças, renovações, recuperação, cross-sell e dados em falta.
+ */
 export async function getClientOpportunities(
   context: AiUserContext,
   args: { clientId: string },
@@ -23,56 +17,46 @@ export async function getClientOpportunities(
     throw new Error("clientId obrigatório.");
   }
 
-  // ==========================================
-  // APÓLICES DO CLIENTE
-  // ==========================================
-
-  let query = context.supabase
-    .from("policies")
-    .select(`
-      annualized_premium,
-      renewal_date,
-      insurance_line:insurance_lines ( name )
-    `)
-    .eq("client_id", clientId);
-
+  // Mesma visibilidade de antes: com loja ativa, o cliente tem de ter
+  // pelo menos uma apólice dessa loja.
   if (context.storeId) {
-    query = query.eq("issuing_store_id", context.storeId);
+    const { count } = await context.supabase
+      .from("policies")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", clientId)
+      .eq("issuing_store_id", context.storeId);
+
+    if (!count) {
+      return {
+        found: false,
+        advice: [],
+        reason: "Não foram encontradas apólices acessíveis para este cliente.",
+      };
+    }
   }
 
-  const { data, error } = await query;
+  const panel = await getClientPanel(clientId);
 
-  if (error) {
-    throw new Error(`Erro ao analisar oportunidades: ${error.message}`);
-  }
-
-  const policies: OpportunityPolicyRow[] = (data ?? []).map((row: any) => ({
-    line_name: firstRelation(row.insurance_line)?.name ?? null,
-    premium:
-      row.annualized_premium === null ? null : Number(row.annualized_premium),
-    renew_date: row.renewal_date,
-  }));
-
-  if (policies.length === 0) {
-    return {
-      found: false,
-      hasOpportunity: false,
-      opportunities: [],
-      reason: "Não foram encontradas apólices acessíveis para este cliente.",
-    };
-  }
-
-  // ==========================================
-  // MOTOR DE OPORTUNIDADES
-  // ==========================================
-
-  const opportunities = calculateClientOpportunities(policies, context.today);
+  const activePolicies = panel.policies.filter(
+    (p) => p.status === "ACTIVE" || p.status === "PENDING",
+  );
 
   return {
     found: true,
-    hasOpportunity: opportunities.length > 0,
-    opportunityCount: opportunities.length,
-    bestOpportunity: opportunities[0] ?? null,
-    opportunities,
+    activePolicies: activePolicies.map((p) => ({
+      line: p.insurance_line?.name ?? p.product_name,
+      company: p.company?.name ?? null,
+      annualized_premium: p.annualized_premium,
+    })),
+    adviceCount: panel.advice.length,
+    // Já ordenados: prioridade e depois o que está em risco antes de vender.
+    advice: panel.advice.map((a) => ({
+      category: a.category,
+      priority: a.priority,
+      title: a.title,
+      reason: a.reason,
+      canCreateProcess: a.action.type === "create_process",
+      processAlreadyOpen: a.processAlreadyOpen,
+    })),
   };
 }

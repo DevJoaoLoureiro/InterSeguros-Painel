@@ -2,6 +2,11 @@
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertStoreAccess } from "@/lib/auth/access";
+import {
+  getCachedCompanies,
+  getCachedStores,
+} from "@/lib/cache/reference-data";
 
 export type StoreOption = {
   id: string;
@@ -120,20 +125,12 @@ export async function getAccessibleStores(): Promise<{
   }
 
   const canAccessAll = profile.role === "OWNER" || profile.role === "ADMIN";
-  const admin = createAdminClient();
 
   if (canAccessAll) {
-    const { data, error } = await admin
-      .from("stores")
-      .select("id, name")
-      .order("name", { ascending: true });
-
-    if (error) {
-      throw new Error(`Erro ao carregar lojas: ${error.message}`);
-    }
+    const stores = await getCachedStores();
 
     return {
-      stores: data ?? [],
+      stores: stores.map((store) => ({ id: store.id, name: store.name })),
       canAccessAll: true,
     };
   }
@@ -328,22 +325,13 @@ async function fetchActivePolicies(
 // ============================================================
 
 export async function getCompaniesOverview(): Promise<CompanyOverview[]> {
-  const admin = createAdminClient();
+  // Lojas e companhias em paralelo (e em cache de referência).
+  const [{ stores }, companies] = await Promise.all([
+    getAccessibleStores(),
+    getCachedCompanies(),
+  ]);
 
-  const { stores } = await getAccessibleStores();
   const storeIds = stores.map((store) => store.id);
-
-  const { data: companies, error: companiesError } = await admin
-    .from("companies")
-    .select("id, code, name")
-    .eq("active", true)
-    .order("name", { ascending: true });
-
-  if (companiesError) {
-    throw new Error(
-      `Erro ao carregar companhias: ${companiesError.message}`,
-    );
-  }
 
   if (!companies || companies.length === 0 || storeIds.length === 0) {
     return [];
@@ -502,6 +490,8 @@ export async function getStorePortfolio(
   storeId: string,
   companyId: string,
 ): Promise<StorePortfolio> {
+  await assertStoreAccess(storeId);
+
   const admin = createAdminClient();
 
   const { data: store, error: storeError } = await admin
@@ -581,6 +571,8 @@ export async function getYearlyProduction(
   storeId: string | "all",
   companyId: string,
 ): Promise<YearlyProduction[]> {
+  if (storeId !== "all") await assertStoreAccess(storeId);
+
   const storeIds =
     storeId === "all"
       ? (await getAccessibleStores()).stores.map((store) => store.id)

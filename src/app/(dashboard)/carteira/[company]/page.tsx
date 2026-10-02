@@ -26,11 +26,17 @@ export default async function CarteiraCompanyPage({
 
   const admin = createAdminClient();
 
-  const { data: company, error } = await admin
-    .from("companies")
-    .select("id, code, name")
-    .eq("code", companyCode.toUpperCase())
-    .maybeSingle();
+  // Companhia e lojas acessíveis não dependem uma da outra.
+  const [companyResult, { stores, canAccessAll }] = await Promise.all([
+    admin
+      .from("companies")
+      .select("id, code, name")
+      .eq("code", companyCode.toUpperCase())
+      .maybeSingle(),
+    getAccessibleStores(),
+  ]);
+
+  const { data: company, error } = companyResult;
 
   if (error) {
     throw new Error(`Erro ao carregar companhia: ${error.message}`);
@@ -39,8 +45,6 @@ export default async function CarteiraCompanyPage({
   if (!company) {
     notFound();
   }
-
-  const { stores, canAccessAll } = await getAccessibleStores();
 
   const initialPortfolio =
     stores.length > 0

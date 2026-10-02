@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { invalidateReference } from "@/lib/cache/reference-data";
 
 type CreateEmployeeInput = {
   fullName: string;
@@ -113,6 +114,7 @@ export async function createEmployee(
   }
 
   revalidatePath("/utilizadores");
+  invalidateReference("profiles");
 
   return {
     success: true,
@@ -163,6 +165,7 @@ export async function toggleEmployeeStatus(
   }
 
   revalidatePath("/utilizadores");
+  invalidateReference("profiles");
 
   return {
     success: true,

@@ -131,11 +131,15 @@ export async function getOpportunitiesData(
     closedPage?: number;
   },
 ) {
-  const {
-    selectedStoreId,
-    privileged,
-    currentProfileId,
-  } = input;
+  // Nunca confiar no "privileged"/"currentProfileId" que vem do
+  // browser (é uma server action): recalcula-se aqui.
+  const currentProfile = await getAuthenticatedProfile();
+  const privileged = canAssignOthers(currentProfile.role);
+  const currentProfileId = currentProfile.id;
+
+  const selectedStoreId = privileged
+    ? input.selectedStoreId
+    : currentProfile.store?.id ?? null;
 
   const closedPage = Math.max(
     1,

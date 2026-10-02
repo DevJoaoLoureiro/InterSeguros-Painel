@@ -1,6 +1,9 @@
 "use server";
 
+import { cache } from "react";
+
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
 function monthKey(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -52,11 +55,46 @@ type PolicyRow = {
   issuing_store_id: string | null;
 };
 
+/*
+ * Âmbito por loja decidido no SERVIDOR: estas funções são server
+ * actions (chamáveis do browser com qualquer storeId), por isso um
+ * não-admin fica sempre limitado à sua loja.
+ */
+async function resolveStoreScope(requested: string | null) {
+  const profile = await getCurrentProfile();
+
+  if (!profile) throw new Error("Não autenticado.");
+
+  if (profile.role === "OWNER" || profile.role === "ADMIN") {
+    return requested && requested !== "all" ? requested : null;
+  }
+
+  if (!profile.store?.id) {
+    throw new Error("O utilizador não tem uma loja associada.");
+  }
+
+  return profile.store.id;
+}
+
+/*
+ * As 4 secções da página (mensal, comparação, ranking por pessoa e
+ * por loja) pedem todas as mesmas apólices: com cache() é 1 consulta
+ * por pedido em vez de 4.
+ */
+const loadPoliciesForScope = cache(
+  async (storeId: string | null): Promise<PolicyRow[]> =>
+    queryPolicies(storeId),
+);
+
 async function loadPolicies({
   storeId,
 }: {
   storeId: string | null;
 }): Promise<PolicyRow[]> {
+  return loadPoliciesForScope(await resolveStoreScope(storeId));
+}
+
+async function queryPolicies(storeId: string | null): Promise<PolicyRow[]> {
   const supabase = createAdminClient();
 
   let query = supabase
