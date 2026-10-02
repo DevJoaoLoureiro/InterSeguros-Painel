@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
-import { cookies } from "next/headers";
+import { hasFullAccess } from "@/lib/auth/permissions";
+import { getSelectedStoreFilter } from "@/lib/auth/store-selection";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
@@ -55,17 +56,10 @@ export const getAlertScope = cache(async () => {
     return null;
   }
 
-  const privileged = profile.role === "OWNER" || profile.role === "ADMIN";
-
-  const cookieStore = await cookies();
-  const cookieStoreId = cookieStore.get("selected_store_id")?.value ?? "all";
-
-  const selectedStoreId = privileged
-    ? cookieStoreId
-    : profile.store?.id ?? null;
-
-  const storeId =
-    selectedStoreId && selectedStoreId !== "all" ? selectedStoreId : null;
+  // privileged = vê os dados da agência (recibos, renovações).
+  // Loja = filtro do seletor do topo, igual para todos.
+  const privileged = hasFullAccess(profile.role);
+  const storeId = await getSelectedStoreFilter();
 
   return { profile, privileged, storeId };
 });
@@ -146,8 +140,14 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
     processesQuery = processesQuery.eq("store_id", storeId);
   }
 
+  // Funcionários não veem recibos/renovações da agência: só os seus
+  // processos a começar.
+  const emptySnapshot = { receipts: [], renewals: [] } as Awaited<
+    ReturnType<typeof getVencimentosSnapshot>
+  >;
+
   const [{ receipts, renewals }, processesResult] = await Promise.all([
-    getVencimentosSnapshot(storeId),
+    privileged ? getVencimentosSnapshot(storeId) : emptySnapshot,
     processesQuery,
   ]);
 

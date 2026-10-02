@@ -55,8 +55,6 @@ export async function getTasks(
     search: string | null;
   },
 ) {
-  const privileged = context.canAccessAllStores;
-
   // Garante que o estado do recibo está atualizado com o webservice.
   try {
     await reconcileProcessReceipts(context.supabase);
@@ -90,9 +88,9 @@ export async function getTasks(
     `)
     .order("created_at", { ascending: false });
 
-  if (!privileged) {
-    query = query.eq("assigned_user_id", context.userId);
-  } else if (context.storeId) {
+  // Tarefas da equipa toda (sem restrição por pessoa nem por loja);
+  // a loja escolhida no seletor funciona como filtro.
+  if (context.storeId) {
     query = query.eq("store_id", context.storeId);
   }
 

@@ -1,6 +1,6 @@
 import {
-  cookies,
-} from "next/headers";
+  getSelectedStoreFilter,
+} from "@/lib/auth/store-selection";
 
 import {
   getCurrentProfile,
@@ -24,33 +24,11 @@ export async function getAiUserContext() {
     profile.role === "OWNER" ||
     profile.role === "ADMIN";
 
-  const cookieStore =
-    await cookies();
-
-  const cookieStoreId =
-    cookieStore.get(
-      "selected_store_id",
-    )?.value ?? "all";
-
-  const selectedStoreId =
-    canAccessAllStores
-      ? cookieStoreId
-      : profile.store?.id ?? null;
-
-  if (
-    !canAccessAllStores &&
-    !selectedStoreId
-  ) {
-    throw new Error(
-      "O utilizador não tem uma loja associada.",
-    );
-  }
-
+  // Loja = filtro do seletor do topo, igual para todos (sem
+  // restrição por loja). O acesso aos dados é decidido pela função:
+  // ver getAiToolsForRole no agente.
   const storeId =
-    selectedStoreId &&
-    selectedStoreId !== "all"
-      ? selectedStoreId
-      : null;
+    await getSelectedStoreFilter();
 
   const today =
     new Intl.DateTimeFormat(

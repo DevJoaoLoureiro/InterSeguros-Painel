@@ -462,12 +462,38 @@ const tools = [
 },
 ];
 
+/*
+ * Ferramentas por função (mesma regra das páginas):
+ * - OWNER/ADMIN: todas.
+ * - Funcionários: tarefas, alertas e pesquisa/ficha de clientes (para
+ *   simular e tratar oportunidades). Números da agência (produção,
+ *   gestão, apólices por período, renovações, por associar) ficam de
+ *   fora — senão a IA contornava as páginas escondidas.
+ */
+const EMPLOYEE_TOOL_NAMES = new Set([
+  "get_tasks",
+  "get_expiry_alerts",
+  "search_client",
+  "get_client_policies",
+  "get_client_details",
+  "get_client_360",
+  "get_client_opportunities",
+]);
+
 export async function runAiAgent(
   message: string,
   previousResponseId?: string,
 ) {
   const context =
     await getAiUserContext();
+
+  const allowedTools = context.canAccessAllStores
+    ? tools
+    : tools.filter((tool) => EMPLOYEE_TOOL_NAMES.has(tool.name));
+
+  const allowedToolNames = new Set<string>(
+    allowedTools.map((tool) => tool.name),
+  );
 
  const instructions = `
 És o assistente interno de uma plataforma de mediação de seguros.
@@ -626,7 +652,7 @@ ALERTAS DE VENCIMENTO
     previous_response_id:
       previousResponseId,
 
-    tools,
+    tools: allowedTools,
 
     tool_choice:
       "auto",
@@ -665,7 +691,12 @@ ALERTAS DE VENCIMENTO
         )
       : {};
 
-  switch (call.name) {
+  // Segunda barreira: mesmo que o modelo tente, só corre o permitido.
+  const callName = allowedToolNames.has(call.name)
+    ? call.name
+    : "__not_allowed__";
+
+  switch (callName) {
     case "get_policies_issued_today":
       result =
         await getPoliciesIssuedToday(
@@ -915,6 +946,14 @@ ALERTAS DE VENCIMENTO
 
         break;
 
+    case "__not_allowed__":
+      result = {
+        error:
+          "Esta informação só está disponível para administradores.",
+      };
+
+      break;
+
     default:
       result = {
         error:
@@ -948,7 +987,7 @@ ALERTAS DE VENCIMENTO
         input:
           toolOutputs,
 
-        tools,
+        tools: allowedTools,
       });
   }
 }

@@ -100,6 +100,10 @@ export async function getAccessibleStores(): Promise<{
   stores: StoreOption[];
   canAccessAll: boolean;
 }> {
+  // Área da agência: só OWNER/ADMIN (sem lógica de lojas — a loja é
+  // só um filtro).
+  await requireAdmin();
+
   const profile = await getCurrentProfile();
 
   if (!profile) {

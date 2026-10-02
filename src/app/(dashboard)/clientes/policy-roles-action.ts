@@ -2,6 +2,7 @@
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { hasFullAccess } from "@/lib/auth/permissions";
 import {
   getCachedPartners,
   getCachedProfiles,
@@ -84,16 +85,13 @@ async function loadContext(policyId: string) {
   if (error) throw new Error(`Erro ao carregar apólice: ${error.message}`);
   if (!policy) throw new Error("Apólice não encontrada.");
 
-  const isAdmin = profile.role === "OWNER" || profile.role === "ADMIN";
-  const profileStoreId = profile.store?.id ?? null;
+  const isAdmin = hasFullAccess(profile.role);
 
-  const canEdit =
-    isAdmin ||
-    (profileStoreId !== null &&
-      (!policy.issuing_store_id ||
-        policy.issuing_store_id === profileStoreId));
+  // Os intervenientes editam-se no painel do cliente, que é uma área
+  // só de OWNER/ADMIN (sem lógica de lojas).
+  const canEdit = isAdmin;
 
-  return { admin, profile, policy, isAdmin, canEdit, profileStoreId };
+  return { admin, profile, policy, isAdmin, canEdit };
 }
 
 /*
@@ -126,20 +124,6 @@ export async function getPoliciesRoles(
 
   const policies = (policiesData ?? []) as PolicyRoleRow[];
 
-  // Acesso por loja (mesma regra da carteira): não-admins só veem
-  // apólices da sua loja ou ainda sem loja.
-  if (profile.role !== "OWNER" && profile.role !== "ADMIN") {
-    const ownStore = profile.store?.id ?? null;
-
-    const forbidden = policies.some(
-      (p) => p.issuing_store_id !== null && p.issuing_store_id !== ownStore,
-    );
-
-    if (forbidden) {
-      throw new Error("Não tens acesso a estas apólices.");
-    }
-  }
-
   const storeIds = Array.from(
     new Set(policies.map((p) => p.issuing_store_id).filter(Boolean)),
   ) as string[];
@@ -156,8 +140,7 @@ export async function getPoliciesRoles(
     (storesResult.data ?? []).map((s) => [s.id, s]),
   );
 
-  const isAdmin = profile.role === "OWNER" || profile.role === "ADMIN";
-  const profileStoreId = profile.store?.id ?? null;
+  const isAdmin = hasFullAccess(profile.role);
 
   const person = (id: string | null): RolePerson | null => {
     if (!id) return null;
@@ -208,11 +191,7 @@ export async function getPoliciesRoles(
       partners: activePartners,
       currentUserId: profile.id,
       isAdmin,
-      canEdit:
-        isAdmin ||
-        (profileStoreId !== null &&
-          (!policy.issuing_store_id ||
-            policy.issuing_store_id === profileStoreId)),
+      canEdit: isAdmin,
     };
   }
 

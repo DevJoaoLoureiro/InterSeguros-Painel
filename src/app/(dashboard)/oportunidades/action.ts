@@ -133,13 +133,10 @@ export async function getOpportunitiesData(
 ) {
   // Nunca confiar no "privileged"/"currentProfileId" que vem do
   // browser (é uma server action): recalcula-se aqui.
-  const currentProfile = await getAuthenticatedProfile();
-  const privileged = canAssignOthers(currentProfile.role);
-  const currentProfileId = currentProfile.id;
+  await getAuthenticatedProfile();
 
-  const selectedStoreId = privileged
-    ? input.selectedStoreId
-    : currentProfile.store?.id ?? null;
+  // Sem restrição por loja: a loja é só o filtro escolhido.
+  const selectedStoreId = input.selectedStoreId;
 
   const closedPage = Math.max(
     1,
@@ -155,10 +152,9 @@ export async function getOpportunitiesData(
       ? selectedStoreId
       : null;
 
-  const assignedFilter =
-    privileged
-      ? null
-      : currentProfileId;
+  // Todos veem as oportunidades da equipa (cobrir férias de um
+  // colega). Reatribuir continua só para OWNER/ADMIN.
+  const assignedFilter: string | null = null;
 
   // 1) Estatísticas agregadas — uma única chamada, sem
   //    trazer nenhuma linha de oportunidades para o Node.
@@ -291,7 +287,7 @@ export async function getOpportunitiesData(
   }
 
   // 4) Utilizadores para o formulário de criação/atribuição.
-  let profilesQuery = admin
+  const profilesQuery = admin
     .from("profiles")
     .select(`
       id,
@@ -309,13 +305,6 @@ export async function getOpportunitiesData(
       { ascending: true },
     );
 
-  if (!privileged) {
-    profilesQuery =
-      profilesQuery.eq(
-        "id",
-        currentProfileId,
-      );
-  }
 
   const [
     openResult,
@@ -551,15 +540,8 @@ export async function updateOpportunity(
       currentProfile.role,
     );
 
-  if (
-    !privileged &&
-    currentOpportunity.assigned_user_id !==
-      currentProfile.id
-  ) {
-    throw new Error(
-      "Não tens permissão para editar esta oportunidade.",
-    );
-  }
+  // Qualquer funcionário pode editar (férias de um colega); só
+  // OWNER/ADMIN mudam o responsável (abaixo).
 
   const finalAssignedUserId =
     privileged
@@ -665,8 +647,8 @@ export async function updateOpportunityStatus(
   opportunityId: string,
   status: OpportunityStatus,
 ) {
-  const currentProfile =
-    await getAuthenticatedProfile();
+  // Só para garantir sessão (qualquer funcionário pode mudar o estado).
+  await getAuthenticatedProfile();
 
   if (
     !opportunityStatuses.includes(
@@ -706,20 +688,7 @@ export async function updateOpportunityStatus(
     );
   }
 
-  const privileged =
-    canAssignOthers(
-      currentProfile.role,
-    );
-
-  if (
-    !privileged &&
-    opportunity.assigned_user_id !==
-      currentProfile.id
-  ) {
-    throw new Error(
-      "Não tens permissão para alterar esta oportunidade.",
-    );
-  }
+  // Qualquer funcionário pode mudar o estado (férias de um colega).
 
   if (
     opportunity.status ===

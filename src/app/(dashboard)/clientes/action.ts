@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireAdmin } from "@/lib/auth/access";
 
 import type {
   ClientsPortfolioData,
@@ -222,6 +223,9 @@ function mapPortfolioRows(rows: PortfolioRpcRow[]): PortfolioClient[] {
 export async function getClientsPortfolioData(
   filters: PortfolioFilters,
 ): Promise<ClientsPortfolioData> {
+  // Lista de clientes = área da agência (só OWNER/ADMIN).
+  await requireAdmin();
+
   const [profile, cookieStore] = await Promise.all([
     getCurrentProfile(),
     cookies(),
@@ -378,6 +382,8 @@ export async function assignCurrentUserToPolicy(
   commercialUser: { id: string; full_name: string };
   issuingStore: { id: string; name: string } | null;
 }> {
+  await requireAdmin();
+
   const profile = await getCurrentProfile();
 
   if (!profile) throw new Error("Não autenticado.");

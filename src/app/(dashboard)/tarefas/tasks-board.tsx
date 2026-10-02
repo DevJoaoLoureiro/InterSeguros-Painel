@@ -82,7 +82,10 @@ export function TasksBoard({
   const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "ALL">(
     "ALL",
   );
-  const [assigneeFilter, setAssigneeFilter] = useState<string>("ALL");
+  // Todos veem as tarefas da equipa; funcionários abrem em "As minhas".
+  const [assigneeFilter, setAssigneeFilter] = useState<string>(
+    privileged ? "ALL" : currentProfileId,
+  );
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overColumn, setOverColumn] = useState<TaskStatus | null>(null);
@@ -105,24 +108,33 @@ export function TasksBoard({
 
   const openTask = tasks.find((t) => t.id === openTaskId) ?? null;
 
-  function canModify(task: TaskRow) {
-    return privileged || task.assigned_user_id === currentProfileId;
+  // Qualquer funcionário pode trabalhar qualquer tarefa (férias de um
+  // colega). O servidor continua a limitar apagar e reatribuir.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function canModify(_task: TaskRow) {
+    return true;
   }
 
   // ----------------------------------------
   // CONTADORES / FILTROS
   // ----------------------------------------
 
-  const counts = useMemo(
-    () => ({
-      today: tasks.filter(isToday).length,
-      overdue: tasks.filter(isOverdue).length,
-      next7: tasks.filter((t) => isInNextDays(t, 7)).length,
-      openProcesses: tasks.filter((t) => t.kind === "PROCESS" && isOpen(t))
+  // Contadores seguem o filtro de responsável ("As minhas" por defeito
+  // para funcionários; "Toda a equipa" mostra os da equipa).
+  const counts = useMemo(() => {
+    const base =
+      assigneeFilter === "ALL"
+        ? tasks
+        : tasks.filter((t) => t.assigned_user_id === assigneeFilter);
+
+    return {
+      today: base.filter(isToday).length,
+      overdue: base.filter(isOverdue).length,
+      next7: base.filter((t) => isInNextDays(t, 7)).length,
+      openProcesses: base.filter((t) => t.kind === "PROCESS" && isOpen(t))
         .length,
-    }),
-    [tasks],
-  );
+    };
+  }, [tasks, assigneeFilter]);
 
   const filteredTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -454,16 +466,16 @@ export function TasksBoard({
             <option value="LOW">Baixa</option>
           </select>
 
-          {privileged && profiles.length > 1 && (
+          {profiles.length > 1 && (
             <select
               value={assigneeFilter}
               onChange={(e) => setAssigneeFilter(e.target.value)}
               className="h-10 rounded-xl border border-[#e4e6e9] bg-white px-3 text-sm text-[#59616d] outline-none transition focus:border-[#ff4b0a]"
             >
-              <option value="ALL">Todos os responsáveis</option>
+              <option value="ALL">Toda a equipa</option>
               {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.full_name}
+                  {p.id === currentProfileId ? `As minhas (${p.full_name})` : p.full_name}
                 </option>
               ))}
             </select>

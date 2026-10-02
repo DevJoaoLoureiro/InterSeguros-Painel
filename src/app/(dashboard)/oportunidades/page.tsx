@@ -1,3 +1,4 @@
+import { getSelectedStoreId } from "@/lib/auth/store-selection";
 import {
   BriefcaseBusiness,
   CircleDollarSign,
@@ -5,9 +6,6 @@ import {
   Trophy,
 } from "lucide-react";
 
-import {
-  cookies,
-} from "next/headers";
 
 import Link from "next/link";
 
@@ -61,27 +59,9 @@ export default async function OpportunitiesPage({
     profile.role === "OWNER" ||
     profile.role === "ADMIN";
 
-  const cookieStore =
-    await cookies();
-
-  const cookieStoreId =
-    cookieStore.get(
-      "selected_store_id",
-    )?.value ?? "all";
-
+  // Loja = filtro do seletor do topo, igual para todos.
   const selectedStoreId =
-    canAssignOthers
-      ? cookieStoreId
-      : profile.store?.id ?? null;
-
-  if (
-    !canAssignOthers &&
-    !selectedStoreId
-  ) {
-    throw new Error(
-      "O utilizador não tem uma loja associada.",
-    );
-  }
+    await getSelectedStoreId();
 
   const params =
     await searchParams;

@@ -65,15 +65,13 @@ async function resolveStoreScope(requested: string | null) {
 
   if (!profile) throw new Error("Não autenticado.");
 
-  if (profile.role === "OWNER" || profile.role === "ADMIN") {
-    return requested && requested !== "all" ? requested : null;
+  // Estatísticas = área da agência (só OWNER/ADMIN). A loja é só o
+  // filtro escolhido.
+  if (profile.role !== "OWNER" && profile.role !== "ADMIN") {
+    throw new Error("Só administradores podem ver as estatísticas.");
   }
 
-  if (!profile.store?.id) {
-    throw new Error("O utilizador não tem uma loja associada.");
-  }
-
-  return profile.store.id;
+  return requested && requested !== "all" ? requested : null;
 }
 
 /*

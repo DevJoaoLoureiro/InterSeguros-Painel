@@ -229,7 +229,8 @@ export async function getTasksData({
       ? selectedStoreId
       : null;
 
-  const assignedFilter = privileged ? null : currentProfile.id;
+  // Todos veem as tarefas da equipa (cobrir férias de um colega);
+  // o filtro "As minhas" é feito no quadro.
 
   let query = admin
     .from("tasks")
@@ -241,9 +242,6 @@ export async function getTasksData({
     query = query.eq("store_id", storeFilter);
   }
 
-  if (assignedFilter) {
-    query = query.eq("assigned_user_id", assignedFilter);
-  }
 
   // Utilizadores e ramos vêm da cache de referência.
   const [tasksResult, activeProfiles, lines] = await Promise.all([
@@ -273,9 +271,10 @@ export async function getTasksData({
       ...t,
       receipt: t.receipt_id ? receiptMap.get(t.receipt_id) ?? null : null,
     })) as TaskRow[],
-    profiles: activeProfiles
-      .filter((p) => privileged || p.id === currentProfile.id)
-      .map((p) => ({ id: p.id, full_name: p.full_name })) as ProfileOption[],
+    profiles: activeProfiles.map((p) => ({
+      id: p.id,
+      full_name: p.full_name,
+    })) as ProfileOption[],
     insuranceLines: lines
       .filter((l) => l.active)
       .map((l) => ({ id: l.id, name: l.name })) as InsuranceLineOption[],
@@ -447,11 +446,10 @@ async function loadTaskForModify(taskId: string) {
     throw new Error("Tarefa não encontrada.");
   }
 
+  // Qualquer funcionário pode trabalhar qualquer tarefa (ex.: cobrir
+  // as férias de um colega). Reatribuir continua só para admins
+  // (updateTask) e apagar só criador/responsável/admin (deleteTask).
   const privileged = canAssignOthers(currentProfile.role);
-
-  if (!privileged && task.assigned_user_id !== currentProfile.id) {
-    throw new Error("Não tens permissão para alterar esta tarefa.");
-  }
 
   return { admin, task, currentProfile, privileged };
 }

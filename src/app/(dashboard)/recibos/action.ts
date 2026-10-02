@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { unstable_cache } from "next/cache";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { requireAdmin } from "@/lib/auth/access";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import {
   summarizeCommissions,
@@ -449,6 +450,9 @@ async function getCommissionsForReceipts(
 export async function getReceiptsData(
   filters: ReceiptFilters,
 ): Promise<ReceiptsPageData> {
+  // Recibos = área da agência (só OWNER/ADMIN).
+  await requireAdmin();
+
   const [profile, cookieStore] = await Promise.all([
     getCurrentProfile(),
     cookies(),

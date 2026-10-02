@@ -1,17 +1,19 @@
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { hasFullAccess } from "@/lib/auth/permissions";
 
 /*
- * Controlo de acesso por loja para dados de clientes/apólices/recibos.
+ * Controlo de acesso nas server actions (que usam o cliente admin,
+ * ignorando RLS — por isso a verificação TEM de ser feita aqui).
  *
- * As server actions usam o cliente admin (service role, ignora RLS),
- * por isso a verificação TEM de ser feita aqui — senão qualquer
- * utilizador autenticado lia qualquer cliente sabendo o ID.
- *
- * Regra (igual à da carteira e dos vencimentos):
- * - OWNER/ADMIN veem tudo;
- * - restantes veem clientes com pelo menos uma apólice da sua loja
- *   ou ainda sem loja (ex.: Zurich por associar).
+ * Regra: por FUNÇÃO, sem lojas.
+ * - Não há restrição por loja: qualquer utilizador pode trabalhar
+ *   clientes de qualquer loja (férias de um colega, etc.). A loja é
+ *   só um filtro escolhido no seletor do topo.
+ * - Dados de UM cliente (ficha, apólices, recibos desse cliente):
+ *   qualquer utilizador com sessão — a IA e o simulador precisam.
+ * - Áreas da agência (listas de clientes/recibos/vencimentos,
+ *   carteira, comissões, estatísticas, gestão): só OWNER/ADMIN
+ *   → requireAdmin / resolveStoreScope / assertStoreAccess.
  */
 
 export class AccessDeniedError extends Error {
@@ -28,12 +30,12 @@ export async function requireProfile() {
 
   return {
     profile,
-    isAdmin: profile.role === "OWNER" || profile.role === "ADMIN",
+    isAdmin: hasFullAccess(profile.role),
     storeId: profile.store?.id ?? null,
   };
 }
 
-/* Só OWNER/ADMIN (secção GESTÃO, fechos oficiais, configurações). */
+/* Só OWNER/ADMIN (áreas da agência, gestão, configurações). */
 export async function requireAdmin() {
   const context = await requireProfile();
 
@@ -45,104 +47,37 @@ export async function requireAdmin() {
 }
 
 /*
- * Loja efetiva de um pedido. Server actions recebem o storeId do
- * browser, por isso é aqui que se decide: OWNER/ADMIN escolhem
- * qualquer loja (ou todas → null); restantes ficam SEMPRE na sua.
+ * Loja para filtrar uma área da agência (só OWNER/ADMIN entram).
+ * "all"/vazio → null (todas as lojas).
  */
 export async function resolveStoreScope(requested: string | null | undefined) {
-  const context = await requireProfile();
+  await requireAdmin();
 
-  if (context.isAdmin) {
-    return requested && requested !== "all" ? requested : null;
-  }
-
-  if (!context.storeId) {
-    throw new AccessDeniedError("O utilizador não tem uma loja associada.");
-  }
-
-  return context.storeId;
+  return requested && requested !== "all" ? requested : null;
 }
 
-/* Para ações que recebem uma loja concreta: não-admins só a sua. */
-export async function assertStoreAccess(storeId: string) {
-  const context = await requireProfile();
-
-  if (!context.isAdmin && storeId !== context.storeId) {
-    throw new AccessDeniedError("Não tens acesso a esta loja.");
-  }
-
-  return context;
+/* Áreas da agência que recebem uma loja concreta (só OWNER/ADMIN). */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function assertStoreAccess(_storeId: string) {
+  return requireAdmin();
 }
 
-function storeFilter(storeId: string) {
-  return `issuing_store_id.eq.${storeId},issuing_store_id.is.null`;
+/*
+ * Dados de um cliente / apólice / recibo: qualquer utilizador com
+ * sessão (sem restrição de loja). Mantidas como funções próprias para
+ * que, se a regra mudar, mude só aqui.
+ */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function assertClientAccess(_clientIds: string[]) {
+  return requireProfile();
 }
 
-export async function assertClientAccess(clientIds: string[]) {
-  const context = await requireProfile();
-
-  if (context.isAdmin) return context;
-
-  if (!context.storeId) {
-    throw new AccessDeniedError("O utilizador não tem uma loja associada.");
-  }
-
-  const ids = clientIds.filter(Boolean);
-  if (ids.length === 0) throw new AccessDeniedError();
-
-  const { count, error } = await createAdminClient()
-    .from("policies")
-    .select("id", { count: "exact", head: true })
-    .in("client_id", ids)
-    .or(storeFilter(context.storeId));
-
-  if (error) throw new Error(`Erro a validar acesso: ${error.message}`);
-  if (!count) throw new AccessDeniedError("Não tens acesso a este cliente.");
-
-  return context;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function assertPolicyAccess(_policyId: string) {
+  return requireProfile();
 }
 
-export async function assertPolicyAccess(policyId: string) {
-  const context = await requireProfile();
-
-  if (context.isAdmin) return context;
-
-  if (!context.storeId) {
-    throw new AccessDeniedError("O utilizador não tem uma loja associada.");
-  }
-
-  const { data, error } = await createAdminClient()
-    .from("policies")
-    .select("issuing_store_id")
-    .eq("id", policyId)
-    .maybeSingle();
-
-  if (error) throw new Error(`Erro a validar acesso: ${error.message}`);
-
-  if (
-    !data ||
-    (data.issuing_store_id !== null &&
-      data.issuing_store_id !== context.storeId)
-  ) {
-    throw new AccessDeniedError("Não tens acesso a esta apólice.");
-  }
-
-  return context;
-}
-
-export async function assertReceiptAccess(receiptId: string) {
-  const context = await requireProfile();
-
-  if (context.isAdmin) return context;
-
-  const { data, error } = await createAdminClient()
-    .from("receipts")
-    .select("policy_id")
-    .eq("id", receiptId)
-    .maybeSingle();
-
-  if (error) throw new Error(`Erro a validar acesso: ${error.message}`);
-  if (!data?.policy_id) throw new AccessDeniedError("Recibo não encontrado.");
-
-  return assertPolicyAccess(data.policy_id);
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function assertReceiptAccess(_receiptId: string) {
+  return requireProfile();
 }

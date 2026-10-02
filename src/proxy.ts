@@ -1,6 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import {
+  EMPLOYEE_HOME,
+  canAccessPage,
+  hasFullAccess,
+} from "@/lib/auth/permissions";
+
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
@@ -132,56 +138,43 @@ if (pathname === "/api/zurich/login-code") {
   }
 
   // =====================================================
-  // ROTAS DE DEV — SÓ OWNER/ADMIN
+  // PERMISSÕES POR FUNÇÃO
   // =====================================================
   //
-  // Vários endpoints /api/dev/* chamam a Zurich (token
-  // partilhado) ou escrevem na BD, e nem todos verificam a
-  // função do utilizador. Bloqueamos aqui, num só sítio, para
-  // cobrir também os que forem criados no futuro.
+  // - Páginas: funcionários só entram em Tarefas, Oportunidades,
+  //   Simulador e Conversas (lib/auth/permissions.ts). O resto vai
+  //   para /tarefas. OWNER/ADMIN entram em tudo.
+  // - /api/dev/*: só OWNER/ADMIN (chamam a Zurich com o token
+  //   partilhado ou escrevem na BD).
+  //
+  // Só se consulta o perfil nestes casos (páginas e /api/dev), não
+  // nas restantes APIs nem nos ficheiros estáticos.
 
-  // Páginas da secção GESTÃO (a sidebar já as esconde a não-admins;
-  // aqui impede-se o acesso direto pelo URL).
-  const adminOnlyPage =
-    pathname.startsWith("/lojas") ||
-    pathname.startsWith("/utilizadores") ||
-    pathname.startsWith("/configuracoes");
+  const isDevApi = pathname.startsWith("/api/dev/");
+  const isPage =
+    request.method === "GET" && !pathname.startsWith("/api/");
 
-  if (user && adminOnlyPage && request.method === "GET") {
+  if (user && (isDevApi || isPage)) {
     const { data: profile } = await supabase
       .from("profiles")
       .select("role, active")
       .eq("id", user.sub)
       .maybeSingle();
 
-    const allowed =
-      profile?.active === true &&
-      (profile.role === "OWNER" || profile.role === "ADMIN");
+    const role = profile?.active === true ? profile.role : null;
 
-    if (!allowed) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/dashboard";
-      url.search = "";
-      return NextResponse.redirect(url);
-    }
-  }
-
-  if (user && pathname.startsWith("/api/dev/")) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role, active")
-      .eq("id", user.sub)
-      .maybeSingle();
-
-    const allowed =
-      profile?.active === true &&
-      (profile.role === "OWNER" || profile.role === "ADMIN");
-
-    if (!allowed) {
+    if (isDevApi && !hasFullAccess(role)) {
       return NextResponse.json(
         { success: false, error: "Sem permissões." },
         { status: 403 },
       );
+    }
+
+    if (isPage && !canAccessPage(role, pathname)) {
+      const url = request.nextUrl.clone();
+      url.pathname = EMPLOYEE_HOME;
+      url.search = "";
+      return NextResponse.redirect(url);
     }
   }
 

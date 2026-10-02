@@ -1,5 +1,4 @@
-﻿import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
+﻿import { redirect } from "next/navigation";
 
 import {
   AppSidebar,
@@ -14,6 +13,7 @@ import {
 } from "@/lib/auth/get-current-profile";
 
 import { getCachedStores } from "@/lib/cache/reference-data";
+import { getSelectedStoreId } from "@/lib/auth/store-selection";
 
 import {
   AssistantProvider,
@@ -58,69 +58,14 @@ export default async function DashboardLayout({
     await getCachedStores();
 
   // ==========================================
-  // COOKIE DA LOJA SELECIONADA
+  // LOJA SELECIONADA (filtro, igual para todos)
   // ==========================================
+  //
+  // Sem restrição por loja: todos podem escolher qualquer loja ou
+  // "Todas". O acesso é decidido pela função (proxy + sidebar).
 
-  const cookieStore =
-    await cookies();
-
-  const cookieStoreId =
-    cookieStore.get(
-      "selected_store_id",
-    )?.value ?? null;
-
-  // ==========================================
-  // LOJAS DISPONÍVEIS POR ROLE
-  // ==========================================
-
-  const canAccessAllStores =
-    profile.role === "ADMIN" ||
-    profile.role === "OWNER";
-
-  const availableStores =
-    canAccessAllStores
-      ? allStores
-      : profile.store
-        ? [
-            {
-              id: profile.store.id,
-              name: profile.store.name,
-              code: profile.store.code,
-            },
-          ]
-        : [];
-
-  // ==========================================
-  // LOJA ATIVA
-  // ==========================================
-
-  let selectedStoreId:
-    | string
-    | null = null;
-
-  if (canAccessAllStores) {
-    if (cookieStoreId === "all") {
-      selectedStoreId =
-        "all";
-    } else {
-      const cookieStoreExists =
-        cookieStoreId &&
-        allStores.some(
-          (store) =>
-            store.id ===
-            cookieStoreId,
-        );
-
-      selectedStoreId =
-        cookieStoreExists
-          ? cookieStoreId
-          : "all";
-    }
-  } else {
-    selectedStoreId =
-      profile.store?.id ??
-      null;
-  }
+  const availableStores = allStores;
+  const selectedStoreId = await getSelectedStoreId();
 
   // ==========================================
   // NOTIFICAÇÕES + BADGE DE VENCIMENTOS

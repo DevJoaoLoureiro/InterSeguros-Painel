@@ -28,30 +28,24 @@ export function isUuid(value: unknown): value is string {
 export type StoreScope = { ok: true; storeId: string | null } | { ok: false };
 
 /*
- * Loja a que o utilizador pode aceder, com as mesmas regras do resto da
- * app: OWNER/ADMIN seguem a loja escolhida no cabeçalho (cookie; "all" ou
- * ausente = todas), os restantes ficam presos à sua loja.
+ * Loja usada na pesquisa: a escolhida no seletor do topo (cookie;
+ * "all" ou ausente = todas), igual para TODOS os utilizadores. Não há
+ * restrição por loja — um funcionário pode simular para clientes de
+ * qualquer loja (ex.: cobrir as férias de um colega).
+ *
+ * Mantém a assinatura antiga (role/profileStoreId) por compatibilidade.
  */
 export function computeStoreScope(input: {
   role: string;
   profileStoreId: string | null;
   selectedStoreCookie: string | null;
 }): StoreScope {
-  const canAccessAllStores =
-    input.role === "OWNER" || input.role === "ADMIN";
+  const selected = input.selectedStoreCookie ?? "all";
 
-  if (canAccessAllStores) {
-    const selected = input.selectedStoreCookie ?? "all";
-
-    return {
-      ok: true,
-      storeId: selected !== "all" && isUuid(selected) ? selected : null,
-    };
-  }
-
-  return input.profileStoreId
-    ? { ok: true, storeId: input.profileStoreId }
-    : { ok: false };
+  return {
+    ok: true,
+    storeId: selected !== "all" && isUuid(selected) ? selected : null,
+  };
 }
 
 /** Remove caracteres com significado em padrões LIKE / filtros PostgREST. */

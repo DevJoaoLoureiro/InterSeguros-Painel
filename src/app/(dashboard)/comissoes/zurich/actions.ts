@@ -1,7 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { assertStoreAccess } from "@/lib/auth/access";
+import { assertStoreAccess, requireAdmin } from "@/lib/auth/access";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
 export type StoreOption = {
@@ -39,6 +39,10 @@ export async function getAccessibleStores(): Promise<{
   stores: StoreOption[];
   canAccessAll: boolean;
 }> {
+  // Área da agência: só OWNER/ADMIN (sem lógica de lojas — a loja é
+  // só um filtro).
+  await requireAdmin();
+
   const profile = await getCurrentProfile();
 
   if (!profile) {

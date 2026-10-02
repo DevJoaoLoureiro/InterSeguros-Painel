@@ -20,6 +20,7 @@ import {
   Users,
   
 } from "lucide-react";
+import { canAccessPage, hasFullAccess } from "@/lib/auth/permissions";
 
 import { LogoutButton } from "@/components/auth/logout-button";
 
@@ -196,8 +197,7 @@ export function AppSidebar({
   const initials = getInitials(profile.full_name);
   const storeName = profile.store?.name ?? "Sem loja atribuída";
 
-  const isOwnerOrAdmin =
-    profile.role === "OWNER" || profile.role === "ADMIN";
+  const fullAccess = hasFullAccess(profile.role);
 
   return (
     <aside
@@ -218,24 +218,12 @@ export function AppSidebar({
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-5">
         {menuGroups.map((group, groupIndex) => {
-          // Toda a secção GESTÃO é exclusiva de OWNER e ADMIN
-          if (group.title === "GESTÃO" && !isOwnerOrAdmin) {
-            return null;
-          }
-
-          const visibleItems = group.items.filter((item) => {
-            // Carteira por Loja e Estatísticas também são
-            // exclusivas de OWNER e ADMIN
-            const restrictedToOwnerAndAdmin =
-              item.href === "/carteira" ||
-              item.href === "/estatisticas"|| item.href === "/comissoes";
-
-            if (restrictedToOwnerAndAdmin) {
-              return isOwnerOrAdmin;
-            }
-
-            return true;
-          });
+          // OWNER/ADMIN veem tudo; funcionários só as páginas de
+          // EMPLOYEE_PAGES (Tarefas, Oportunidades, Simulador,
+          // Conversas) — mesma regra que o proxy aplica ao URL.
+          const visibleItems = group.items.filter(
+            (item) => fullAccess || canAccessPage(profile.role, item.href),
+          );
 
           // Não mostrar grupos que ficaram sem itens
           if (visibleItems.length === 0) {

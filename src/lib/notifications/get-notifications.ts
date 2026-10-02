@@ -21,7 +21,7 @@ export async function getNotifications(): Promise<NotificationItem[]> {
     return [];
   }
 
-  const { profile, storeId } = scope;
+  const { profile, privileged, storeId } = scope;
 
   const admin = createAdminClient();
 
@@ -37,7 +37,12 @@ export async function getNotifications(): Promise<NotificationItem[]> {
       .limit(5),
 
     // Partilhado com os alertas de vencimento no mesmo pedido.
-    getVencimentosSnapshot(storeId),
+    // Funcionários: só as suas tarefas (sem recibos/renovações).
+    privileged
+      ? getVencimentosSnapshot(storeId)
+      : Promise.resolve({ receipts: [], renewals: [] } as Awaited<
+          ReturnType<typeof getVencimentosSnapshot>
+        >),
   ]);
 
   const notifications: NotificationItem[] = [];
