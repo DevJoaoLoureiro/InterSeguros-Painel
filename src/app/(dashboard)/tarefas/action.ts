@@ -17,6 +17,10 @@ import {
   deriveProcessStatus,
   isValidDateKey,
 } from "@/lib/tasks/process-status";
+import {
+  isNotIssuedReason,
+  type NotIssuedReason,
+} from "@/lib/tasks/not-issued";
 
 const taskStatuses = [
   "PENDING",
@@ -79,6 +83,11 @@ export type TaskRow = {
   receipt_id: string | null;
   receipt_paid_at: string | null;
   receipt: ProcessReceipt | null;
+
+  // Processo "Não emitida" (status = CANCELLED): motivo e nota.
+  not_issued_reason: string | null;
+  not_issued_note: string | null;
+  not_issued_at: string | null;
 };
 
 export type ProfileOption = {
@@ -119,6 +128,25 @@ const TASK_SELECT = `
   receipt_id,
   receipt_paid_at
 `;
+
+// Colunas da migração 20261007120000_process_not_issued. Pedidas à
+// parte: se a migração ainda não correu, a página carrega na mesma
+// (sem motivos) em vez de rebentar.
+const NOT_ISSUED_SELECT = `,
+  not_issued_reason,
+  not_issued_note,
+  not_issued_at
+`;
+
+function isMissingNotIssuedColumn(error: { message?: string } | null) {
+  return Boolean(error?.message?.includes("not_issued"));
+}
+
+/* Tarefas e processos vivem em páginas separadas: atualiza as duas. */
+function revalidateBoards() {
+  revalidatePath("/tarefas");
+  revalidatePath("/processos");
+}
 
 function assertValidDate(value: string | null | undefined, label: string) {
   if (value && !isValidDateKey(value)) {
@@ -204,8 +232,11 @@ async function loadProcessReceipts(
 
 export async function getTasksData({
   selectedStoreId,
+  kind,
 }: {
   selectedStoreId: string | null;
+  // "TASK" → página Tarefas; "PROCESS" → página Processos.
+  kind?: TaskKind;
 }) {
   const currentProfile = await getAuthenticatedProfile();
   const privileged = canAssignOthers(currentProfile.role);
@@ -232,23 +263,35 @@ export async function getTasksData({
   // Todos veem as tarefas da equipa (cobrir férias de um colega);
   // o filtro "As minhas" é feito no quadro.
 
-  let query = admin
-    .from("tasks")
-    .select(TASK_SELECT)
-    .order("due_at", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: false });
+  const buildQuery = (select: string) => {
+    let query = admin
+      .from("tasks")
+      .select(select)
+      .order("due_at", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: false });
 
-  if (storeFilter) {
-    query = query.eq("store_id", storeFilter);
-  }
+    if (storeFilter) {
+      query = query.eq("store_id", storeFilter);
+    }
 
+    if (kind) {
+      query = query.eq("kind", kind);
+    }
+
+    return query;
+  };
 
   // Utilizadores e ramos vêm da cache de referência.
-  const [tasksResult, activeProfiles, lines] = await Promise.all([
-    query,
+  const [firstResult, activeProfiles, lines] = await Promise.all([
+    buildQuery(TASK_SELECT + NOT_ISSUED_SELECT),
     getCachedActiveProfiles(),
     getCachedInsuranceLines(),
   ]);
+
+  // Migração dos motivos por correr: repete sem essas colunas.
+  const tasksResult = isMissingNotIssuedColumn(firstResult.error)
+    ? await buildQuery(TASK_SELECT)
+    : firstResult;
 
   if (tasksResult.error) {
     throw new Error(
@@ -256,8 +299,14 @@ export async function getTasksData({
     );
   }
 
-
-  const rows = (tasksResult.data ?? []) as Omit<TaskRow, "receipt">[];
+  const rows = (
+    (tasksResult.data ?? []) as unknown as Partial<Omit<TaskRow, "receipt">>[]
+  ).map((row) => ({
+    not_issued_reason: null,
+    not_issued_note: null,
+    not_issued_at: null,
+    ...row,
+  })) as Omit<TaskRow, "receipt">[];
 
   const receiptMap = await loadProcessReceipts(
     admin,
@@ -414,7 +463,7 @@ export async function createTask(input: {
     }
   }
 
-  revalidatePath("/tarefas");
+  revalidateBoards();
 
   return { success: true };
 }
@@ -526,7 +575,7 @@ export async function updateTask(
     throw new Error(`Erro ao atualizar tarefa: ${error.message}`);
   }
 
-  revalidatePath("/tarefas");
+  revalidateBoards();
 
   return { success: true };
 }
@@ -558,23 +607,102 @@ export async function updateTaskStatus(
     }
   }
 
-  const { error } = await admin
+  const update = {
+    status: nextStatus,
+    completed_at:
+      nextStatus === "COMPLETED"
+        ? task.completed_at ?? new Date().toISOString()
+        : null,
+    updated_at: new Date().toISOString(),
+  };
+
+  // Reabrir um processo "não emitida" apaga o motivo.
+  const reopening =
+    task.kind === "PROCESS" &&
+    task.status === "CANCELLED" &&
+    nextStatus !== "CANCELLED";
+
+  let { error } = await admin
     .from("tasks")
-    .update({
-      status: nextStatus,
-      completed_at:
-        nextStatus === "COMPLETED"
-          ? task.completed_at ?? new Date().toISOString()
-          : null,
-      updated_at: new Date().toISOString(),
-    })
+    .update(
+      reopening
+        ? {
+            ...update,
+            not_issued_reason: null,
+            not_issued_note: null,
+            not_issued_at: null,
+          }
+        : update,
+    )
     .eq("id", taskId);
+
+  // Migração dos motivos por correr: reabre na mesma.
+  if (reopening && isMissingNotIssuedColumn(error)) {
+    ({ error } = await admin.from("tasks").update(update).eq("id", taskId));
+  }
 
   if (error) {
     throw new Error(`Erro ao atualizar tarefa: ${error.message}`);
   }
 
-  revalidatePath("/tarefas");
+  revalidateBoards();
+
+  return { success: true };
+}
+
+/*
+ * Fechar um processo como "Não emitida", com o motivo (ex.: cliente
+ * achou muito caro). Fica com status CANCELLED; reabrir apaga o motivo.
+ */
+export async function markProcessNotIssued(
+  taskId: string,
+  input: { reason: NotIssuedReason; note?: string | null },
+) {
+  if (!isNotIssuedReason(input.reason)) {
+    throw new Error("Escolhe o motivo.");
+  }
+
+  const note = input.note?.trim() || null;
+
+  if (input.reason === "OTHER" && !note) {
+    throw new Error("Descreve o motivo.");
+  }
+
+  const { admin, task } = await loadTaskForModify(taskId);
+
+  if (task.kind !== "PROCESS") {
+    throw new Error("Esta tarefa não é um processo.");
+  }
+
+  if (task.receipt_paid) {
+    throw new Error(
+      "Este processo já tem o recibo pago: a apólice foi emitida.",
+    );
+  }
+
+  const now = new Date().toISOString();
+
+  const { error } = await admin
+    .from("tasks")
+    .update({
+      status: "CANCELLED",
+      completed_at: null,
+      not_issued_reason: input.reason,
+      not_issued_note: note,
+      not_issued_at: now,
+      updated_at: now,
+    })
+    .eq("id", taskId);
+
+  if (error) {
+    throw new Error(
+      isMissingNotIssuedColumn(error)
+        ? "Falta correr a migração dos motivos (20261007120000_process_not_issued.sql) na base de dados."
+        : `Erro ao atualizar processo: ${error.message}`,
+    );
+  }
+
+  revalidateBoards();
 
   return { success: true };
 }
@@ -685,7 +813,7 @@ export async function updateProcess(taskId: string, patch: ProcessPatch) {
     console.error("[tarefas] reconcile on update", reconcileError);
   }
 
-  revalidatePath("/tarefas");
+  revalidateBoards();
 
   return { success: true };
 }
@@ -722,7 +850,7 @@ export async function deleteTask(taskId: string) {
     throw new Error(`Erro ao apagar tarefa: ${error.message}`);
   }
 
-  revalidatePath("/tarefas");
+  revalidateBoards();
 
   return { success: true };
 }

@@ -104,7 +104,7 @@ export default async function EstatisticasPage() {
         />
 
         <ComparisonCard
-          label="Prémio comercial"
+          label="Prémio emitido"
           currentLabel={comparison.currentMonth.label}
           currentValue={formatCurrency(comparison.currentMonth.commercialPremium)}
           previousLabel={comparison.previousMonth.label}
@@ -123,7 +123,7 @@ export default async function EstatisticasPage() {
             </h2>
 
             <p className="mt-1 text-sm text-[#7d848e]">
-              Prémio comercial dos últimos 12 meses.
+              Prémio anual das apólices emitidas em cada mês.
             </p>
           </div>
 

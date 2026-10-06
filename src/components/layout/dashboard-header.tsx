@@ -10,11 +10,13 @@ import {
   ClipboardList,
   CloudOff,
   ReceiptText,
+  Search,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { MobileSidebar } from "@/components/layout/mobile-sidebar";
+import { openCommandPalette } from "@/components/layout/navigation";
 
 import type { NotificationItem } from "@/lib/notifications/get-notifications";
 
@@ -57,6 +59,9 @@ function getInitials(name: string) {
 
 function formatRole(role: string) {
   switch (role) {
+    case "OWNER":
+      return "Owner";
+
     case "ADMIN":
       return "Administrador";
 
@@ -99,10 +104,6 @@ const notificationIcons = {
 };
 
 export function DashboardHeader({
-  title = "Dashboard",
-
-  subtitle = "Visão geral da atividade comercial",
-
   profile,
 
   stores,
@@ -126,20 +127,39 @@ export function DashboardHeader({
   }
 
   return (
-    <header className="sticky top-0 z-30 w-full border-b border-[#e8eaed] bg-white/95 backdrop-blur">
-      <div className="flex min-h-[72px] min-w-0 items-center justify-between gap-2 px-3 sm:px-5 lg:min-h-[94px] lg:px-7">
+    <header className="sticky top-[3px] z-30 w-full border-b border-[#ece7e2] bg-white">
+      <div className="flex h-[67px] min-w-0 items-center justify-between gap-2 px-3 sm:px-5 lg:px-7">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <MobileSidebar profile={profile} />
 
-          <div className="min-w-0">
-            <h1 className="truncate text-lg font-semibold tracking-tight text-[#17191d] sm:text-2xl">
-              {pageHeader?.title ?? title}
-            </h1>
+          {/* Só as páginas sem título próprio o mostram aqui. */}
+          {pageHeader && (
+            <div className="min-w-0 shrink">
+              <h1 className="truncate text-lg font-semibold tracking-tight text-[#17191d]">
+                {pageHeader.title}
+              </h1>
 
-            <p className="mt-0.5 hidden truncate text-xs text-[#777f8a] sm:block sm:text-sm">
-              {pageHeader?.subtitle ?? subtitle}
-            </p>
-          </div>
+              <p className="hidden truncate text-xs text-[#777f8a] xl:block">
+                {pageHeader.subtitle}
+              </p>
+            </div>
+          )}
+
+          {/* PESQUISA RÁPIDA (abre com Ctrl+K) */}
+
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            className="group flex h-10 min-w-0 flex-1 items-center gap-2.5 rounded-xl border border-[#e4e6e9] bg-white/80 px-3 text-sm text-[#8a9099] shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition hover:border-[#ffb899] hover:text-[#59616d] sm:max-w-md"
+          >
+            <Search className="h-4 w-4 shrink-0 transition-colors group-hover:text-[#ff4b0a]" />
+            <span className="flex-1 truncate text-left">
+              Procurar cliente ou ir para uma página…
+            </span>
+            <kbd className="hidden rounded-md border border-[#e4e6e9] bg-[#f7f8f9] px-1.5 py-0.5 font-sans text-[10px] font-medium text-[#7d848e] sm:block">
+              Ctrl K
+            </kbd>
+          </button>
         </div>
 
         <div className="flex shrink-0 items-center gap-1 sm:gap-3">
@@ -151,7 +171,7 @@ export function DashboardHeader({
             <select
               value={currentStoreId}
               onChange={(event) => handleStoreChange(event.target.value)}
-              className="h-11 min-w-[210px] appearance-none rounded-xl border border-[#e4e6e9] bg-white py-0 pl-11 pr-10 text-sm font-medium text-[#353b44] shadow-sm outline-none transition focus:border-[#ff4b0a]"
+              className="h-10 min-w-[200px] appearance-none rounded-xl border border-[#e4e6e9] bg-white/80 py-0 pl-11 pr-10 text-sm font-medium text-[#353b44] shadow-[0_1px_2px_rgba(16,24,40,0.04)] outline-none transition hover:border-[#ffb899] focus:border-[#ff4b0a]"
             >
               <option value="all">Todas as lojas</option>
 
@@ -171,13 +191,13 @@ export function DashboardHeader({
             <button
               type="button"
               onClick={() => setNotificationsOpen((v) => !v)}
-              className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[#525963] transition-colors hover:bg-[#f4f5f7]"
+              className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-transparent text-[#525963] transition hover:border-[#e4e6e9] hover:bg-white"
               aria-label="Notificações"
             >
               <Bell className="h-5 w-5" />
 
               {notifications.length > 0 && (
-                <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ff4b0a] px-1 text-[9px] font-bold text-white">
+                <span className="absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ff4b0a] px-1 text-[9px] font-bold text-white ring-2 ring-white">
                   {notifications.length}
                 </span>
               )}
@@ -192,7 +212,7 @@ export function DashboardHeader({
                   aria-label="Fechar notificações"
                 />
 
-                <div className="absolute right-0 top-12 z-50 w-80 overflow-hidden rounded-2xl border border-[#e5e8ec] bg-white shadow-xl">
+                <div className="absolute right-0 top-12 z-50 w-80 animate-pop-in overflow-hidden rounded-2xl border border-[#e5e8ec] bg-white shadow-[0_20px_50px_rgba(20,22,27,0.18)]">
                   <div className="border-b border-[#edf0f2] px-4 py-3">
                     <p className="text-sm font-semibold text-[#20242a]">
                       Notificações
@@ -250,7 +270,7 @@ export function DashboardHeader({
             type="button"
             className="hidden items-center gap-2 rounded-xl p-1.5 transition-colors hover:bg-[#f4f5f7] sm:flex xl:pr-3"
           >
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#242a32] text-xs font-semibold text-white sm:h-10 sm:w-10 sm:text-sm">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#ff6a2b] via-[#d9570f] to-[#3a3632] text-xs font-semibold text-white shadow-[0_4px_12px_rgba(58,54,50,0.22)]">
               {initials}
             </div>
 

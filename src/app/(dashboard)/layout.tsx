@@ -20,6 +20,7 @@ import {
 } from "@/components/ai/assistant-provider";
 
 import AssistantPanel from "@/components/ai/assistant-panel";
+import { CommandPalette } from "@/components/layout/command-palette";
 
 import { Suspense } from "react";
 
@@ -83,8 +84,15 @@ export default async function DashboardLayout({
 
   return (
     <AssistantProvider>
-      <div className="min-h-dvh w-full overflow-x-clip bg-[#f7f8fc]">
-        <aside className="fixed inset-y-0 left-0 z-40 hidden w-[270px] lg:block">
+      <div className="app-canvas min-h-dvh w-full overflow-x-clip pt-[3px]">
+        {/* Filete com o degradê do logótipo, de ponta a ponta: o menu
+            e a barra de topo começam os dois logo abaixo dele. */}
+        <div
+          aria-hidden
+          className="fixed inset-x-0 top-0 z-50 h-[3px] bg-gradient-to-r from-[#ea5b0c] via-[#c2551f] to-[#3a3632]"
+        />
+
+        <aside className="fixed bottom-0 left-0 top-[3px] z-40 hidden w-[270px] lg:block">
           <Suspense
             fallback={
               <AppSidebar
@@ -127,6 +135,9 @@ export default async function DashboardLayout({
         <Suspense fallback={null}>
           <ExpiryAlertsLoader userId={profile.id} />
         </Suspense>
+
+        {/* PESQUISA RÁPIDA (Ctrl+K) */}
+        <CommandPalette role={profile.role} />
 
         {/* ASSISTENTE GLOBAL */}
         <AssistantPanel />

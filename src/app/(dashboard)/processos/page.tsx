@@ -1,13 +1,13 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { getSelectedStoreId } from "@/lib/auth/store-selection";
 
-import { getTasksData } from "./action";
-import { TasksBoard } from "./tasks-board";
+import { getTasksData } from "@/app/(dashboard)/tarefas/action";
 
-export default async function TarefasPage() {
+import { ProcessesBoard } from "./processes-board";
+
+export default async function ProcessosPage() {
   const profile = await getCurrentProfile();
 
   if (!profile) {
@@ -18,34 +18,25 @@ export default async function TarefasPage() {
   const selectedStoreId = await getSelectedStoreId();
 
   const { tasks, profiles, insuranceLines, privileged, currentProfileId } =
-    await getTasksData({ selectedStoreId, kind: "TASK" });
+    await getTasksData({ selectedStoreId, kind: "PROCESS" });
 
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-sm font-medium text-[#ff4b0a]">
-          Atividades
-        </p>
+        <p className="text-sm font-medium text-[#ff4b0a]">Atividades</p>
 
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#17191d]">
-          Tarefas
+          Processos
         </h1>
 
         <p className="mt-1 text-sm text-[#737a84]">
-          Lembretes e follow-ups da equipa, por prazo. Simulações e
-          renegociações estão em{" "}
-          <Link
-            href="/processos"
-            className="font-medium text-[#ff4b0a] hover:underline"
-          >
-            Processos
-          </Link>
-          .
+          Simulações e renegociações, da proposta ao recibo pago — ou ao
+          motivo por que não foram emitidas.
         </p>
       </div>
 
-      <TasksBoard
-        initialTasks={tasks}
+      <ProcessesBoard
+        initialProcesses={tasks}
         profiles={profiles}
         insuranceLines={insuranceLines}
         privileged={privileged}

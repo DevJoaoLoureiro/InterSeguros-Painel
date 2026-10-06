@@ -5,7 +5,8 @@
  * - Funcionários (GESTOR_LOJA, COMERCIAL, ...) veem, de TODAS as lojas
  *   (se um colega está de férias, outro trata dos clientes dele):
  *     Dashboard, Leads, Clientes, Recibos, Vencimentos e as
- *     Atividades (Tarefas, Oportunidades, Simulador, Conversas).
+ *     Atividades (Tarefas, Processos, Oportunidades, Simulador,
+ *     Conversas).
  *   NÃO veem: Comissões, Carteira por loja, Estatísticas e a secção
  *   Gestão (Lojas, Utilizadores, Configurações).
  *
@@ -22,6 +23,7 @@ export const EMPLOYEE_PAGES = [
   "/recibos",
   "/vencimentos",
   "/tarefas",
+  "/processos",
   "/oportunidades",
   "/simulador",
   "/conversas",

@@ -48,23 +48,183 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
+/*
+ * Dentro de @layer base, para as classes do Tailwind ganharem. Fora
+ * de uma layer estas regras ganhavam a TODAS as classes: os botões e
+ * campos ignoravam text-xs/text-sm (ficavam a 16px) e os links
+ * ignoravam as classes de cor.
+ */
+@layer base {
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 
-button {
-  cursor: pointer;
-}
+  button {
+    cursor: pointer;
+  }
 
-a {
-  color: inherit;
-  text-decoration: none;
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
 }
 
 ::selection {
   background: #ff5a1f;
   color: white;
+}
+
+/*
+ * Animações discretas (classes animate-fade-up / animate-pop-in /
+ * animate-check-pop): entrada de cartões e linhas, abertura de
+ * janelas e o "visto" ao concluir.
+ */
+/*
+ * IMPORTANTE: sem "both"/"forwards". Uma animação de transform ou
+ * opacity que fica aplicada depois de acabar transforma o elemento no
+ * "ecrã" dos filhos com position: fixed — os painéis laterais e as
+ * janelas abertos dentro dele ficavam cortados à área da página.
+ */
+@theme {
+  --animate-fade-up: fade-up 0.28s cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+  --animate-pop-in: pop-in 0.18s ease-out backwards;
+  --animate-fade-in: fade-in 0.15s ease-out backwards;
+  --animate-check-pop: check-pop 0.28s ease-out;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes check-pop {
+    0% {
+      transform: scale(0.7);
+    }
+    60% {
+      transform: scale(1.15);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+}
+
+/*
+ * Fundo da aplicação: claro e quente, com dois brilhos muito suaves
+ * nas cores do logótipo (laranja em cima à direita, cinzento-carvão em
+ * baixo à esquerda) para dar profundidade sem distrair.
+ */
+.app-canvas {
+  background:
+    radial-gradient(
+      1100px 520px at 100% -8%,
+      rgba(255, 90, 31, 0.075),
+      transparent 62%
+    ),
+    radial-gradient(
+      900px 520px at -8% 108%,
+      rgba(58, 54, 50, 0.05),
+      transparent 60%
+    ),
+    #f8f7f5;
+  background-attachment: fixed;
+}
+
+/* Barras de deslocamento finas e discretas. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d5d9df transparent;
+}
+
+.sidebar-scroll {
+  scrollbar-color: #e3ddd7 transparent;
+}
+
+/* Foco visível (teclado) na cor da marca. */
+:where(a, button, [role="button"], [role="checkbox"], [role="radio"]):focus-visible {
+  outline: 2px solid #ff4b0a;
+  outline-offset: 2px;
+}
+
+/* Brilho que passa pelos blocos enquanto a página carrega. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #e9ecf1;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.7),
+    transparent
+  );
+  animation: skeleton-sweep 1.3s ease-in-out infinite;
+}
+
+@keyframes skeleton-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* Manchas de luz que flutuam devagar (página de entrada). */
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(18px, -22px, 0);
+  }
+}
+
+.float-slow {
+  animation: float-slow 14s ease-in-out infinite;
+}
+
+/* Quem pede menos movimento no sistema não vê animações. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

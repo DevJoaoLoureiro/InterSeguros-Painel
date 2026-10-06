@@ -16,11 +16,15 @@ import {
   useState,
 } from "react";
 
+import { usePathname } from "next/navigation";
+
 import {
   useAssistant,
 } from "@/components/ai/assistant-provider";
 
 export default function AssistantPanel() {
+  const onConversas = usePathname().startsWith("/conversas");
+
   const {
     open,
     setOpen,
@@ -202,7 +206,10 @@ export default function AssistantPanel() {
           onClick={() =>
             setOpen(true)
           }
-          className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#17191d] text-white shadow-lg transition hover:scale-105"
+          className={`fixed right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-[#ff6a2b] to-[#ea5b0c] text-white shadow-[0_10px_26px_rgba(234,91,12,0.4)] transition hover:scale-105 ${
+            // Nas Conversas o canto de baixo é do botão de enviar.
+            onConversas ? "bottom-28" : "bottom-6"
+          }`}
           aria-label="Abrir assistente"
         >
           <MessageCircle className="h-6 w-6" />

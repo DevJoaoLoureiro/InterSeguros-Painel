@@ -199,7 +199,7 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
       date,
       daysLeft: daysUntil(date, todayKey),
       // Com cliente já identificado (NIF encontrado), abre o cliente.
-      href: process.client_id ? clientHref(process.client_id) : "/tarefas",
+      href: process.client_id ? clientHref(process.client_id) : "/processos",
     });
   }
 

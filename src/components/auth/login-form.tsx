@@ -96,7 +96,7 @@ export function LoginForm() {
       <button
         type="submit"
         disabled={loading}
-        className="flex h-12 w-full items-center justify-center rounded-xl bg-[#ff4b0a] text-sm font-semibold text-white transition hover:bg-[#e94308] disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-12 w-full items-center justify-center rounded-xl bg-gradient-to-r from-[#ff5a1f] to-[#ff4b0a] text-sm font-semibold text-white shadow-[0_8px_22px_rgba(255,75,10,0.32)] transition hover:shadow-[0_12px_30px_rgba(255,75,10,0.42)] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
       >
         {loading ? "A entrar..." : "Entrar no painel"}
       </button>

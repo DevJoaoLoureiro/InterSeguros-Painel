@@ -225,7 +225,14 @@ export function LeadsTable({
 
                 <td className="px-5 py-4">
                   <span className="text-sm text-[#555d68]">
-                    {lead.source ?? "—"}
+                    {lead.source
+                      ? ({
+                          chatbot: "Chatbot",
+                          site: "Site",
+                          manual: "Manual",
+                          recuperacao: "Recuperação",
+                        }[lead.source] ?? lead.source)
+                      : "—"}
                   </span>
                 </td>
 

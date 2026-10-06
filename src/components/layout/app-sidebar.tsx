@@ -1,28 +1,12 @@
-﻿"use client";
+"use client";
 
-import type { ElementType } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  BarChart3,
-  Building2,
-  CalendarDays,
-  Calculator,
-  ChevronDown,
-  CircleUserRound,
-  Coins,
-  FileText,
-  Gauge,
-  MessageCircle,
-  ReceiptText,
-  Settings,
-  Target,
-  Users,
-  
-} from "lucide-react";
+
 import { canAccessPage, hasFullAccess } from "@/lib/auth/permissions";
 
 import { LogoutButton } from "@/components/auth/logout-button";
+import { menuGroups } from "@/components/layout/navigation";
 
 type SidebarProfile = {
   full_name: string;
@@ -42,125 +26,6 @@ type AppSidebarProps = {
   profile: SidebarProfile;
   overdueReceiptsCount?: number;
 };
-
-type MenuItem = {
-  label: string;
-  href: string;
-  icon: ElementType;
-  badge?: number;
-};
-
-type MenuGroup = {
-  title?: string;
-  items: MenuItem[];
-};
-
-const menuGroups: MenuGroup[] = [
-  {
-    items: [
-      {
-        label: "Dashboard",
-        href: "/dashboard",
-        icon: Gauge,
-      },
-    ],
-  },
-  {
-    title: "LEADS",
-    items: [
-      {
-        label: "Leads (Chat)",
-        href: "/leads",
-        icon: MessageCircle,
-      },
-    ],
-  },
-  {
-    title: "CARTEIRA",
-    items: [
-      {
-        label: "Clientes",
-        href: "/clientes",
-        icon: Users,
-      },
-      {
-        label: "Recibos",
-        href: "/recibos",
-        icon: ReceiptText,
-      },
-      {
-        label: "Vencimentos",
-        href: "/vencimentos",
-        icon: CalendarDays,
-      },
-      {
-        label: "Carteira por Loja",
-        href: "/carteira",
-        icon: Building2,
-      },
-      {
-        label: "Comissões",
-        href: "/comissoes",
-        icon: Coins,
-      },
-    ],
-  },
- {
-  title: "ATIVIDADES",
-  items: [
-    {
-      label: "Tarefas",
-      href: "/tarefas",
-      icon: FileText,
-    },
-    {
-      label: "Oportunidades",
-      href: "/oportunidades",
-      icon: Target,
-    },
-    {
-      label: "Simulador",
-      href: "/simulador",
-      icon: Calculator,
-    },
-    {
-      label: "Conversas",
-      href: "/conversas",
-      icon: MessageCircle,
-    },
-  ],
-},
-  {
-    title: "ANÁLISES",
-    items: [
-      {
-        label: "Estatísticas",
-        href: "/estatisticas",
-        icon: BarChart3,
-      },
-    ],
-  },
-  {
-    title: "GESTÃO",
-    items: [
-      {
-        label: "Lojas",
-        href: "/lojas",
-        icon: Building2,
-      },
-      {
-        label: "Utilizadores",
-        href: "/utilizadores",
-        icon: CircleUserRound,
-      },
-      {
-        label: "Configurações",
-        href: "/configuracoes",
-        icon: Settings,
-      },
-    ],
-  },
-];
 
 function getInitials(name: string) {
   return name
@@ -202,25 +67,32 @@ export function AppSidebar({
   return (
     <aside
       className={[
-        "flex h-dvh shrink-0 flex-col bg-white",
-        mobile
-          ? "w-full border-r-0"
-          : "w-[270px] border-r border-[#e8eaed]",
+        "relative flex h-full shrink-0 flex-col overflow-hidden bg-white text-[#3a3632]",
+        mobile ? "w-full" : "w-[270px] border-r border-[#ece7e2]",
       ].join(" ")}
     >
-      <div className="flex h-[94px] shrink-0 items-center border-b border-[#e8eaed] px-6">
+      {/* LOGO — mesma altura da barra de topo (68px) e a mesma linha
+          por baixo, para o topo ser uma faixa contínua. */}
+
+      <Link
+        href="/dashboard"
+        className="flex h-[68px] shrink-0 items-center justify-center overflow-hidden border-b border-[#ece7e2] transition hover:bg-[#faf8f6]"
+      >
+        {/* A imagem tem muita margem em branco: ampliada (scale não
+            mexe na altura da faixa) e cortada pelo overflow. */}
         <img
           src="/interseguroslogo.png"
-          alt="Inter Seguros Logo"
-          className="h-15 w-auto object-contain"
+          alt="Inter Seguros"
+          className="h-[64px] w-auto scale-[1.35] object-contain"
         />
-      </div>
+      </Link>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-5">
+      {/* MENU */}
+
+      <nav className="sidebar-scroll relative min-h-0 flex-1 overflow-y-auto px-3 pb-3 pt-4">
         {menuGroups.map((group, groupIndex) => {
           // OWNER/ADMIN veem tudo; funcionários só as páginas de
-          // EMPLOYEE_PAGES (Tarefas, Oportunidades, Simulador,
-          // Conversas) — mesma regra que o proxy aplica ao URL.
+          // EMPLOYEE_PAGES — mesma regra que o proxy aplica ao URL.
           const visibleItems = group.items.filter(
             (item) => fullAccess || canAccessPage(profile.role, item.href),
           );
@@ -231,17 +103,14 @@ export function AppSidebar({
           }
 
           return (
-            <div
-              key={group.title ?? groupIndex}
-              className={groupIndex === 0 ? "mb-5" : "mb-6"}
-            >
+            <div key={group.title ?? groupIndex} className="mb-4">
               {group.title && (
-                <p className="mb-2 px-3 text-[11px] font-semibold tracking-wide text-[#7a8390]">
+                <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#b0a79f]">
                   {group.title}
                 </p>
               )}
 
-              <div className="space-y-1">
+              <div className="space-y-0.5">
                 {visibleItems.map((item) => {
                   const isActive =
                     pathname === item.href ||
@@ -249,39 +118,47 @@ export function AppSidebar({
 
                   const Icon = item.icon;
 
-                  const dynamicBadge =
-                    item.href === "/vencimentos" &&
-                    overdueReceiptsCount > 0
+                  const badge =
+                    item.href === "/vencimentos" && overdueReceiptsCount > 0
                       ? overdueReceiptsCount
-                      : item.badge;
+                      : undefined;
 
                   return (
                     <Link
                       key={item.href}
                       href={item.href}
+                      aria-current={isActive ? "page" : undefined}
                       className={[
-                        "flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-medium transition-colors",
+                        "group relative flex min-h-10 items-center gap-3 rounded-xl px-3 text-sm font-medium transition duration-200",
                         isActive
-                          ? "bg-[#ff4b0a] text-white shadow-sm"
-                          : "text-[#31363f] hover:bg-[#f4f5f7]",
+                          ? "bg-gradient-to-r from-[#ff6a2b] to-[#ea5b0c] text-white shadow-[0_6px_16px_rgba(234,91,12,0.32)]"
+                          : "text-[#514943] hover:bg-[#f7f2ed] hover:text-[#2b2724]",
                       ].join(" ")}
                     >
-                      <Icon className="h-[18px] w-[18px] shrink-0" />
+                      <Icon
+                        className={[
+                          "h-[18px] w-[18px] shrink-0 transition duration-200",
+                          isActive
+                            ? ""
+                            : "text-[#948b83] group-hover:scale-110 group-hover:text-[#ea5b0c]",
+                        ].join(" ")}
+                      />
 
                       <span className="min-w-0 flex-1 truncate">
                         {item.label}
                       </span>
 
-                      {dynamicBadge !== undefined && (
+                      {badge !== undefined && (
                         <span
                           className={[
-                            "flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold",
+                            "flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums",
                             isActive
-                              ? "bg-white/20 text-white"
+                              ? "bg-white/25 text-white"
                               : "bg-red-500 text-white",
                           ].join(" ")}
+                          title="Recibos em atraso"
                         >
-                          {dynamicBadge}
+                          {badge}
                         </span>
                       )}
                     </Link>
@@ -293,31 +170,25 @@ export function AppSidebar({
         })}
       </nav>
 
-      <div className="shrink-0 border-t border-[#e8eaed] p-3">
-        <button
-          type="button"
-          className="mb-2 flex w-full items-center gap-3 rounded-xl border border-[#e8eaed] p-3 text-left transition-colors hover:bg-[#f7f8fa]"
-        >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#242a32] text-sm font-semibold text-white">
+      {/* UTILIZADOR */}
+
+      <div className="relative shrink-0 border-t border-[#ece7e2] p-3">
+        <div className="mb-1.5 flex items-center gap-3 rounded-xl border border-[#ece7e2] bg-[#faf8f6] p-2.5">
+          {/* Mesmo degradê do símbolo do logótipo */}
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#ff6a2b] via-[#d9570f] to-[#3a3632] text-sm font-semibold text-white shadow-[0_4px_12px_rgba(58,54,50,0.22)]">
             {initials}
           </div>
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-[#24272d]">
+            <p className="truncate text-sm font-semibold text-[#2b2724]">
               {profile.full_name}
             </p>
 
-            <p className="truncate text-xs text-[#707782]">
-              {storeName}
-            </p>
-
-            <p className="mt-0.5 truncate text-[11px] text-[#9aa0a8]">
-              {formatRole(profile.role)}
+            <p className="truncate text-[11px] text-[#948b83]">
+              {formatRole(profile.role)} · {storeName}
             </p>
           </div>
-
-          <ChevronDown className="h-4 w-4 shrink-0 text-[#707782]" />
-        </button>
+        </div>
 
         <LogoutButton />
       </div>

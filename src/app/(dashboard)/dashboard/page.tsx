@@ -1,8 +1,12 @@
 ﻿import {
   AlertCircle,
+  ArrowUpRight,
+  Briefcase,
+  Calculator,
   CalendarDays,
   CheckSquare,
   FileCheck2,
+  FileText,
   TrendingUp,
   Users,
 } from "lucide-react";
@@ -76,6 +80,7 @@ type PolicyRow = {
 
 type TaskRow = {
   id: string;
+  kind: "TASK" | "PROCESS";
   title: string;
   status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
   priority: "LOW" | "MEDIUM" | "HIGH";
@@ -115,6 +120,20 @@ function formatDate(value: string | null) {
     month: "2-digit",
     year: "numeric",
   }).format(date);
+}
+
+/*
+ * Valor de produção de uma apólice. As companhias não enviam o prémio
+ * comercial ao nível da apólice (vem a null), por isso sem ele conta o
+ * prémio anualizado — senão a produção aparecia sempre a zero.
+ */
+function productionValue(policy: {
+  commercial_premium: number | string | null;
+  annualized_premium: number | string | null;
+}) {
+  const commercial = Number(policy.commercial_premium ?? 0);
+
+  return commercial > 0 ? commercial : Number(policy.annualized_premium ?? 0);
 }
 
 function getRelation<T>(relation: T | T[] | null): T | null {
@@ -208,7 +227,7 @@ export default async function DashboardPage() {
 
   const tasksQuery = supabase
     .from("tasks")
-    .select("id, title, status, priority, due_at")
+    .select("id, kind, title, status, priority, due_at")
     .eq("assigned_user_id", profile.id)
     .not("status", "in", "(COMPLETED,CANCELLED)")
     .order("due_at", { ascending: true, nullsFirst: false })
@@ -297,7 +316,7 @@ const policiesThisMonth = policies.filter(
 );
 
   const premiumThisMonth = policiesThisMonth.reduce(
-    (total, policy) => total + Number(policy.commercial_premium ?? 0),
+    (total, policy) => total + productionValue(policy),
     0,
   );
 
@@ -343,7 +362,7 @@ for (const policy of policies) {
     }
 
     day.policies += 1;
-    day.premium += Number(policy.commercial_premium ?? 0);
+    day.premium += productionValue(policy);
   }
 
   // ========================================
@@ -366,7 +385,7 @@ for (const policy of policies) {
     };
 
     current.policies += 1;
-    current.premium += Number(policy.commercial_premium ?? 0);
+    current.premium += productionValue(policy);
 
     companyMap.set(company, current);
   }
@@ -455,17 +474,68 @@ for (const policy of policies) {
 
   return (
     <div className="space-y-6">
-      <div>
-        <p className="text-sm font-medium text-[#ff4b0a]">Visão geral</p>
+      {/* BOAS-VINDAS */}
 
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#17191d]">
-          Olá, {profile.full_name.split(" ")[0]}
-        </h1>
+      <section className="relative overflow-hidden rounded-3xl border border-[#f0e6de] bg-white p-6 shadow-[0_10px_34px_rgba(58,54,50,0.07)] sm:p-7">
+        {/* Filete e brilhos nas cores do logótipo (laranja → carvão) */}
+        <div
+          aria-hidden
+          className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#ea5b0c] via-[#c2551f] to-[#3a3632]"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-16 -top-24 h-72 w-72 rounded-full bg-[#ff4b0a]/[0.13] blur-3xl"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -bottom-28 left-1/4 h-64 w-64 rounded-full bg-[#3a3632]/[0.06] blur-3xl"
+        />
 
-        <p className="mt-1 text-sm text-[#737a84]">
-          A tua atividade comercial de hoje.
-        </p>
-      </div>
+        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium capitalize text-[#ea5b0c]">
+              {new Intl.DateTimeFormat("pt-PT", {
+                timeZone: "Europe/Lisbon",
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+              }).format(new Date())}
+            </p>
+
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight text-[#2b2724]">
+              Olá, {profile.full_name.split(" ")[0]} 👋
+            </h1>
+
+            <p className="mt-2 max-w-lg text-sm text-[#6b625b]">
+              {policiesToday.length > 0
+                ? `Hoje já ${policiesToday.length === 1 ? "foi emitida 1 apólice" : `foram emitidas ${policiesToday.length} apólices`}, num total de ${formatCurrency(premiumToday)}.`
+                : "Ainda não há apólices emitidas hoje."}{" "}
+              {myTasks.length > 0
+                ? `Tens ${myTasks.length} ${myTasks.length === 1 ? "tarefa por fazer" : "tarefas por fazer"}.`
+                : "Não tens tarefas pendentes."}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap gap-2 lg:shrink-0 lg:flex-nowrap">
+            {[
+              { href: "/tarefas", label: "Tarefas", icon: FileText },
+              { href: "/processos", label: "Processos", icon: Briefcase },
+              { href: "/simulador", label: "Simular", icon: Calculator },
+              { href: "/vencimentos", label: "Vencimentos", icon: CalendarDays },
+            ].map((shortcut) => (
+              <Link
+                key={shortcut.href}
+                href={shortcut.href}
+                className="group inline-flex h-10 items-center gap-2 rounded-xl border border-[#ece7e2] bg-white/80 px-3.5 text-sm font-medium text-[#3a3632] shadow-[0_1px_2px_rgba(58,54,50,0.05)] backdrop-blur transition hover:-translate-y-0.5 hover:border-[#ffb899] hover:shadow-[0_8px_20px_rgba(234,91,12,0.14)]"
+              >
+                <shortcut.icon className="h-4 w-4 text-[#ea5b0c]" />
+                {shortcut.label}
+                <ArrowUpRight className="h-3.5 w-3.5 text-[#b0a79f] transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[#ea5b0c]" />
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
 
       {/* ALERTAS DE VENCIMENTO */}
 
@@ -529,14 +599,14 @@ for (const policy of policies) {
 
       {/* PRODUÇÃO POR COMPANHIA + MINHAS TAREFAS */}
 
-      <section className="grid gap-4 xl:grid-cols-2">
-        <div className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div className="min-w-0 rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
           <h2 className="font-semibold text-[#20242a]">
             Produção por companhia
           </h2>
 
           <p className="mt-1 text-sm text-[#7d848e]">
-            Prémio comercial acumulado no período.
+            Prémio anual de todas as apólices, por companhia.
           </p>
 
           <div className="mt-5 space-y-3">
@@ -568,7 +638,7 @@ for (const policy of policies) {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
+        <div className="min-w-0 rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="flex items-center gap-2 font-semibold text-[#20242a]">
@@ -604,7 +674,7 @@ for (const policy of policies) {
                 return (
                   <Link
                     key={task.id}
-                    href="/tarefas"
+                    href={task.kind === "PROCESS" ? "/processos" : "/tarefas"}
                     className="flex items-center justify-between gap-3 rounded-xl border border-[#edf0f2] px-3 py-2.5 transition hover:bg-[#fafbfc]"
                   >
                     <div className="min-w-0">
@@ -808,16 +878,21 @@ function MetricCard({
   icon: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
-      <div className="flex items-center justify-between">
+    <div className="group relative overflow-hidden rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)] transition duration-200 hover:-translate-y-0.5 hover:border-[#ffd2bf] hover:shadow-[0_12px_30px_rgba(20,25,35,0.09)]">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-[#ff4b0a]/[0.06] transition-transform duration-300 group-hover:scale-150"
+      />
+
+      <div className="relative flex items-center justify-between">
         <p className="text-sm font-medium text-[#737a84]">{label}</p>
 
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-50 text-[#ff4b0a]">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#fff1ea] to-[#ffe2d3] text-[#ff4b0a]">
           {icon}
         </div>
       </div>
 
-      <p className="mt-4 text-3xl font-semibold tracking-tight text-[#17191d]">
+      <p className="relative mt-4 text-3xl font-semibold tabular-nums tracking-tight text-[#17191d]">
         {value}
       </p>
 

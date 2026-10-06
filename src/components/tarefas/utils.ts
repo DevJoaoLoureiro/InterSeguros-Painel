@@ -218,10 +218,6 @@ export function isOverdue(task: TaskRow) {
   return isOpen(task) && days !== null && days < 0;
 }
 
-export function isToday(task: TaskRow) {
-  return isOpen(task) && daysToAgenda(task) === 0;
-}
-
 export function isInNextDays(task: TaskRow, days: number) {
   const diff = daysToAgenda(task);
   return isOpen(task) && diff !== null && diff >= 0 && diff <= days;
@@ -274,32 +270,77 @@ export function processStatusFor(task: TaskRow, target: TaskStatus) {
     : deriveProcessStatus({ ...task, status: "PENDING" });
 }
 
-export type ProcessStep = {
-  key: "simulation" | "issued" | "receipt";
+/*
+ * Fase de um processo (colunas da página Processos). Vem dos passos,
+ * tal como o estado; "Não emitida" (CANCELLED) fica fora das fases.
+ */
+export type ProcessStage = "TO_SIMULATE" | "SIMULATED" | "ISSUED" | "DONE";
+
+export const processStages: {
+  key: ProcessStage;
   label: string;
-  done: boolean;
-};
+  // O que há a fazer nesta fase (por baixo do título da coluna).
+  hint: string;
+  // Texto da coluna vazia.
+  empty: string;
+  dot: string;
+  // Cores da fase: número/realce, fundo suave e barra do topo.
+  text: string;
+  soft: string;
+  bar: string;
+  // Realce lateral do cartão.
+  side: string;
+}[] = [
+  {
+    key: "TO_SIMULATE",
+    label: "Por simular",
+    hint: "Fazer a simulação e apresentá-la ao cliente",
+    empty: "Nenhum processo à espera de simulação",
+    dot: "bg-[#8a9099]",
+    text: "text-[#59616d]",
+    soft: "bg-[#f1f3f5]",
+    bar: "border-t-[#8a9099]",
+    side: "border-l-[#8a9099]",
+  },
+  {
+    key: "SIMULATED",
+    label: "Simulação apresentada",
+    hint: "Aguardar a decisão do cliente e emitir",
+    empty: "Nenhuma simulação à espera de resposta",
+    dot: "bg-blue-500",
+    text: "text-blue-700",
+    soft: "bg-blue-50",
+    bar: "border-t-blue-500",
+    side: "border-l-blue-500",
+  },
+  {
+    key: "ISSUED",
+    label: "Apólice emitida",
+    hint: "Falta o cliente pagar o recibo",
+    empty: "Nenhuma apólice à espera de pagamento",
+    dot: "bg-violet-500",
+    text: "text-violet-700",
+    soft: "bg-violet-50",
+    bar: "border-t-violet-500",
+    side: "border-l-violet-500",
+  },
+  {
+    key: "DONE",
+    label: "Concluído",
+    hint: "Recibo pago — negócio fechado",
+    empty: "Ainda sem processos concluídos",
+    dot: "bg-green-500",
+    text: "text-green-700",
+    soft: "bg-green-50",
+    bar: "border-t-green-500",
+    side: "border-l-green-500",
+  },
+];
 
-export function processSteps(task: TaskRow): ProcessStep[] {
-  return [
-    {
-      key: "simulation",
-      label: "Simulação apresentada",
-      done: task.simulation_presented,
-    },
-    { key: "issued", label: "Apólice emitida", done: task.issued },
-    { key: "receipt", label: "Recibo cobrado", done: task.receipt_paid },
-  ];
+export function processStage(task: TaskRow): ProcessStage {
+  if (task.receipt_paid) return "DONE";
+  if (task.issued) return "ISSUED";
+  if (task.simulation_presented) return "SIMULATED";
+  return "TO_SIMULATE";
 }
 
-export function nextStepLabel(task: TaskRow) {
-  if (task.status === "CANCELLED") return null;
-  if (!task.simulation_presented) return "Apresentar simulação";
-  if (!task.issued) return "Emitir apólice";
-  if (!task.receipt_paid) {
-    return task.receipt_source === "WEBSERVICE"
-      ? "Aguardar pagamento do recibo"
-      : "Cobrar recibo";
-  }
-  return null;
-}

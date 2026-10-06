@@ -14,6 +14,12 @@ import {
 } from "@/app/(dashboard)/tarefas/action";
 
 import {
+  NOT_ISSUED_REASONS,
+  notIssuedReasonLabel,
+  type NotIssuedReason,
+} from "@/lib/tasks/not-issued";
+
+import {
   formatCurrency,
   formatDate,
   isValidDateKey,
@@ -122,13 +128,13 @@ function ModalShell({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-50 flex animate-fade-in items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className={`flex max-h-[92dvh] w-full flex-col rounded-2xl bg-white shadow-2xl ${wide ? "max-w-lg" : "max-w-md"}`}
+        className={`flex max-h-[92dvh] w-full animate-pop-in flex-col rounded-2xl bg-white shadow-2xl ${wide ? "max-w-lg" : "max-w-md"}`}
       >
         <div className="flex items-start justify-between gap-3 border-b border-[#edf0f2] px-5 py-4">
           <div className="min-w-0">
@@ -299,11 +305,12 @@ export function CreateTaskModal({
   insuranceLines: InsuranceLineOption[];
   privileged: boolean;
   currentProfileId: string;
+  // Cada página cria o seu tipo: Tarefas → TASK, Processos → PROCESS.
   initialKind: TaskKind;
   onCreated: (kind: TaskKind) => void;
   onClose: () => void;
 }) {
-  const [kind, setKind] = useState<TaskKind>(initialKind);
+  const kind = initialKind;
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState<TaskPriority>("MEDIUM");
@@ -379,7 +386,7 @@ export function CreateTaskModal({
       subtitle={
         isProcess
           ? "Simulação ou renegociação — fecha quando o recibo for pago."
-          : "Cria um follow-up para a equipa."
+          : "Um lembrete ou follow-up, para ti ou para a equipa."
       }
       onClose={onClose}
       footer={
@@ -391,29 +398,6 @@ export function CreateTaskModal({
         </>
       }
     >
-      <div className="inline-flex w-full rounded-lg border border-[#e4e6e9] p-0.5">
-        {(
-          [
-            { value: "TASK", label: "Tarefa" },
-            { value: "PROCESS", label: "Processo / simulação" },
-          ] as { value: TaskKind; label: string }[]
-        ).map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => setKind(option.value)}
-            className={[
-              "h-8 flex-1 rounded-md text-xs font-medium transition",
-              kind === option.value
-                ? "bg-[#ff4b0a] text-white"
-                : "text-[#59616d] hover:bg-[#f4f5f7]",
-            ].join(" ")}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-
       {isProcess && (
         <>
           <div>
@@ -646,6 +630,7 @@ export function ProcessModal({
   privileged,
   canModify,
   onSave,
+  onNotIssued,
   onClose,
 }: {
   task: TaskRow;
@@ -655,6 +640,9 @@ export function ProcessModal({
   privileged: boolean;
   canModify: boolean;
   onSave: (base: TaskEditInput, process: ProcessPatch) => void;
+  // Presente só quando o processo ainda pode ser fechado como
+  // "não emitida" (aberto e sem recibo pago).
+  onNotIssued?: () => void;
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(task.title);
@@ -732,7 +720,10 @@ export function ProcessModal({
       title={task.title}
       subtitle={
         <>
-          {statusLabel[task.status]} · criado a {formatDate(task.created_at)}
+          {task.status === "CANCELLED"
+            ? "Não emitida"
+            : statusLabel[task.status]}{" "}
+          · criado a {formatDate(task.created_at)}
           {lineName ? ` · ${lineName}` : ""}
           {task.status === "COMPLETED" && task.completed_at
             ? ` · fechado a ${formatDate(task.completed_at)}`
@@ -742,6 +733,15 @@ export function ProcessModal({
       onClose={onClose}
       footer={
         <>
+          {canModify && onNotIssued && (
+            <button
+              type="button"
+              onClick={onNotIssued}
+              className="mr-auto h-10 rounded-lg px-3 text-sm font-medium text-red-600 transition hover:bg-red-50"
+            >
+              Não emitida…
+            </button>
+          )}
           <SecondaryButton onClick={onClose}>
             {canModify ? "Cancelar" : "Fechar"}
           </SecondaryButton>
@@ -751,6 +751,26 @@ export function ProcessModal({
         </>
       }
     >
+      {task.status === "CANCELLED" && (
+        <div className="rounded-xl border border-red-100 bg-red-50/60 p-3">
+          <p className="text-xs font-semibold text-red-700">
+            Não emitida
+            {task.not_issued_at
+              ? ` · ${formatDate(task.not_issued_at)}`
+              : ""}
+          </p>
+          <p className="mt-1 text-sm text-[#40464f]">
+            {notIssuedReasonLabel(task.not_issued_reason) ??
+              "Sem motivo registado."}
+          </p>
+          {task.not_issued_note && (
+            <p className="mt-1 text-xs text-[#737a84]">
+              {task.not_issued_note}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* PASSOS */}
 
       <div className="rounded-xl border border-[#edf0f2] bg-[#fafbfc] p-3">
@@ -767,7 +787,7 @@ export function ProcessModal({
           </div>
 
           <div>
-            <Label>Emitido</Label>
+            <Label>Apólice emitida</Label>
             <YesNo
               value={issued || receiptPaid}
               onChange={setIssued}
@@ -776,7 +796,7 @@ export function ProcessModal({
           </div>
 
           <div>
-            <Label>Recibo cobrado</Label>
+            <Label>Recibo pago</Label>
             <YesNo
               value={receiptPaid}
               onChange={setReceiptPaid}
@@ -786,8 +806,8 @@ export function ProcessModal({
         </div>
 
         <p className="mt-2 text-[11px] text-[#a0a5ac]">
-          O estado segue os passos: nada feito = pendente, simulação ou
-          emissão = em progresso, recibo pago = concluído.
+          O processo muda de coluna conforme os passos marcados. Com o
+          recibo pago fica concluído.
         </p>
       </div>
 
@@ -965,6 +985,114 @@ export function ProcessModal({
           )}
         </div>
       </div>
+
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </ModalShell>
+  );
+}
+
+// ============================================================
+// NÃO EMITIDA
+// ============================================================
+
+export function NotIssuedModal({
+  task,
+  onConfirm,
+  onClose,
+}: {
+  task: TaskRow;
+  onConfirm: (reason: NotIssuedReason, note: string | null) => void;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState<NotIssuedReason | "">("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  function handleConfirm() {
+    if (!reason) {
+      setError("Escolhe o motivo.");
+      return;
+    }
+
+    if (reason === "OTHER" && !note.trim()) {
+      setError("Descreve o motivo.");
+      return;
+    }
+
+    onConfirm(reason, note.trim() || null);
+    onClose();
+  }
+
+  return (
+    <ModalShell
+      title="Não emitida"
+      subtitle={`${task.client_name ?? task.title} — porque não avançou?`}
+      onClose={onClose}
+      footer={
+        <>
+          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <PrimaryButton onClick={handleConfirm}>
+            Marcar como não emitida
+          </PrimaryButton>
+        </>
+      }
+    >
+      <div>
+        <Label>Motivo</Label>
+
+        <div className="mt-1.5 space-y-1.5">
+          {NOT_ISSUED_REASONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={reason === option.value}
+              onClick={() => {
+                setReason(option.value);
+                setError(null);
+              }}
+              className={[
+                "flex w-full cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-sm transition",
+                reason === option.value
+                  ? "border-[#ff4b0a] bg-[#fff7f3] font-medium text-[#20242a]"
+                  : "border-[#e4e6e9] text-[#40464f] hover:bg-[#f7f8f9]",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2",
+                  reason === option.value
+                    ? "border-[#ff4b0a]"
+                    : "border-[#c0c4c9]",
+                ].join(" ")}
+              >
+                {reason === option.value && (
+                  <span className="h-2 w-2 rounded-full bg-[#ff4b0a]" />
+                )}
+              </span>
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <Label>
+          {reason === "OTHER" ? "Qual foi o motivo?" : "Nota (opcional)"}
+        </Label>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder="Ex.: tinha proposta 80 € mais barata noutra companhia"
+          className="mt-1.5 w-full rounded-lg border border-[#e4e6e9] px-3 py-2 text-sm outline-none transition focus:border-[#ff4b0a]"
+        />
+      </div>
+
+      <p className="rounded-lg bg-[#fafbfc] px-3 py-2 text-[11px] text-[#8a9099]">
+        O processo sai do quadro e fica em &quot;Não emitidas&quot;. Podes
+        reabri-lo mais tarde.
+      </p>
 
       {error && <p className="text-xs text-red-600">{error}</p>}
     </ModalShell>

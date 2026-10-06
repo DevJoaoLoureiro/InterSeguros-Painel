@@ -41,7 +41,7 @@ export default async function ComissoesPage() {
               </p>
             </div>
 
-            <span className="rounded-full bg-[#fff1eb] px-3 py-1 text-xs font-medium text-[#ff4b0a]">
+            <span className="shrink-0 whitespace-nowrap rounded-full bg-[#fff1eb] px-3 py-1 text-xs font-medium text-[#ff4b0a]">
               Disponível
             </span>
           </div>
@@ -66,7 +66,7 @@ export default async function ComissoesPage() {
               </p>
             </div>
 
-            <span className="rounded-full bg-[#fff1eb] px-3 py-1 text-xs font-medium text-[#ff4b0a]">
+            <span className="shrink-0 whitespace-nowrap rounded-full bg-[#fff1eb] px-3 py-1 text-xs font-medium text-[#ff4b0a]">
               Disponível
             </span>
           </div>
@@ -88,7 +88,7 @@ export default async function ComissoesPage() {
               </p>
             </div>
 
-            <span className="rounded-full bg-[#f3f4f6] px-3 py-1 text-xs font-medium text-[#737a84]">
+            <span className="shrink-0 whitespace-nowrap rounded-full bg-[#f3f4f6] px-3 py-1 text-xs font-medium text-[#737a84]">
               Em breve
             </span>
           </div>

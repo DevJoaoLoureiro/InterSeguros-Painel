@@ -29,7 +29,7 @@ export async function getNotifications(): Promise<NotificationItem[]> {
   const [tasksResult, { receipts, renewals }, syncProblems] = await Promise.all([
     admin
       .from("tasks")
-      .select("id, title, due_at")
+      .select("id, kind, title, due_at")
       .eq("assigned_user_id", profile.id)
       .not("status", "in", "(COMPLETED,CANCELLED)")
       .not("due_at", "is", null)
@@ -69,8 +69,8 @@ export async function getNotifications(): Promise<NotificationItem[]> {
       id: `task-${task.id}`,
       type: "task",
       title: task.title,
-      subtitle: "Tarefa atrasada",
-      href: "/tarefas",
+      subtitle: task.kind === "PROCESS" ? "Processo atrasado" : "Tarefa atrasada",
+      href: task.kind === "PROCESS" ? "/processos" : "/tarefas",
     });
   }
 

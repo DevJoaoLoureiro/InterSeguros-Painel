@@ -2,45 +2,39 @@
 
 import { useMemo, useState, useTransition } from "react";
 import {
-  AlertCircle,
-  Briefcase,
-  CalendarDays,
+  Calendar,
+  Check,
+  ChevronDown,
+  Loader2,
+  Pencil,
   Plus,
   Search,
-  Sun,
+  SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 
-import { TaskCard } from "@/components/tarefas/task-card";
 import {
   CreateTaskModal,
   EditTaskModal,
-  ProcessModal,
   type TaskEditInput,
 } from "@/components/tarefas/task-modals";
 import { Toaster, useToasts } from "@/components/tarefas/toasts";
 import {
-  applyProcessPatch,
-  columns,
-  isInNextDays,
-  isOpen,
-  isOverdue,
-  isToday,
-  processStatusFor,
-  statusLabel,
+  avatarColor,
+  diffDaysFromToday,
+  initials,
+  priorityConfig,
+  relativeDayLabel,
 } from "@/components/tarefas/utils";
 
 import {
+  createTask,
   deleteTask,
-  updateProcess,
   updateTask,
   updateTaskStatus,
   type InsuranceLineOption,
-  type ProcessPatch,
   type ProfileOption,
-  type TaskKind,
-  type TaskPriority,
   type TaskRow,
-  type TaskStatus,
 } from "./action";
 
 type Props = {
@@ -51,10 +45,76 @@ type Props = {
   currentProfileId: string;
 };
 
-type KindFilter = "ALL" | TaskKind;
-type FocusFilter = "ALL" | "TODAY" | "OVERDUE" | "NEXT7" | "OPEN_PROCESSES";
+/*
+ * Lista de tarefas por prazo: o que está atrasado primeiro, depois
+ * hoje, os próximos dias e o resto. Um clique na bola conclui.
+ * (Os processos de simulação têm página própria: /processos.)
+ */
 
-const COLUMN_PAGE = 12;
+type GroupKey = "OVERDUE" | "TODAY" | "WEEK" | "LATER" | "NO_DATE";
+
+const GROUPS: {
+  key: GroupKey;
+  label: string;
+  tone: string;
+  dot: string;
+}[] = [
+  { key: "OVERDUE", label: "Atrasadas", tone: "text-red-600", dot: "bg-red-500" },
+  { key: "TODAY", label: "Hoje", tone: "text-amber-600", dot: "bg-amber-500" },
+  {
+    key: "WEEK",
+    label: "Próximos 7 dias",
+    tone: "text-blue-600",
+    dot: "bg-blue-500",
+  },
+  {
+    key: "LATER",
+    label: "Mais tarde",
+    tone: "text-[#40464f]",
+    dot: "bg-[#8a9099]",
+  },
+  {
+    key: "NO_DATE",
+    label: "Sem prazo",
+    tone: "text-[#40464f]",
+    dot: "bg-[#c0c4c9]",
+  },
+];
+
+/* Prazos rápidos da caixa "Adicionar tarefa". */
+const QUICK_DUE: { key: string; label: string; days: number | null }[] = [
+  { key: "none", label: "Sem prazo", days: null },
+  { key: "today", label: "Hoje", days: 0 },
+  { key: "tomorrow", label: "Amanhã", days: 1 },
+  { key: "week", label: "Daqui a 7 dias", days: 7 },
+];
+
+/* YYYY-MM-DD local, daqui a N dias. */
+function dateKeyInDays(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+const DONE_PAGE = 10;
+
+function isDone(task: TaskRow) {
+  return task.status === "COMPLETED" || task.status === "CANCELLED";
+}
+
+function groupOf(task: TaskRow): GroupKey {
+  const days = task.due_at ? diffDaysFromToday(task.due_at) : null;
+
+  if (days === null) return "NO_DATE";
+  if (days < 0) return "OVERDUE";
+  if (days === 0) return "TODAY";
+  if (days <= 7) return "WEEK";
+  return "LATER";
+}
 
 export function TasksBoard({
   initialTasks,
@@ -75,23 +135,19 @@ export function TasksBoard({
 
   const [creating, setCreating] = useState(false);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
-
   const [search, setSearch] = useState("");
-  const [kindFilter, setKindFilter] = useState<KindFilter>("ALL");
-  const [focus, setFocus] = useState<FocusFilter>("ALL");
-  const [priorityFilter, setPriorityFilter] = useState<TaskPriority | "ALL">(
-    "ALL",
-  );
   // Todos veem as tarefas da equipa; funcionários abrem em "As minhas".
   const [assigneeFilter, setAssigneeFilter] = useState<string>(
     privileged ? "ALL" : currentProfileId,
   );
+  const [showDone, setShowDone] = useState(false);
+  const [showAllDone, setShowAllDone] = useState(false);
+  const [groupFilter, setGroupFilter] = useState<GroupKey | "ALL">("ALL");
 
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [overColumn, setOverColumn] = useState<TaskStatus | null>(null);
-  const [expanded, setExpanded] = useState<Partial<Record<TaskStatus, boolean>>>(
-    {},
-  );
+  // Caixa "Adicionar tarefa" (título + Enter).
+  const [quickTitle, setQuickTitle] = useState("");
+  const [quickDue, setQuickDue] = useState("none");
+  const [isAdding, startAdding] = useTransition();
 
   const [, startTransition] = useTransition();
   const { toasts, push, dismiss } = useToasts();
@@ -101,94 +157,57 @@ export function TasksBoard({
     [profiles],
   );
 
-  const lineMap = useMemo(
-    () => new Map(insuranceLines.map((l) => [l.id, l.name])),
-    [insuranceLines],
-  );
-
   const openTask = tasks.find((t) => t.id === openTaskId) ?? null;
 
-  // Qualquer funcionário pode trabalhar qualquer tarefa (férias de um
-  // colega). O servidor continua a limitar apagar e reatribuir.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  function canModify(_task: TaskRow) {
-    return true;
-  }
-
   // ----------------------------------------
-  // CONTADORES / FILTROS
+  // FILTROS
   // ----------------------------------------
 
-  // Contadores seguem o filtro de responsável ("As minhas" por defeito
-  // para funcionários; "Toda a equipa" mostra os da equipa).
-  const counts = useMemo(() => {
-    const base =
-      assigneeFilter === "ALL"
-        ? tasks
-        : tasks.filter((t) => t.assigned_user_id === assigneeFilter);
-
-    return {
-      today: base.filter(isToday).length,
-      overdue: base.filter(isOverdue).length,
-      next7: base.filter((t) => isInNextDays(t, 7)).length,
-      openProcesses: base.filter((t) => t.kind === "PROCESS" && isOpen(t))
-        .length,
-    };
-  }, [tasks, assigneeFilter]);
-
-  const filteredTasks = useMemo(() => {
+  const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
 
     return tasks.filter((task) => {
-      if (
-        query &&
-        !task.title.toLowerCase().includes(query) &&
-        !(task.description ?? "").toLowerCase().includes(query) &&
-        !(task.client_name ?? "").toLowerCase().includes(query) &&
-        !(task.client_nif ?? "").includes(query)
-      ) {
-        return false;
-      }
-
-      if (priorityFilter !== "ALL" && task.priority !== priorityFilter) {
-        return false;
-      }
-
-      if (kindFilter !== "ALL" && task.kind !== kindFilter) return false;
-
       if (assigneeFilter !== "ALL" && task.assigned_user_id !== assigneeFilter) {
         return false;
       }
 
-      switch (focus) {
-        case "TODAY":
-          return isToday(task);
-        case "OVERDUE":
-          return isOverdue(task);
-        case "NEXT7":
-          return isInNextDays(task, 7);
-        case "OPEN_PROCESSES":
-          return task.kind === "PROCESS" && isOpen(task);
-        default:
-          return true;
-      }
+      return (
+        !query ||
+        task.title.toLowerCase().includes(query) ||
+        (task.description ?? "").toLowerCase().includes(query) ||
+        (task.client_name ?? "").toLowerCase().includes(query)
+      );
     });
-  }, [tasks, search, priorityFilter, kindFilter, assigneeFilter, focus]);
+  }, [tasks, search, assigneeFilter]);
 
-  const hasFilters =
-    search.trim() !== "" ||
-    priorityFilter !== "ALL" ||
-    kindFilter !== "ALL" ||
-    assigneeFilter !== "ALL" ||
-    focus !== "ALL";
+  const openTasks = filtered.filter((t) => !isDone(t));
 
-  function clearFilters() {
-    setSearch("");
-    setPriorityFilter("ALL");
-    setKindFilter("ALL");
-    setAssigneeFilter("ALL");
-    setFocus("ALL");
-  }
+  const doneTasks = filtered
+    .filter(isDone)
+    .sort((a, b) =>
+      (b.completed_at ?? b.created_at).localeCompare(
+        a.completed_at ?? a.created_at,
+      ),
+    );
+
+  const grouped = GROUPS.map((group) => ({
+    ...group,
+    items: openTasks
+      .filter((t) => groupOf(t) === group.key)
+      .sort(
+        (a, b) =>
+          (a.due_at ?? "").localeCompare(b.due_at ?? "") ||
+          b.created_at.localeCompare(a.created_at),
+      ),
+  })).filter((group) => group.items.length > 0);
+
+  const visibleGroups =
+    groupFilter === "ALL"
+      ? grouped
+      : grouped.filter((group) => group.key === groupFilter);
+
+  const countOf = (key: GroupKey) =>
+    grouped.find((group) => group.key === key)?.items.length ?? 0;
 
   // ----------------------------------------
   // AÇÕES (otimistas, com reversão em erro)
@@ -199,7 +218,7 @@ export function TasksBoard({
   }
 
   function run(
-    previous: TaskRow | null,
+    previous: TaskRow,
     action: () => Promise<unknown>,
     successMessage?: string,
   ) {
@@ -208,14 +227,12 @@ export function TasksBoard({
         await action();
         if (successMessage) push("success", successMessage);
       } catch (error) {
-        if (previous) {
-          setTasks((prev) => {
-            const exists = prev.some((t) => t.id === previous.id);
-            return exists
-              ? prev.map((t) => (t.id === previous.id ? previous : t))
-              : [previous, ...prev];
-          });
-        }
+        setTasks((prev) => {
+          const exists = prev.some((t) => t.id === previous.id);
+          return exists
+            ? prev.map((t) => (t.id === previous.id ? previous : t))
+            : [previous, ...prev];
+        });
 
         push(
           "error",
@@ -225,92 +242,63 @@ export function TasksBoard({
     });
   }
 
-  function handleMove(task: TaskRow, target: TaskStatus) {
-    if (task.status === target || !canModify(task)) return;
+  function handleQuickAdd() {
+    const title = quickTitle.trim();
+    if (!title || isAdding) return;
 
-    let nextStatus = target;
+    const days = QUICK_DUE.find((d) => d.key === quickDue)?.days ?? null;
 
-    if (task.kind === "PROCESS") {
-      nextStatus = processStatusFor(task, target);
+    startAdding(async () => {
+      try {
+        await createTask({
+          kind: "TASK",
+          title,
+          description: null,
+          priority: "MEDIUM",
+          dueAt: days === null ? null : dateKeyInDays(days),
+          assignedUserId: null,
+        });
 
-      if (nextStatus !== target && task.status !== "CANCELLED") {
+        setQuickTitle("");
+        push("success", "Tarefa criada.");
+      } catch (error) {
         push(
-          "info",
-          target === "COMPLETED"
-            ? "O processo fecha sozinho quando o recibo estiver pago."
-            : "O estado de um processo segue os passos da checklist.",
+          "error",
+          error instanceof Error ? error.message : "Erro ao criar tarefa.",
         );
-        return;
       }
+    });
+  }
 
-      if (nextStatus === task.status) return;
-    }
+  function handleToggle(task: TaskRow) {
+    const nextStatus = isDone(task) ? "PENDING" : "COMPLETED";
 
-    replaceTask({ ...task, status: nextStatus });
+    replaceTask({
+      ...task,
+      status: nextStatus,
+      completed_at:
+        nextStatus === "COMPLETED" ? new Date().toISOString() : null,
+    });
 
     run(
       task,
       () => updateTaskStatus(task.id, nextStatus),
-      task.kind === "PROCESS"
-        ? nextStatus === "CANCELLED"
-          ? "Processo cancelado."
-          : `Processo reaberto (${statusLabel[nextStatus]}).`
-        : nextStatus === "COMPLETED"
-          ? "Tarefa concluída."
-          : undefined,
+      nextStatus === "COMPLETED" ? "Tarefa concluída." : "Tarefa reaberta.",
     );
   }
 
-  function handleProcessPatch(task: TaskRow, patch: ProcessPatch) {
-    const next = applyProcessPatch(task, patch);
-    replaceTask(next);
-
-    run(
-      task,
-      () => updateProcess(task.id, patch),
-      next.status !== task.status
-        ? next.status === "COMPLETED"
-          ? "Recibo pago — processo fechado."
-          : `Processo passou para "${statusLabel[next.status]}".`
-        : undefined,
-    );
-  }
-
-  function applyEdit(task: TaskRow, input: TaskEditInput): TaskRow {
-    return {
+  function handleEdit(task: TaskRow, input: TaskEditInput) {
+    replaceTask({
       ...task,
       title: input.title?.trim() || task.title,
       description:
         input.description !== undefined ? input.description : task.description,
       priority: input.priority ?? task.priority,
-      due_at:
-        input.dueAt !== undefined && task.kind === "TASK"
-          ? input.dueAt
-          : task.due_at,
+      due_at: input.dueAt !== undefined ? input.dueAt : task.due_at,
       assigned_user_id: input.assignedUserId ?? task.assigned_user_id,
-    };
-  }
+    });
 
-  function handleEditTask(task: TaskRow, input: TaskEditInput) {
-    replaceTask(applyEdit(task, input));
     run(task, () => updateTask(task.id, input), "Tarefa atualizada.");
-  }
-
-  function handleSaveProcess(
-    task: TaskRow,
-    base: TaskEditInput,
-    patch: ProcessPatch,
-  ) {
-    replaceTask(applyProcessPatch(applyEdit(task, base), patch));
-
-    run(
-      task,
-      async () => {
-        await updateTask(task.id, base);
-        await updateProcess(task.id, patch);
-      },
-      "Processo guardado.",
-    );
   }
 
   function handleDelete(task: TaskRow) {
@@ -319,128 +307,141 @@ export function TasksBoard({
   }
 
   // ----------------------------------------
-  // DRAG & DROP
-  // ----------------------------------------
-
-  function handleDrop(target: TaskStatus) {
-    const task = tasks.find((t) => t.id === draggingId);
-
-    setDraggingId(null);
-    setOverColumn(null);
-
-    if (task) handleMove(task, target);
-  }
-
-  // ----------------------------------------
   // RENDER
   // ----------------------------------------
 
-  const focusCards: {
-    key: FocusFilter;
-    label: string;
-    value: number;
-    icon: typeof Sun;
-    tone: string;
-  }[] = [
-    {
-      key: "TODAY",
-      label: "Para hoje",
-      value: counts.today,
-      icon: Sun,
-      tone: "text-amber-600 bg-amber-50",
-    },
-    {
-      key: "OVERDUE",
-      label: "Atrasadas",
-      value: counts.overdue,
-      icon: AlertCircle,
-      tone: "text-red-600 bg-red-50",
-    },
-    {
-      key: "NEXT7",
-      label: "Próximos 7 dias",
-      value: counts.next7,
-      icon: CalendarDays,
-      tone: "text-blue-600 bg-blue-50",
-    },
-    {
-      key: "OPEN_PROCESSES",
-      label: "Processos abertos",
-      value: counts.openProcesses,
-      icon: Briefcase,
-      tone: "text-violet-600 bg-violet-50",
-    },
-  ];
+  function renderRow(task: TaskRow) {
+    return (
+      <TaskRowItem
+        key={task.id}
+        task={task}
+        assignedName={
+          task.assigned_user_id
+            ? profileMap.get(task.assigned_user_id) ?? null
+            : null
+        }
+        onToggle={handleToggle}
+        onOpen={(t) => setOpenTaskId(t.id)}
+        onDelete={handleDelete}
+      />
+    );
+  }
+
+  const visibleDone = showAllDone ? doneTasks : doneTasks.slice(0, DONE_PAGE);
 
   return (
     <div className="space-y-5">
-      {/* FOCO — clicáveis como filtro */}
+      {/* ADICIONAR — escreve e carrega Enter */}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {focusCards.map((card) => {
-          const active = focus === card.key;
-          const Icon = card.icon;
+      <div className="rounded-2xl border border-[#e5e8ec] bg-white p-3 shadow-[0_2px_10px_rgba(20,25,35,0.04)] transition focus-within:border-[#ffb899] focus-within:shadow-[0_6px_20px_rgba(255,75,10,0.10)]">
+        <div className="flex items-center gap-2">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-[#ff4b0a]">
+            <Plus className="h-4 w-4" />
+          </span>
 
-          return (
+          <input
+            type="text"
+            value={quickTitle}
+            onChange={(e) => setQuickTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleQuickAdd();
+            }}
+            placeholder="Adicionar tarefa… ex.: Ligar ao cliente sobre a renovação"
+            aria-label="Nova tarefa"
+            className="h-10 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#a0a5ac]"
+          />
+
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            title="Mais opções (descrição, prioridade, responsável)"
+            aria-label="Mais opções"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[#8a9099] transition hover:bg-[#f4f5f7] hover:text-[#40464f]"
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            onClick={handleQuickAdd}
+            disabled={!quickTitle.trim() || isAdding}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#ff5a1f] to-[#ff4b0a] px-3.5 text-sm font-semibold text-white shadow-[0_2px_10px_rgba(255,75,10,0.28)] transition hover:shadow-[0_6px_18px_rgba(255,75,10,0.36)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+          >
+            {isAdding && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Adicionar
+          </button>
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-11">
+          <span className="text-[11px] text-[#8a9099]">Prazo:</span>
+
+          {QUICK_DUE.map((option) => (
             <button
-              key={card.key}
+              key={option.key}
               type="button"
-              onClick={() => setFocus(active ? "ALL" : card.key)}
-              aria-pressed={active}
+              onClick={() => setQuickDue(option.key)}
+              aria-pressed={quickDue === option.key}
               className={[
-                "flex items-center gap-3 rounded-2xl border bg-white p-4 text-left shadow-[0_2px_10px_rgba(20,25,35,0.04)] transition hover:border-[#ffb899]",
-                active
-                  ? "border-[#ff4b0a] ring-2 ring-[#ff4b0a]/15"
-                  : "border-[#e5e8ec]",
+                "h-6 rounded-full px-2.5 text-[11px] font-medium transition",
+                quickDue === option.key
+                  ? "bg-[#20242a] text-white"
+                  : "bg-[#f4f5f7] text-[#59616d] hover:bg-[#e9ecef]",
               ].join(" ")}
             >
-              <span
-                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${card.tone}`}
-              >
-                <Icon className="h-5 w-5" />
-              </span>
-
-              <span className="min-w-0">
-                <span className="block text-xs font-medium text-[#7d848e]">
-                  {card.label}
-                </span>
-                <span className="block text-2xl font-semibold text-[#17191d]">
-                  {card.value}
-                </span>
-              </span>
+              {option.label}
             </button>
-          );
-        })}
+          ))}
+        </div>
       </div>
 
-      {/* TOOLBAR */}
+      {/* FILTROS RÁPIDOS */}
 
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-wrap items-center gap-2">
+        {(
+          [
+            { key: "ALL", label: "Todas", count: openTasks.length, dot: "" },
+            ...GROUPS.slice(0, 3).map((group) => ({
+              key: group.key,
+              label: group.label,
+              count: countOf(group.key),
+              dot: group.dot,
+            })),
+          ] as { key: GroupKey | "ALL"; label: string; count: number; dot: string }[]
+        ).map((pill) => (
+          <button
+            key={pill.key}
+            type="button"
+            onClick={() =>
+              setGroupFilter(groupFilter === pill.key ? "ALL" : pill.key)
+            }
+            aria-pressed={groupFilter === pill.key}
+            className={[
+              "inline-flex h-9 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition",
+              groupFilter === pill.key
+                ? "border-[#ff4b0a] bg-[#fff7f3] text-[#20242a] ring-2 ring-[#ff4b0a]/10"
+                : "border-[#e4e6e9] bg-white text-[#59616d] hover:border-[#ffb899]",
+            ].join(" ")}
+          >
+            {pill.dot && <span className={`h-2 w-2 rounded-full ${pill.dot}`} />}
+            {pill.label}
+            <span
+              className={[
+                "rounded-full px-1.5 text-xs font-semibold tabular-nums",
+                pill.key === "OVERDUE" && pill.count > 0
+                  ? "bg-red-50 text-red-700"
+                  : "bg-[#f4f5f7] text-[#59616d]",
+              ].join(" ")}
+            >
+              {pill.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* PESQUISA */}
+
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-1 flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-xl border border-[#e4e6e9] bg-white p-1">
-            {(
-              [
-                { value: "ALL", label: "Todas" },
-                { value: "TASK", label: "Tarefas" },
-                { value: "PROCESS", label: "Processos" },
-              ] as { value: KindFilter; label: string }[]
-            ).map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => setKindFilter(option.value)}
-                className={[
-                  "h-8 rounded-lg px-3 text-xs font-medium transition",
-                  kindFilter === option.value
-                    ? "bg-[#ff4b0a] text-white"
-                    : "text-[#59616d] hover:bg-[#f4f5f7]",
-                ].join(" ")}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-
           <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#a0a5ac]" />
 
@@ -448,23 +449,10 @@ export function TasksBoard({
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Pesquisar título, cliente ou NIF..."
+              placeholder="Pesquisar tarefa ou cliente..."
               className="h-10 w-full rounded-xl border border-[#e4e6e9] bg-white pl-9 pr-3 text-sm outline-none transition focus:border-[#ff4b0a]"
             />
           </div>
-
-          <select
-            value={priorityFilter}
-            onChange={(e) =>
-              setPriorityFilter(e.target.value as TaskPriority | "ALL")
-            }
-            className="h-10 rounded-xl border border-[#e4e6e9] bg-white px-3 text-sm text-[#59616d] outline-none transition focus:border-[#ff4b0a]"
-          >
-            <option value="ALL">Todas as prioridades</option>
-            <option value="HIGH">Alta</option>
-            <option value="MEDIUM">Média</option>
-            <option value="LOW">Baixa</option>
-          </select>
 
           {profiles.length > 1 && (
             <select
@@ -475,149 +463,93 @@ export function TasksBoard({
               <option value="ALL">Toda a equipa</option>
               {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.id === currentProfileId ? `As minhas (${p.full_name})` : p.full_name}
+                  {p.id === currentProfileId
+                    ? `As minhas (${p.full_name})`
+                    : p.full_name}
                 </option>
               ))}
             </select>
           )}
 
-          {hasFilters && (
-            <button
-              type="button"
-              onClick={clearFilters}
-              className="h-10 rounded-xl px-3 text-xs font-medium text-[#ff4b0a] transition hover:bg-[#fff3ee]"
-            >
-              Limpar filtros
-            </button>
-          )}
         </div>
-
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-[#ff4b0a] px-4 text-sm font-medium text-white shadow-sm transition hover:bg-[#e64409]"
-        >
-          <Plus className="h-4 w-4" />
-          {kindFilter === "PROCESS" ? "Novo processo" : "Nova tarefa"}
-        </button>
       </div>
 
-      <p className="hidden text-[11px] text-[#a0a5ac] md:block">
-        Arrasta os cartões entre colunas. Nos processos, o estado segue a
-        checklist — clica nos passos para marcar ou desmarcar.
-      </p>
+      {/* POR FAZER */}
 
-      {/* BOARD */}
-
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {columns.map((column) => {
-          const columnTasks = filteredTasks.filter(
-            (t) => t.status === column.status,
-          );
-
-          const isExpanded = expanded[column.status] ?? false;
-          const visible = isExpanded
-            ? columnTasks
-            : columnTasks.slice(0, COLUMN_PAGE);
-
-          const isDropTarget = draggingId !== null && overColumn === column.status;
-
-          return (
-            <div key={column.status} className="flex flex-col gap-3">
-              <div className="flex items-center justify-between px-1">
-                <div className="flex items-center gap-2">
-                  <span className={`h-2 w-2 rounded-full ${column.dot}`} />
-                  <h3 className="text-sm font-semibold text-[#20242a]">
-                    {column.label}
-                  </h3>
-                </div>
-
-                <span className="rounded-full bg-[#f4f5f7] px-2 py-0.5 text-xs font-medium text-[#7d848e]">
-                  {columnTasks.length}
-                </span>
-              </div>
-
-              <div
-                onDragOver={(event) => {
-                  if (!draggingId) return;
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                  if (overColumn !== column.status) setOverColumn(column.status);
-                }}
-                onDragLeave={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-                    setOverColumn(null);
-                  }
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  handleDrop(column.status);
-                }}
-                className={[
-                  "flex min-h-[140px] flex-col gap-2.5 rounded-2xl bg-[#f7f8f9] p-2.5 transition",
-                  isDropTarget ? `ring-2 ${column.ring} bg-[#f1f3f5]` : "",
-                ].join(" ")}
-              >
-                {columnTasks.length === 0 ? (
-                  <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-[#dfe2e6] py-10">
-                    <p className="text-xs text-[#a0a5ac]">
-                      {draggingId ? "Largar aqui" : "Sem tarefas"}
-                    </p>
-                  </div>
-                ) : (
-                  visible.map((task) => (
-                    <div
-                      key={task.id}
-                      className={draggingId === task.id ? "opacity-40" : ""}
-                    >
-                      <TaskCard
-                        task={task}
-                        lineName={
-                          task.insurance_line_id
-                            ? lineMap.get(task.insurance_line_id) ?? null
-                            : null
-                        }
-                        assignedName={
-                          task.assigned_user_id
-                            ? profileMap.get(task.assigned_user_id) ?? null
-                            : null
-                        }
-                        canModify={canModify(task)}
-                        onOpen={(t) => setOpenTaskId(t.id)}
-                        onMove={handleMove}
-                        onProcessPatch={handleProcessPatch}
-                        onDelete={handleDelete}
-                        onDragStart={(t) => setDraggingId(t.id)}
-                        onDragEnd={() => {
-                          setDraggingId(null);
-                          setOverColumn(null);
-                        }}
-                      />
-                    </div>
-                  ))
-                )}
-
-                {columnTasks.length > COLUMN_PAGE && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setExpanded((prev) => ({
-                        ...prev,
-                        [column.status]: !isExpanded,
-                      }))
-                    }
-                    className="rounded-lg py-1.5 text-xs font-medium text-[#7d848e] transition hover:bg-white hover:text-[#40464f]"
-                  >
-                    {isExpanded
-                      ? "Mostrar menos"
-                      : `Ver mais ${columnTasks.length - COLUMN_PAGE}`}
-                  </button>
-                )}
-              </div>
+      {visibleGroups.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-[#dfe2e6] bg-white py-14 text-center">
+          <p className="text-sm font-medium text-[#40464f]">
+            {search.trim()
+              ? "Nenhuma tarefa por fazer com essa pesquisa"
+              : groupFilter !== "ALL"
+                ? "Nada neste grupo"
+                : "Nada por fazer. 🎉"}
+          </p>
+          <p className="mt-1 text-xs text-[#8a9099]">
+            Escreve na caixa de cima e carrega Enter para criar uma
+            tarefa.
+          </p>
+        </div>
+      ) : (
+        visibleGroups.map((group) => (
+          <section key={group.key}>
+            <div className="mb-2 flex items-center gap-2 px-1">
+              <span className={`h-2 w-2 rounded-full ${group.dot}`} />
+              <h2 className={`text-sm font-semibold ${group.tone}`}>
+                {group.label}
+              </h2>
+              <span className="rounded-full bg-[#f4f5f7] px-2 py-0.5 text-xs font-medium text-[#7d848e]">
+                {group.items.length}
+              </span>
             </div>
-          );
-        })}
-      </div>
+
+            <div className="divide-y divide-[#eef0f2] overflow-hidden rounded-2xl border border-[#e5e8ec] bg-white shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
+              {group.items.map(renderRow)}
+            </div>
+          </section>
+        ))
+      )}
+
+      {/* CONCLUÍDAS */}
+
+      {doneTasks.length > 0 && (
+        <section>
+          <button
+            type="button"
+            onClick={() => setShowDone((v) => !v)}
+            aria-expanded={showDone}
+            className="mb-2 flex items-center gap-2 rounded-lg px-1 py-1 text-sm font-semibold text-[#7d848e] transition hover:text-[#40464f]"
+          >
+            <ChevronDown
+              className={`h-4 w-4 transition ${showDone ? "" : "-rotate-90"}`}
+            />
+            Concluídas
+            <span className="rounded-full bg-[#f4f5f7] px-2 py-0.5 text-xs font-medium">
+              {doneTasks.length}
+            </span>
+          </button>
+
+          {showDone && (
+            <>
+              <div className="divide-y divide-[#eef0f2] overflow-hidden rounded-2xl border border-[#e5e8ec] bg-white">
+                {visibleDone.map(renderRow)}
+              </div>
+
+              {doneTasks.length > DONE_PAGE && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllDone((v) => !v)}
+                  className="mt-2 rounded-lg px-2 py-1.5 text-xs font-medium text-[#7d848e] transition hover:bg-white hover:text-[#40464f]"
+                >
+                  {showAllDone
+                    ? "Mostrar menos"
+                    : `Ver mais ${doneTasks.length - DONE_PAGE}`}
+                </button>
+              )}
+            </>
+          )}
+        </section>
+      )}
 
       {/* MODAIS */}
 
@@ -627,48 +559,176 @@ export function TasksBoard({
           insuranceLines={insuranceLines}
           privileged={privileged}
           currentProfileId={currentProfileId}
-          initialKind={kindFilter === "PROCESS" ? "PROCESS" : "TASK"}
-          onCreated={(kind) =>
-            push(
-              "success",
-              kind === "PROCESS" ? "Processo criado." : "Tarefa criada.",
-            )
-          }
+          initialKind="TASK"
+          onCreated={() => push("success", "Tarefa criada.")}
           onClose={() => setCreating(false)}
         />
       )}
 
-      {openTask && openTask.kind === "PROCESS" && (
-        <ProcessModal
-          key={openTask.id}
-          task={openTask}
-          lineName={
-            openTask.insurance_line_id
-              ? lineMap.get(openTask.insurance_line_id) ?? null
-              : null
-          }
-          insuranceLines={insuranceLines}
-          profiles={profiles}
-          privileged={privileged}
-          canModify={canModify(openTask)}
-          onSave={(base, patch) => handleSaveProcess(openTask, base, patch)}
-          onClose={() => setOpenTaskId(null)}
-        />
-      )}
-
-      {openTask && openTask.kind === "TASK" && (
+      {openTask && (
         <EditTaskModal
           key={openTask.id}
           task={openTask}
           profiles={profiles}
           privileged={privileged}
-          canModify={canModify(openTask)}
-          onSave={(input) => handleEditTask(openTask, input)}
+          canModify
+          onSave={(input) => handleEdit(openTask, input)}
           onClose={() => setOpenTaskId(null)}
         />
       )}
 
       <Toaster toasts={toasts} onDismiss={dismiss} />
+    </div>
+  );
+}
+
+// ============================================================
+// LINHA
+// ============================================================
+
+function TaskRowItem({
+  task,
+  assignedName,
+  onToggle,
+  onOpen,
+  onDelete,
+}: {
+  task: TaskRow;
+  assignedName: string | null;
+  onToggle: (task: TaskRow) => void;
+  onOpen: (task: TaskRow) => void;
+  onDelete: (task: TaskRow) => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const done = isDone(task);
+  const priority = priorityConfig[task.priority];
+  const days = task.due_at ? diffDaysFromToday(task.due_at) : null;
+  const dateLabel = relativeDayLabel(task.due_at);
+  const overdue = !done && days !== null && days < 0;
+  const soon = !done && days !== null && days >= 0 && days <= 1;
+
+  return (
+    <div className="group flex animate-fade-up items-start gap-3 px-4 py-3 transition hover:bg-[#fafbfc]">
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={done}
+        onClick={() => onToggle(task)}
+        title={done ? "Marcar como por fazer" : "Marcar como concluída"}
+        className={[
+          "mt-0.5 flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 transition active:scale-90",
+          done
+            ? "animate-check-pop border-green-500 bg-green-500 text-white"
+            : "border-[#c0c4c9] bg-white text-transparent hover:border-green-500 hover:text-green-500",
+        ].join(" ")}
+      >
+        <Check className="h-3 w-3" strokeWidth={3} />
+      </button>
+
+      <button
+        type="button"
+        onClick={() => onOpen(task)}
+        className="min-w-0 flex-1 cursor-pointer text-left"
+      >
+        <p
+          className={[
+            "text-sm font-medium leading-snug",
+            done ? "text-[#8a9099] line-through" : "text-[#20242a]",
+          ].join(" ")}
+        >
+          {task.title}
+        </p>
+
+        {task.description && (
+          <p className="mt-0.5 line-clamp-2 whitespace-pre-line text-xs text-[#8a9099]">
+            {task.description}
+          </p>
+        )}
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {task.status === "CANCELLED" && (
+            <span className="rounded-md bg-[#f4f5f7] px-1.5 py-0.5 text-[10px] font-medium text-[#7d848e]">
+              Cancelada
+            </span>
+          )}
+
+          {dateLabel && (
+            <span
+              className={[
+                "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium",
+                overdue
+                  ? "bg-red-50 text-red-700"
+                  : soon
+                    ? "bg-amber-50 text-amber-700"
+                    : "bg-[#f4f5f7] text-[#7d848e]",
+              ].join(" ")}
+            >
+              <Calendar className="h-2.5 w-2.5" />
+              {dateLabel}
+            </span>
+          )}
+
+          {!done && task.priority !== "MEDIUM" && (
+            <span
+              className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${priority.badge}`}
+            >
+              Prioridade {priority.label.toLowerCase()}
+            </span>
+          )}
+
+          {task.client_name && (
+            <span className="truncate text-[11px] text-[#8a9099]">
+              {task.client_name}
+            </span>
+          )}
+        </div>
+      </button>
+
+      <div className="flex shrink-0 items-center gap-1">
+        {assignedName && (
+          <div
+            title={assignedName}
+            className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-semibold text-white ${avatarColor(assignedName)}`}
+          >
+            {initials(assignedName)}
+          </div>
+        )}
+
+        {confirmDelete ? (
+          <button
+            type="button"
+            onClick={() => onDelete(task)}
+            onBlur={() => setConfirmDelete(false)}
+            autoFocus
+            className="rounded-lg bg-red-50 px-2 py-1 text-[11px] font-semibold text-red-700 transition hover:bg-red-100"
+          >
+            Apagar?
+          </button>
+        ) : (
+          <div className="flex items-center opacity-100 transition lg:opacity-0 lg:group-hover:opacity-100 lg:group-focus-within:opacity-100">
+            <button
+              type="button"
+              onClick={() => onOpen(task)}
+              aria-label="Editar tarefa"
+              title="Editar"
+              className="rounded-md p-1.5 text-[#a0a5ac] transition hover:bg-[#f4f5f7] hover:text-[#40464f]"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              aria-label="Apagar tarefa"
+              title="Apagar"
+              className="rounded-md p-1.5 text-[#a0a5ac] transition hover:bg-red-50 hover:text-red-600"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

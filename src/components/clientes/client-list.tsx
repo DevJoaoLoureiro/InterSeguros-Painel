@@ -73,6 +73,22 @@ export default function ClientsList({
     ClientsPortfolioData["items"][number] | null
   >(initialClient);
 
+  // A pesquisa rápida (Ctrl+K) pode pedir outro cliente com esta
+  // página já aberta: o ?cliente= muda e o painel tem de o seguir.
+  const [syncedInitialClient, setSyncedInitialClient] =
+    useState(initialClient);
+
+  if (initialClient !== syncedInitialClient) {
+    setSyncedInitialClient(initialClient);
+
+    if (
+      initialClient &&
+      initialClient.client.id !== selectedClient?.client.id
+    ) {
+      setSelectedClient(initialClient);
+    }
+  }
+
   // O cliente aberto fica no URL (?cliente=) — dá para partilhar o
   // link e recarregar; ao fechar sai do URL.
   function syncClientParam(clientId: string | null) {
@@ -371,23 +387,29 @@ export default function ClientsList({
             />
           </div>
 
-          <input
-            type="date"
-            value={filters.from}
-            onChange={(event) =>
-              pushFilters({ from: event.target.value })
-            }
-            className="rounded-xl border border-[#e1e4e8] px-4 py-2.5 text-sm outline-none focus:border-[#ff4b0a]"
-          />
+          <label className="relative block">
+            <span className="pointer-events-none absolute -top-2 left-3 bg-white px-1 text-[10px] font-medium text-[#8a9099]">Desde</span>
+            <input
+              type="date"
+              value={filters.from}
+              onChange={(event) =>
+                pushFilters({ from: event.target.value })
+              }
+              className="w-full rounded-xl border border-[#e1e4e8] px-4 py-2.5 text-sm outline-none focus:border-[#ff4b0a]"
+            />
+          </label>
 
-          <input
-            type="date"
-            value={filters.to}
-            onChange={(event) =>
-              pushFilters({ to: event.target.value })
-            }
-            className="rounded-xl border border-[#e1e4e8] px-4 py-2.5 text-sm outline-none focus:border-[#ff4b0a]"
-          />
+          <label className="relative block">
+            <span className="pointer-events-none absolute -top-2 left-3 bg-white px-1 text-[10px] font-medium text-[#8a9099]">Até</span>
+            <input
+              type="date"
+              value={filters.to}
+              onChange={(event) =>
+                pushFilters({ to: event.target.value })
+              }
+              className="w-full rounded-xl border border-[#e1e4e8] px-4 py-2.5 text-sm outline-none focus:border-[#ff4b0a]"
+            />
+          </label>
 
           <select
             value={filters.company}

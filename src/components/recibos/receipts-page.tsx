@@ -275,19 +275,25 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
             />
           </div>
 
-          <input
-            type="date"
-            name="from"
-            defaultValue={filters.from}
-            className="rounded-xl border border-[#e1e4e8] px-4 py-2.5 text-sm outline-none focus:border-[#ff4b0a]"
-          />
+          <label className="relative block">
+            <span className="pointer-events-none absolute -top-2 left-3 bg-white px-1 text-[10px] font-medium text-[#8a9099]">Desde</span>
+            <input
+              type="date"
+              name="from"
+              defaultValue={filters.from}
+              className="w-full rounded-xl border border-[#e1e4e8] px-4 py-2.5 text-sm outline-none focus:border-[#ff4b0a]"
+            />
+          </label>
 
-          <input
-            type="date"
-            name="to"
-            defaultValue={filters.to}
-            className="rounded-xl border border-[#e1e4e8] px-4 py-2.5 text-sm outline-none focus:border-[#ff4b0a]"
-          />
+          <label className="relative block">
+            <span className="pointer-events-none absolute -top-2 left-3 bg-white px-1 text-[10px] font-medium text-[#8a9099]">Até</span>
+            <input
+              type="date"
+              name="to"
+              defaultValue={filters.to}
+              className="w-full rounded-xl border border-[#e1e4e8] px-4 py-2.5 text-sm outline-none focus:border-[#ff4b0a]"
+            />
+          </label>
 
           <select
             name="company"

@@ -165,7 +165,12 @@ export async function getMonthlyProduction({
     }
 
     month.policiesCount += 1;
-    month.commercialPremium += Number(policy.commercial_premium ?? 0);
+    // As companhias não enviam o prémio comercial por apólice (vem a
+    // null): sem ele conta o prémio anualizado.
+    const commercial = Number(policy.commercial_premium ?? 0);
+
+    month.commercialPremium +=
+      commercial > 0 ? commercial : Number(policy.annualized_premium ?? 0);
   }
 
   return months;

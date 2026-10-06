@@ -326,7 +326,7 @@ function AdviceItem({
         {action.type === "create_process" &&
           (created || item.processAlreadyOpen ? (
             <Link
-              href="/tarefas"
+              href="/processos"
               className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-green-50 px-3 text-xs font-semibold text-green-700 transition hover:bg-green-100"
             >
               <Check className="h-3.5 w-3.5" />
