@@ -1,18 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   AlertTriangle,
   Building2,
+  Check,
   Eye,
   EyeOff,
   IdCard,
   Landmark,
   Loader2,
   MapPin,
+  Pencil,
   Phone,
+  Plus,
   RefreshCw,
+  X,
 } from "lucide-react";
+
+import { updateClientContacts } from "@/app/(dashboard)/clientes/contact-action";
 
 import {
   getClientProfile,
@@ -227,11 +233,135 @@ function Item({
   wide?: boolean;
   children?: React.ReactNode;
 }) {
+  // Campo sem valor não aparece: a ficha mostra só o que existe, em
+  // vez de uma grelha de traços.
+  if (children === undefined && !value) return null;
+
   return (
     <div className={wide ? "sm:col-span-2" : undefined}>
       <dt className="text-xs text-[#8a9099]">{label}</dt>
       <dd className="mt-1 break-words text-sm font-medium text-[#333842]">
-        {children ?? (value || <span className="text-[#b0b5bb]">—</span>)}
+        {children ?? value}
+      </dd>
+    </div>
+  );
+}
+
+/*
+ * Telefone ou email editável: mostra o valor com um lápis, ou
+ * "Adicionar" quando está vazio. Há companhias que não enviam
+ * contactos (Prévoir), por isso têm de se poder escrever à mão.
+ */
+function EditableContact({
+  label,
+  kind,
+  value,
+  wide = false,
+  onSave,
+}: {
+  label: string;
+  kind: "phone" | "email";
+  value: string | null;
+  wide?: boolean;
+  onSave: (value: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, startSaving] = useTransition();
+
+  function start() {
+    setDraft(value ?? "");
+    setError(null);
+    setEditing(true);
+  }
+
+  function save() {
+    startSaving(async () => {
+      try {
+        await onSave(draft);
+        setEditing(false);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erro ao guardar.");
+      }
+    });
+  }
+
+  return (
+    <div className={wide ? "sm:col-span-2" : undefined}>
+      <dt className="text-xs text-[#8a9099]">{label}</dt>
+
+      <dd className="mt-1 text-sm font-medium text-[#333842]">
+        {editing ? (
+          <>
+            <div className="flex items-center gap-1.5">
+              <input
+                autoFocus
+                type={kind === "email" ? "email" : "tel"}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") save();
+                  if (e.key === "Escape") setEditing(false);
+                }}
+                placeholder={kind === "email" ? "nome@exemplo.pt" : "9 dígitos"}
+                className="h-9 min-w-0 flex-1 rounded-lg border border-[#e1e4e8] px-3 text-sm outline-none transition focus:border-[#ff4b0a]"
+              />
+
+              <button
+                type="button"
+                onClick={save}
+                disabled={isSaving}
+                aria-label="Guardar"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#ff4b0a] text-white transition hover:bg-[#e64409] disabled:opacity-50"
+              >
+                {isSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Check className="h-4 w-4" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setEditing(false)}
+                aria-label="Cancelar"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[#8a9099] transition hover:bg-[#f4f5f7]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+          </>
+        ) : value ? (
+          <span className="group/contact inline-flex items-center gap-2">
+            <a
+              href={`${kind === "email" ? "mailto" : "tel"}:${value}`}
+              className="break-all text-[#ff4b0a] hover:underline"
+            >
+              {value}
+            </a>
+            <button
+              type="button"
+              onClick={start}
+              aria-label={`Editar ${label.toLowerCase()}`}
+              title="Editar"
+              className="rounded p-1 text-[#a0a5ac] transition hover:bg-[#f4f5f7] hover:text-[#40464f]"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={start}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-dashed border-[#d5d9df] px-2.5 text-xs font-medium text-[#59616d] transition hover:border-[#ff4b0a] hover:text-[#ff4b0a]"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Adicionar {label.toLowerCase()}
+          </button>
+        )}
       </dd>
     </div>
   );
@@ -278,6 +408,13 @@ export function ClientDataTab({
   const [fetched, setFetched] = useState<ClientProfile | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Contactos acabados de gravar (mostram-se logo, sem recarregar).
+  const [savedContacts, setSavedContacts] = useState<{
+    clientId: string;
+    phone?: string | null;
+    email?: string | null;
+  } | null>(null);
+
   const client = preloaded ?? fetched;
   const shouldFetch = !preloaded && !waiting;
 
@@ -323,7 +460,26 @@ export function ClientDataTab({
   const address = resolveAddress(client);
   const age = ageFrom(client.birth_date);
 
-  const mobile = fromProviders(client, "Telemovel");
+  const saved = savedContacts?.clientId === client.id ? savedContacts : null;
+
+  // O que está na ficha do CRM manda (é o que se edita); sem isso, o
+  // telemóvel que a companhia enviou.
+  const phone =
+    saved?.phone !== undefined
+      ? saved.phone
+      : client.phone ?? fromProviders(client, "Telemovel");
+  const email = saved?.email !== undefined ? saved.email : client.email;
+
+  async function saveContact(field: "phone" | "email", value: string) {
+    const result = await updateClientContacts(client!.id, { [field]: value });
+
+    setSavedContacts((previous) => ({
+      ...(previous?.clientId === client!.id ? previous : {}),
+      clientId: client!.id,
+      [field]: field === "phone" ? result.phone : result.email,
+    }));
+  }
+
   const landline = fromProviders(client, "Telefone");
   const fax = fromProviders(client, "Fax");
   const iban = fromProviders(client, "NIB");
@@ -357,27 +513,19 @@ export function ClientDataTab({
       {/* CONTACTOS */}
 
       <Section title="Contactos" icon={Phone}>
-        <Item label="Email" wide>
-          {client.email ? (
-            <a
-              href={`mailto:${client.email}`}
-              className="text-[#ff4b0a] hover:underline"
-            >
-              {client.email}
-            </a>
-          ) : undefined}
-        </Item>
-        <Item label="Telemóvel">
-          {mobile || client.phone ? (
-            <a
-              href={`tel:${mobile ?? client.phone}`}
-              className="text-[#ff4b0a] hover:underline"
-            >
-              {mobile ?? client.phone}
-            </a>
-          ) : undefined}
-        </Item>
-        <Item label="Telefone" value={landline} />
+        <EditableContact
+          label="Telemóvel"
+          kind="phone"
+          value={phone}
+          onSave={(value) => saveContact("phone", value)}
+        />
+        <EditableContact
+          label="Email"
+          kind="email"
+          value={email}
+          onSave={(value) => saveContact("email", value)}
+        />
+        <Item label="Telefone fixo" value={landline} />
         <Item label="Fax" value={fax} />
         <Item
           label="Documentos por email"

@@ -6,6 +6,10 @@ import { requireProfile, resolveStoreScope } from "@/lib/auth/access";
 import { createAdminClient } from "@/lib/supabase/admin";
 import * as queries from "@/lib/vencimentos/queries";
 import * as likelySwitches from "@/lib/recovery/likely-switches";
+import {
+  isRecoveryOutcome,
+  type RecoveryOutcome,
+} from "@/lib/recovery/outcomes";
 
 export type {
   RenewalRow,
@@ -15,7 +19,18 @@ export type {
 export type LikelySwitchRow = likelySwitches.LikelySwitchRow & {
   // Já existe uma tarefa aberta para tentar renovar esta apólice.
   hasOpenTask: boolean;
+  // Resultado do contacto com o cliente (lib/recovery/outcomes).
+  outcome: string | null;
+  outcomeNote: string | null;
+  outcomeAt: string | null;
 };
+
+const OUTCOMES_TABLE = "policy_recovery_outcomes";
+
+// Migração 20261007150000 por correr: a lista carrega na mesma.
+function isMissingOutcomesTable(error: { message?: string } | null) {
+  return Boolean(error?.message?.includes(OUTCOMES_TABLE));
+}
 
 const EXIT_LABEL: Record<likelySwitches.LikelySwitchRow["exitReason"], string> =
   {
@@ -82,17 +97,30 @@ export async function getLikelySwitches({
 }: {
   storeId: string | null;
 }) {
-  const [rows, openTasks] = await Promise.all([
+  const admin = createAdminClient();
+
+  const [rows, openTasks, outcomes] = await Promise.all([
     likelySwitches.getLikelySwitches({
       storeId: await resolveStoreScope(storeId),
     }),
     // Fora da cache: o botão "Criar tarefa" muda isto na hora.
-    createAdminClient()
+    admin
       .from("tasks")
       .select("policy_id")
       .not("policy_id", "is", null)
       .not("status", "in", "(COMPLETED,CANCELLED)"),
+    admin
+      .from(OUTCOMES_TABLE)
+      .select("policy_id, outcome, note, recorded_at"),
   ]);
+
+  if (outcomes.error && !isMissingOutcomesTable(outcomes.error)) {
+    console.error("[vencimentos] resultados", outcomes.error.message);
+  }
+
+  const outcomeByPolicy = new Map(
+    (outcomes.data ?? []).map((o) => [o.policy_id as string, o]),
+  );
 
   if (openTasks.error) {
     console.error("[vencimentos] tarefas abertas", openTasks.error.message);
@@ -106,8 +134,72 @@ export async function getLikelySwitches({
     (row): LikelySwitchRow => ({
       ...row,
       hasOpenTask: withOpenTask.has(row.policyId),
+      outcome: outcomeByPolicy.get(row.policyId)?.outcome ?? null,
+      outcomeNote: outcomeByPolicy.get(row.policyId)?.note ?? null,
+      outcomeAt: outcomeByPolicy.get(row.policyId)?.recorded_at ?? null,
     }),
   );
+}
+
+/*
+ * Separador Anuladas: registar o que aconteceu ao contactar o cliente
+ * (recuperado, não quer, foi para outra companhia, ...). Um resultado
+ * por apólice; `outcome: null` apaga-o.
+ */
+export async function recordRecoveryOutcome(input: {
+  policyId: string;
+  outcome: RecoveryOutcome | null;
+  note?: string | null;
+}) {
+  const { profile } = await requireProfile();
+
+  if (!input.policyId) throw new Error("Apólice inválida.");
+
+  const admin = createAdminClient();
+
+  if (input.outcome === null) {
+    const { error } = await admin
+      .from(OUTCOMES_TABLE)
+      .delete()
+      .eq("policy_id", input.policyId);
+
+    if (error && !isMissingOutcomesTable(error)) {
+      throw new Error(`Erro ao apagar resultado: ${error.message}`);
+    }
+  } else {
+    if (!isRecoveryOutcome(input.outcome)) {
+      throw new Error("Escolhe o resultado.");
+    }
+
+    const note = input.note?.trim() || null;
+
+    if (input.outcome === "OTHER" && !note) {
+      throw new Error("Descreve o que aconteceu.");
+    }
+
+    const { error } = await admin.from(OUTCOMES_TABLE).upsert(
+      {
+        policy_id: input.policyId,
+        outcome: input.outcome,
+        note,
+        recorded_by_user_id: profile.id,
+        recorded_at: new Date().toISOString(),
+      },
+      { onConflict: "policy_id" },
+    );
+
+    if (error) {
+      throw new Error(
+        isMissingOutcomesTable(error)
+          ? "Falta correr a migração dos resultados (20261007150000_policy_recovery_outcomes.sql) na base de dados."
+          : `Erro ao guardar resultado: ${error.message}`,
+      );
+    }
+  }
+
+  revalidatePath("/vencimentos");
+
+  return { success: true };
 }
 
 /*

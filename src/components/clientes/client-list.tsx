@@ -372,8 +372,8 @@ export default function ClientsList({
           isPending ? "opacity-60" : ""
         }`}
       >
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-7">
-          <div className="relative">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-8">
+          <div className="relative xl:col-span-2">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9aa0a8]" />
 
             <input

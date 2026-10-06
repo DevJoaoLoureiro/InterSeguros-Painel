@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { ChevronRight, MapPin, UserRoundX, X } from "lucide-react";
+import { ChevronRight, MapPin, Phone, UserPlus, UserRoundX, X } from "lucide-react";
 
 import { assignCurrentUserToPolicy } from "@/app/(dashboard)/clientes/action";
 import type { ClientsPortfolioData } from "@/components/clientes/types";
@@ -44,6 +44,35 @@ function getInsuranceTypesLabel(item: ClientItem) {
   return labels.length > 0 ? labels.join(", ") : "—";
 }
 
+function getCompanies(item: ClientItem) {
+  return Array.from(
+    new Set(
+      item.policies
+        .map((policy) => policy.company?.name)
+        .filter(Boolean) as string[],
+    ),
+  );
+}
+
+/* Prémio anual das apólices ativas do cliente. */
+function getActivePremium(item: ClientItem) {
+  const active = item.policies.filter((policy) => policy.status === "ACTIVE");
+
+  if (active.length === 0) return null;
+
+  return active.reduce(
+    (total, policy) => total + Number(policy.annualized_premium ?? 0),
+    0,
+  );
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("pt-PT", {
+    style: "currency",
+    currency: "EUR",
+  }).format(value);
+}
+
 // ============================================================
 // BOTÃO ASSOCIAR-ME
 // ============================================================
@@ -79,8 +108,10 @@ function AssignMeButton({
       type="button"
       disabled={isAssigning}
       onClick={handleClick}
-      className="inline-flex items-center rounded-lg bg-orange-50 px-2.5 py-1 text-[11px] font-semibold text-[#ff4b0a] transition hover:bg-orange-100 disabled:cursor-not-allowed disabled:opacity-50"
+      title="Esta apólice ainda não tem comercial: ficar eu com ela"
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#e4e6e9] px-2.5 py-1.5 text-xs font-medium text-[#59616d] transition hover:border-[#ff4b0a] hover:text-[#ff4b0a] disabled:cursor-not-allowed disabled:opacity-50"
     >
+      <UserPlus className="h-3.5 w-3.5" />
       {isAssigning ? "A associar..." : "Associar-me"}
     </button>
   );
@@ -159,7 +190,7 @@ export function ClientsTable({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[800px]">
+          <table className="w-full min-w-[1000px]">
             <thead>
               <tr className="border-b border-[#e8eaed] bg-[#fafafa]">
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#7a818c]">
@@ -167,14 +198,22 @@ export function ClientsTable({
                 </th>
 
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#7a818c]">
-                  Tipo de seguro
+                  Contacto
                 </th>
 
                 <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#7a818c]">
-                  Localidade
+                  Seguros
                 </th>
 
-                <th className="w-12" />
+                <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-[#7a818c]">
+                  Companhia
+                </th>
+
+                <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-[#7a818c]">
+                  Prémio anual
+                </th>
+
+                <th className="px-5 py-3" />
               </tr>
             </thead>
 
@@ -182,6 +221,8 @@ export function ClientsTable({
               {items.map((item) => {
                 const client = item.client;
                 const codes = getInsuranceCodes(item);
+                const companies = getCompanies(item);
+                const premium = getActivePremium(item);
 
                 const unassignedPolicy = item.policies.find(
                   (policy) => !policy.commercial_user_id,
@@ -198,17 +239,31 @@ export function ClientsTable({
                         {client.name}
                       </p>
 
-                      <p className="mt-1 text-xs text-[#7a818c]">
-                        NIF {client.nif ?? "—"}
+                      <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-[#7a818c]">
+                        <span>NIF {client.nif ?? "—"}</span>
+                        {client.city && (
+                          <span className="inline-flex items-center gap-1">
+                            <MapPin className="h-3 w-3 text-[#9aa0a8]" />
+                            {client.city}
+                          </span>
+                        )}
                       </p>
+                    </td>
 
-                      {unassignedPolicy && (
-                        <div className="mt-1.5">
-                          <AssignMeButton
-                            policyId={unassignedPolicy.id}
-                            onDone={() => window.location.reload()}
-                          />
-                        </div>
+                    <td className="px-5 py-4">
+                      {client.phone ? (
+                        <a
+                          href={`tel:${client.phone.replace(/\s+/g, "")}`}
+                          onClick={(event) => event.stopPropagation()}
+                          className="inline-flex items-center gap-1.5 whitespace-nowrap text-sm font-medium text-[#343941] hover:text-[#ff4b0a] hover:underline"
+                        >
+                          <Phone className="h-3.5 w-3.5 text-[#9aa0a8]" />
+                          {client.phone}
+                        </a>
+                      ) : (
+                        <span className="text-xs text-[#b0b5bb]">
+                          Sem telefone
+                        </span>
                       )}
                     </td>
 
@@ -231,19 +286,30 @@ export function ClientsTable({
                       )}
                     </td>
 
-                    <td className="px-5 py-4">
-                      {client.city ? (
-                        <span className="inline-flex items-center gap-1.5 text-sm text-[#555d68]">
-                          <MapPin className="h-3.5 w-3.5 text-[#9aa0a8]" />
-                          {client.city}
-                        </span>
+                    <td className="px-5 py-4 text-sm text-[#555d68]">
+                      {companies.length > 0 ? companies.join(", ") : "—"}
+                    </td>
+
+                    <td className="px-5 py-4 text-right text-sm font-semibold tabular-nums text-[#24272d]">
+                      {premium !== null ? (
+                        formatCurrency(premium)
                       ) : (
-                        <span className="text-sm text-[#9aa0a8]">—</span>
+                        <span className="font-normal text-[#b0b5bb]">
+                          Sem apólice ativa
+                        </span>
                       )}
                     </td>
 
-                    <td className="px-3 py-4">
-                      <ChevronRight className="h-4 w-4 text-[#9aa0a8]" />
+                    <td className="px-5 py-4">
+                      <div className="flex items-center justify-end gap-2">
+                        {unassignedPolicy && (
+                          <AssignMeButton
+                            policyId={unassignedPolicy.id}
+                            onDone={() => window.location.reload()}
+                          />
+                        )}
+                        <ChevronRight className="h-4 w-4 shrink-0 text-[#9aa0a8]" />
+                      </div>
                     </td>
                   </tr>
                 );
