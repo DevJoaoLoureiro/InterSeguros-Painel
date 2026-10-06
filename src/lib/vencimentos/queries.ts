@@ -35,6 +35,8 @@ function getWindow() {
 export type RenewalRow = {
   policyId: string;
   policyNumber: string;
+  // Para abrir o cliente (Clientes com o painel aberto).
+  clientId: string | null;
   clientName: string;
   companyName: string;
   lineName: string | null;
@@ -49,6 +51,8 @@ export type UpcomingReceiptRow = {
   receiptId: string;
   receiptNumber: string | null;
   policyNumber: string;
+  // Para abrir o cliente (Clientes com o painel aberto).
+  clientId: string | null;
   clientName: string;
   companyName: string;
   dueDate: string;
@@ -216,6 +220,7 @@ export async function getUpcomingRenewals({
       return {
         policyId: policy.id,
         policyNumber: policy.policy_number,
+        clientId: policy.client_id ?? null,
         clientName: clientMap.get(policy.client_id) ?? "Cliente",
         companyName: company?.name ?? "—",
         lineName: line?.name ?? null,
@@ -374,6 +379,7 @@ export async function getUpcomingReceipts({
       receiptId: receipt.id,
       receiptNumber: receipt.receipt_number,
       policyNumber: policy?.policy_number ?? "—",
+      clientId: policy?.client_id ?? null,
       clientName: policy?.client_id
         ? clientMap.get(policy.client_id) ?? "Cliente"
         : "Cliente",

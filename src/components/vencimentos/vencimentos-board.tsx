@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -10,9 +12,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 
+import { clientHref } from "@/lib/clients/client-link";
+
 type RenewalRow = {
   policyId: string;
   policyNumber: string;
+  clientId: string | null;
   clientName: string;
   companyName: string;
   lineName: string | null;
@@ -27,6 +32,7 @@ type UpcomingReceiptRow = {
   receiptId: string;
   receiptNumber: string | null;
   policyNumber: string;
+  clientId: string | null;
   clientName: string;
   companyName: string;
   dueDate: string;
@@ -222,7 +228,53 @@ export function VencimentosBoard({ renewals, upcomingReceipts }: Props) {
 // TABELA — RENOVAÇÕES
 // ============================================================
 
+/*
+ * Linha clicável: abre Clientes com o painel deste cliente aberto.
+ * O nome é também um <Link> (abrir em novo separador, teclado).
+ */
+function useClientRow() {
+  const router = useRouter();
+
+  return (clientId: string | null) =>
+    clientId
+      ? {
+          onClick: (event: React.MouseEvent) => {
+            // Cliques no próprio link já navegam.
+            if ((event.target as HTMLElement).closest("a")) return;
+            router.push(clientHref(clientId));
+          },
+          className: "cursor-pointer transition-colors hover:bg-[#fff7f3]",
+          title: "Abrir cliente",
+        }
+      : { className: "transition-colors hover:bg-[#fafafa]" };
+}
+
+function ClientCell({
+  clientId,
+  clientName,
+}: {
+  clientId: string | null;
+  clientName: string;
+}) {
+  return (
+    <td className="px-5 py-4 text-sm font-semibold text-[#24272d]">
+      {clientId ? (
+        <Link
+          href={clientHref(clientId)}
+          className="hover:text-[#ff4b0a] hover:underline"
+        >
+          {clientName}
+        </Link>
+      ) : (
+        clientName
+      )}
+    </td>
+  );
+}
+
 function RenewalsTable({ items }: { items: RenewalRow[] }) {
+  const rowProps = useClientRow();
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-left">
@@ -254,13 +306,8 @@ function RenewalsTable({ items }: { items: RenewalRow[] }) {
 
         <tbody className="divide-y divide-[#eef0f2]">
           {items.map((row) => (
-            <tr
-              key={row.policyId}
-              className="transition-colors hover:bg-[#fafafa]"
-            >
-              <td className="px-5 py-4 text-sm font-semibold text-[#24272d]">
-                {row.clientName}
-              </td>
+            <tr key={row.policyId} {...rowProps(row.clientId)}>
+              <ClientCell clientId={row.clientId} clientName={row.clientName} />
 
               <td className="px-5 py-4 text-sm text-[#555d68]">
                 {row.policyNumber}
@@ -298,6 +345,8 @@ function RenewalsTable({ items }: { items: RenewalRow[] }) {
 // ============================================================
 
 function ReceiptsTable({ items }: { items: UpcomingReceiptRow[] }) {
+  const rowProps = useClientRow();
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-left">
@@ -332,13 +381,8 @@ function ReceiptsTable({ items }: { items: UpcomingReceiptRow[] }) {
 
         <tbody className="divide-y divide-[#eef0f2]">
           {items.map((row) => (
-            <tr
-              key={row.receiptId}
-              className="transition-colors hover:bg-[#fafafa]"
-            >
-              <td className="px-5 py-4 text-sm font-semibold text-[#24272d]">
-                {row.clientName}
-              </td>
+            <tr key={row.receiptId} {...rowProps(row.clientId)}>
+              <ClientCell clientId={row.clientId} clientName={row.clientName} />
 
               <td className="px-5 py-4 text-sm text-[#555d68]">
                 {row.policyNumber}

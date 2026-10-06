@@ -13,6 +13,7 @@ import { redirect } from "next/navigation";
 import { DashboardCharts } from "@/components/dashboard/dashboard-charts";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { getSelectedStoreId } from "@/lib/auth/store-selection";
+import { clientHref } from "@/lib/clients/client-link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getExpiryAlerts,
@@ -661,9 +662,15 @@ for (const policy of policies) {
         ) : (
           <div className="divide-y divide-[#edf0f2]">
             {upcomingReceipts.slice(0, 5).map((receipt) => (
-              <div
+              <Link
                 key={receipt.receiptId}
-                className="flex items-center justify-between gap-3 px-5 py-3"
+                href={
+                  receipt.clientId
+                    ? clientHref(receipt.clientId)
+                    : "/vencimentos"
+                }
+                title="Abrir cliente"
+                className="flex items-center justify-between gap-3 px-5 py-3 transition hover:bg-[#fff7f3]"
               >
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium text-[#20242a]">
@@ -687,7 +694,7 @@ for (const policy of policies) {
                     month: "2-digit",
                   }).format(new Date(`${receipt.dueDate.slice(0, 10)}T12:00:00`))}
                 </span>
-              </div>
+              </Link>
             ))}
           </div>
         )}
@@ -731,9 +738,18 @@ for (const policy of policies) {
 
               <tbody className="divide-y divide-[#edf0f2]">
                 {recentPolicies.map((policy) => (
-                  <tr key={policy.id} className="text-sm">
-                    <td className="px-5 py-4 font-medium text-[#20242a]">
-                      {policy.clientName}
+                  <tr
+                    key={policy.id}
+                    className="text-sm transition hover:bg-[#fff7f3]"
+                  >
+                    <td className="font-medium text-[#20242a]">
+                      <Link
+                        href={clientHref(policy.client_id)}
+                        title="Abrir cliente"
+                        className="block px-5 py-4 hover:text-[#ff4b0a] hover:underline"
+                      >
+                        {policy.clientName}
+                      </Link>
                     </td>
 
                     <td className="px-5 py-4 text-[#606771]">

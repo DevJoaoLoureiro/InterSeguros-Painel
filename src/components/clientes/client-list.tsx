@@ -39,6 +39,8 @@ type Filters = {
 type Props = {
   data: ClientsPortfolioData;
   filters: Filters;
+  // ?cliente=<id>: abre já com o painel deste cliente.
+  initialClient?: ClientsPortfolioData["items"][number] | null;
 };
 
 // ==========================================
@@ -63,12 +65,34 @@ function formatCurrency(value: number | null | undefined) {
 export default function ClientsList({
   data: initialData,
   filters: initialFilters,
+  initialClient = null,
 }: Props) {
   const [data, setData] = useState(initialData);
 
   const [selectedClient, setSelectedClient] = useState<
     ClientsPortfolioData["items"][number] | null
-  >(null);
+  >(initialClient);
+
+  // O cliente aberto fica no URL (?cliente=) — dá para partilhar o
+  // link e recarregar; ao fechar sai do URL.
+  function syncClientParam(clientId: string | null) {
+    const url = new URL(window.location.href);
+
+    if (clientId) url.searchParams.set("cliente", clientId);
+    else url.searchParams.delete("cliente");
+
+    window.history.replaceState(null, "", url.pathname + url.search);
+  }
+
+  function openClient(item: ClientsPortfolioData["items"][number]) {
+    setSelectedClient(item);
+    syncClientParam(item.client.id);
+  }
+
+  function closeClient() {
+    setSelectedClient(null);
+    syncClientParam(null);
+  }
 
   const [filters, setFilters] = useState(initialFilters);
   const [qInput, setQInput] = useState(initialFilters.q);
@@ -438,7 +462,7 @@ export default function ClientsList({
 
       <ClientsTable
         items={visibleItems}
-        onSelectClient={setSelectedClient}
+        onSelectClient={openClient}
         totalCount={data.totalCount}
         onlyUnassigned={onlyUnassigned}
         onToggleUnassigned={() => setOnlyUnassigned((v) => !v)}
@@ -483,7 +507,7 @@ export default function ClientsList({
         clientNif={selectedClient?.client.nif ?? null}
         policies={selectedClient?.policies ?? []}
         open={Boolean(selectedClient)}
-        onClose={() => setSelectedClient(null)}
+        onClose={closeClient}
       />
     </div>
   );

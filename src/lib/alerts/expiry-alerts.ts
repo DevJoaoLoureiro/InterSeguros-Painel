@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { hasFullAccess } from "@/lib/auth/permissions";
+import { clientHref } from "@/lib/clients/client-link";
 import { getSelectedStoreFilter } from "@/lib/auth/store-selection";
 
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -88,7 +89,8 @@ const getCachedVencimentos = unstable_cache(
 
     return { receipts, renewals };
   },
-  ["vencimentos-snapshot-v1"],
+  // v2: linhas passaram a trazer clientId (link para o cliente).
+  ["vencimentos-snapshot-v2"],
   { revalidate: 120, tags: [VENCIMENTOS_TAG] },
 );
 
@@ -128,7 +130,7 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
 
   let processesQuery = admin
     .from("tasks")
-    .select("id, title, client_name, policy_start_date")
+    .select("id, title, client_id, client_name, policy_start_date")
     .eq("kind", "PROCESS")
     .not("status", "in", "(COMPLETED,CANCELLED)")
     .gte("policy_start_date", todayKey)
@@ -167,7 +169,7 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
       subtitle: `Renovação da apólice ${renewal.policyNumber} (${renewal.companyName}${renewal.lineName ? ` · ${renewal.lineName}` : ""})`,
       date: renewal.renewalDate,
       daysLeft,
-      href: "/vencimentos",
+      href: renewal.clientId ? clientHref(renewal.clientId) : "/vencimentos",
     });
   }
 
@@ -182,7 +184,7 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
       subtitle: `Recibo ${receipt.receiptNumber ?? ""} por cobrar · apólice ${receipt.policyNumber} (${receipt.companyName})`,
       date: receipt.dueDate,
       daysLeft,
-      href: "/vencimentos",
+      href: receipt.clientId ? clientHref(receipt.clientId) : "/vencimentos",
     });
   }
 
@@ -196,7 +198,8 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
       subtitle: `Início do seguro · ${process.title}`,
       date,
       daysLeft: daysUntil(date, todayKey),
-      href: "/tarefas",
+      // Com cliente já identificado (NIF encontrado), abre o cliente.
+      href: process.client_id ? clientHref(process.client_id) : "/tarefas",
     });
   }
 
