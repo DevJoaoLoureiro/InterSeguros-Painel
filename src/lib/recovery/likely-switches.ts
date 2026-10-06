@@ -1,18 +1,14 @@
 import { unstable_cache } from "next/cache";
 
 import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
-import {
-  computeExit,
-  type RecoveryWindow,
-} from "@/lib/recovery/lost-clients";
+import { computeExit, type ExitReason } from "@/lib/recovery/lost-clients";
 import { first, loadRecoveryData } from "@/lib/recovery/recovery-data";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /*
  * "Anuladas" (separador dos Vencimentos): clientes que saíram
  * há pouco e ainda não voltaram — provavelmente foram para outra
- * companhia. É a lista para ligar JÁ; passado um ano entra a lead de
- * recuperação (lib/recovery/recovery-leads).
+ * companhia. É a lista para ligar e tentar renovar.
  *
  * Entra quem:
  * - não renovou: o último recibo pago acabou e o seguinte não
@@ -40,7 +36,7 @@ export type LikelySwitchRow = {
   storeId: string | null;
   storeName: string | null;
   exitDate: string;
-  exitReason: RecoveryWindow["exitReason"];
+  exitReason: ExitReason;
 };
 
 function lisbonDateKey() {

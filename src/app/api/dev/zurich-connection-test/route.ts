@@ -1,4 +1,8 @@
-import { splitZurichToken } from "@/lib/insurance/providers/zurich/client";
+import {
+  getCurrentZurichToken,
+  getZurichAccounts,
+  splitZurichToken,
+} from "@/lib/insurance/providers/zurich/client";
 import { sanitizeZurichText } from "@/lib/insurance/providers/zurich/log-safety";
 
 export async function GET() {
@@ -6,7 +10,10 @@ export async function GET() {
     const agenteNr = process.env.ZURICH_AGENTE_NR;
     const username = process.env.ZURICH_USERNAME;
     const password = process.env.ZURICH_PASSWORD;
-    const fullToken = process.env.ZURICH_TOKEN;
+    // O token vive na BD (renovado pelo cron), não no env.
+    const fullToken = await getCurrentZurichToken(
+      getZurichAccounts()[0],
+    ).catch(() => undefined);
 
     // =====================================================
     // 1. VALIDAR ENV

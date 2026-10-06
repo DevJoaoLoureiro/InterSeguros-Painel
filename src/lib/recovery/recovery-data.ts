@@ -3,10 +3,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RecoveryReceipt } from "@/lib/recovery/lost-clients";
 
 /*
- * Dados partilhados pelos clientes perdidos (leads de recuperação no
- * cron e "Anuladas" nos Vencimentos): todas as apólices, os
- * recibos por apólice e a regra de "já não vale a pena contactar"
- * (voltou / foi substituída).
+ * Dados dos clientes perdidos ("Anuladas" nos Vencimentos): todas as
+ * apólices, os recibos por apólice e a regra de "já não vale a pena
+ * contactar" (voltou / foi substituída).
  */
 
 const PAGE_SIZE = 1000;
@@ -16,10 +15,6 @@ export type RecoveryClientRow = {
   name: string;
   nif: string | null;
   phone: string | null;
-  email: string | null;
-  birth_date: string | null;
-  postal_code: string | null;
-  city: string | null;
 };
 
 export type RecoveryPolicyRow = {
@@ -31,7 +26,6 @@ export type RecoveryPolicyRow = {
   cancellation_date: string | null;
   end_date: string | null;
   annualized_premium: number | string | null;
-  commercial_user_id: string | null;
   issuing_store_id: string | null;
   provider_metadata: Record<string, unknown> | null;
   company: { name: string } | { name: string }[] | null;
@@ -89,7 +83,7 @@ export async function loadRecoveryData(
       supabase
         .from("policies")
         .select(
-          "id, client_id, policy_number, status, payment_frequency, cancellation_date, end_date, annualized_premium, commercial_user_id, issuing_store_id, provider_metadata, company:companies ( name ), insurance_line:insurance_lines ( code, name ), client:clients ( id, name, nif, phone, email, birth_date, postal_code, city )",
+          "id, client_id, policy_number, status, payment_frequency, cancellation_date, end_date, annualized_premium, issuing_store_id, provider_metadata, company:companies ( name ), insurance_line:insurance_lines ( code, name ), client:clients ( id, name, nif, phone )",
         )
         .order("id")
         .range(from, to) as unknown as PromiseLike<{

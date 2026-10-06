@@ -1,6 +1,7 @@
 import https from "node:https";
 
 import {
+  getCurrentZurichToken,
   getZurichAccounts,
   splitZurichToken,
   type ZurichAccount,
@@ -661,13 +662,10 @@ export async function GET(
       path =
         "ObterClientePorIDNIF";
 
+      // A Zurich exige os DOIS parâmetros, mesmo que um vá vazio.
       extraParams = {
-        ClienteNIF:
-          nif ?? undefined,
-
-        ClienteID:
-          clienteId ??
-          undefined,
+        ClienteNIF: nif ?? "",
+        ClienteID: clienteId ?? "",
       };
     }
 
@@ -683,7 +681,11 @@ export async function GET(
 
         path,
 
-        account,
+        // O token vive na BD (renovado pelo cron), não no env.
+        account: {
+          ...account,
+          token: await getCurrentZurichToken(account),
+        },
 
         extraParams,
       });

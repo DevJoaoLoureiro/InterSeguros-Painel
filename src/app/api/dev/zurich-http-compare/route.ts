@@ -1,5 +1,6 @@
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import {
+  getCurrentZurichToken,
   getZurichAccounts,
   splitZurichToken,
 } from "@/lib/insurance/providers/zurich/client";
@@ -85,7 +86,10 @@ export async function GET(request: Request) {
     let token2: string;
 
     try {
-      ({ token1, token2 } = splitZurichToken(account.token));
+      // O token vive na BD (renovado pelo cron), não no env.
+      ({ token1, token2 } = splitZurichToken(
+        await getCurrentZurichToken(account),
+      ));
     } catch {
       return json(
         { success: false, error: "Token da conta em falta ou inválido." },
