@@ -4,9 +4,9 @@ import {
   syncZurichPolicies,
   syncZurichReceipts,
 } from "@/lib/insurance/providers/zurich/sync";
+import { renewZurichTokenIfDue } from "@/lib/insurance/providers/zurich/token-renewal";
 import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
 import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
-import { runRecoveryLeads } from "@/lib/recovery/recovery-leads";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -16,6 +16,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
  */
 export async function GET() {
   try {
+    // Token: renova uma vez por dia, ANTES do sync (nunca lança; se
+    // falhar, o sync segue com o token que houver).
+    const token = await renewZurichTokenIfDue();
+
     const policiesResult = await syncZurichPolicies();
     const receiptsResult = await syncZurichReceipts();
 
@@ -31,21 +35,12 @@ export async function GET() {
       },
     );
 
-    // Clientes perdidos: leads de recuperação 45 dias antes do
-    // aniversário da saída (sem duplicados — o Prévoir também corre).
-    const recovery = await runRecoveryLeads(createAdminClient()).catch(
-      (error: unknown) => {
-        console.error("[cron zurich] runRecoveryLeads", error);
-        return null;
-      },
-    );
-
     return Response.json({
       success: true,
+      token,
       policies: policiesResult,
       receipts: receiptsResult,
       processes,
-      recovery,
     });
   } catch (error) {
     return Response.json(

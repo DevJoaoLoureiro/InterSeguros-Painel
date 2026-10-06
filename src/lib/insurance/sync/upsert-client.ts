@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   NormalizedPrevoirPolicy,
 } from "@/lib/insurance/providers/prevoir/mapper";
+import { fillMissingContacts } from "@/lib/insurance/sync/client-contacts";
 
 type UpsertClientResult = {
   clientId: string;
@@ -94,6 +95,12 @@ export async function upsertClient({
       );
     }
 
+    // Telefone/email da companhia: só preenchem o que está vazio.
+    await fillMissingContacts(supabase, externalRef.client_id, {
+      phone: policy.client.phone,
+      email: policy.client.email,
+    });
+
     // Ficha completa do cliente desta companhia (aba "Dados do
     // cliente"). Só escreve quando a companhia enviou dados.
     if (clientMetadata) {
@@ -174,6 +181,8 @@ export async function upsertClient({
           policy.client.postalCode,
         city: policy.client.city,
         country: "Portugal",
+        phone: policy.client.phone ?? null,
+        email: policy.client.email ?? null,
       })
       .select("id")
       .single();
@@ -188,6 +197,13 @@ export async function upsertClient({
       createdClient.id;
 
     created = true;
+  } else {
+    // Cliente já existente (encontrado pelo NIF, vindo de outra
+    // companhia): só preenche contactos em falta.
+    await fillMissingContacts(supabase, clientId, {
+      phone: policy.client.phone,
+      email: policy.client.email,
+    });
   }
 
   if (!clientId) {

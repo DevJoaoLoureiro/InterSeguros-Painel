@@ -1,35 +1,39 @@
-import { criarNovoTokenZurich } from "@/lib/insurance/providers/zurich/client";
+import {
+  obterFicheiroDia,
+  ZurichTipoFicheiro,
+} from "@/lib/insurance/providers/zurich/client";
 import { sanitizeZurichText } from "@/lib/insurance/providers/zurich/log-safety";
 
 /**
- * Teste de ligação à Zurich (pede um token novo).
+ * Teste de ligação à Zurich: pede o ficheiro de apólices de hoje com o
+ * token em vigor. Só leitura — NÃO emite tokens (emitir um token aqui
+ * e não o gravar deixava o sync parado; a renovação é só no cron e em
+ * /api/dev/zurich-token).
  *
- * ATENÇÃO: emitir um token pode anular o token PARTILHADO por vários
- * CRMs. Por isso o client tem esta operação DESATIVADA por omissão (só
- * corre com ZURICH_ALLOW_TOKEN_ISSUE=1) e, desativada, esta rota devolve
- * só o erro. Nada a chama automaticamente. NUNCA devolve o token nem a
- * resposta bruta: só indica se a Zurich emitiu um token, e o token não
- * é guardado em lado nenhum.
+ * "Código 6/7" = dia sem dados: a ligação e o token estão bons.
  */
 export async function GET() {
-  try {
-    const result = await criarNovoTokenZurich();
+  const dia = new Date().toISOString().slice(0, 10);
 
-    return Response.json({
-      success: true,
-      tokenIssued: typeof result.Token === "string" && result.Token !== "",
-      code: result.CodigoErro ?? null,
-    });
+  try {
+    await obterFicheiroDia(ZurichTipoFicheiro.Apolices, dia);
+
+    return Response.json({ success: true, tokenAccepted: true, dia });
   } catch (error) {
-    return Response.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? sanitizeZurichText(error.message)
-            : "Erro desconhecido.",
-      },
-      { status: 500 },
-    );
+    const message =
+      error instanceof Error
+        ? sanitizeZurichText(error.message)
+        : "Erro desconhecido.";
+
+    if (message.includes("Código 6") || message.includes("Código 7")) {
+      return Response.json({
+        success: true,
+        tokenAccepted: true,
+        dia,
+        note: "Sem ficheiro para hoje (normal em dias sem alterações).",
+      });
+    }
+
+    return Response.json({ success: false, error: message }, { status: 500 });
   }
 }

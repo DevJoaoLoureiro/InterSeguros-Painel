@@ -8,6 +8,7 @@ import {
   CalendarClock,
   ChevronDown,
   ClipboardList,
+  CloudOff,
   ReceiptText,
 } from "lucide-react";
 import Link from "next/link";
@@ -94,6 +95,7 @@ const notificationIcons = {
   task: ClipboardList,
   receipt: ReceiptText,
   renewal: CalendarClock,
+  sync: CloudOff,
 };
 
 export function DashboardHeader({

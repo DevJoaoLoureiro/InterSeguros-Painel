@@ -20,6 +20,8 @@ import {
   getVencimentosSnapshot,
 } from "@/lib/alerts/expiry-alerts";
 import { ExpiryAlertsBanner } from "@/components/alerts/expiry-alerts";
+import { SyncHealthBanner } from "@/components/alerts/sync-health-banner";
+import { hasFullAccess } from "@/lib/auth/permissions";
 type LeadRow = {
   id: string;
   name: string;
@@ -466,6 +468,10 @@ for (const policy of policies) {
       </div>
 
       {/* ALERTAS DE VENCIMENTO */}
+
+      {/* SINCRONIZAÇÃO PARADA (só administradores) */}
+
+      {hasFullAccess(profile.role) && <SyncHealthBanner />}
 
       <ExpiryAlertsBanner alerts={expiryAlerts} />
 

@@ -5,10 +5,11 @@ import {
   getAlertScope,
   getVencimentosSnapshot,
 } from "@/lib/alerts/expiry-alerts";
+import { describeSyncAge, getSyncProblems } from "@/lib/alerts/sync-health";
 
 export type NotificationItem = {
   id: string;
-  type: "task" | "receipt" | "renewal";
+  type: "task" | "receipt" | "renewal" | "sync";
   title: string;
   subtitle: string;
   href: string;
@@ -21,11 +22,11 @@ export async function getNotifications(): Promise<NotificationItem[]> {
     return [];
   }
 
-  const { profile, storeId } = scope;
+  const { profile, privileged, storeId } = scope;
 
   const admin = createAdminClient();
 
-  const [tasksResult, { receipts, renewals }] = await Promise.all([
+  const [tasksResult, { receipts, renewals }, syncProblems] = await Promise.all([
     admin
       .from("tasks")
       .select("id, title, due_at")
@@ -38,9 +39,26 @@ export async function getNotifications(): Promise<NotificationItem[]> {
 
     // Partilhado com os alertas de vencimento no mesmo pedido.
     getVencimentosSnapshot(storeId),
+
+    // Sync parado: só interessa a quem o pode resolver.
+    privileged ? getSyncProblems() : Promise.resolve([]),
   ]);
 
   const notifications: NotificationItem[] = [];
+
+  // ----------------------------------------
+  // SINCRONIZAÇÃO PARADA (primeiro: afeta tudo o resto)
+  // ----------------------------------------
+
+  for (const problem of syncProblems) {
+    notifications.push({
+      id: `sync-${problem.companyCode}`,
+      type: "sync",
+      title: `Sincronização ${problem.companyName} parada`,
+      subtitle: `${problem.resources.join(" e ")} ${describeSyncAge(problem)}`,
+      href: "/dashboard",
+    });
+  }
 
   // ----------------------------------------
   // TAREFAS ATRASADAS

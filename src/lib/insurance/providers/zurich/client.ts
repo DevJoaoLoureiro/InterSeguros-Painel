@@ -22,17 +22,25 @@
 // "default" lida das env vars de sempre (ZURICH_AGENTE_NR, etc.)
 // — mantém tudo o que já testámos a funcionar sem alterações.
 //
-// TOKEN: SÓ DO ENV, SEM RENOVAÇÃO
-// O utilizador/token Zurich é PARTILHADO por vários CRMs. Emitir um
-// token novo (CriarNovoToken) pode anular o token que os outros
-// usam. Por isso este client lê o token SEMPRE de account.token
-// (ZURICH_TOKEN, ou o campo "token" de cada entrada de
-// ZURICH_ACCOUNTS), não o guarda nem o lê da BD e nunca o renova
-// sozinho. Se a Zurich rejeitar o token, o erro sobe e o token é
-// atualizado no env, de forma coordenada com os outros CRMs.
+// TOKEN: NA BD, RENOVADO PELO CRON
+// O token Zurich expira (em 2026-09 morreu ao fim de ~10 dias e o
+// sync esteve uma semana parado) e cada token novo INVALIDA o
+// anterior. Por isso:
+//   - o token vive na BD (token-store.ts), igual para a Vercel e para
+//     o computador de desenvolvimento; o env só serve para arrancar;
+//   - quem renova é SÓ o cron, uma vez por dia (token-renewal.ts);
+//   - este client nunca renova sozinho a meio de um pedido. Se a
+//     Zurich rejeitar o token, relê a BD (outra instância pode ter
+//     renovado) e repete UMA vez; se continuar, o erro sobe.
+// Nenhum outro serviço pode emitir tokens para este utilizador: se
+// outro CRM usar o mesmo acesso, tem de ir buscar o token a este.
 // =====================================================
 
 import { sanitizeZurichText } from "./log-safety";
+import {
+  forgetCachedZurichToken,
+  readStoredZurichToken,
+} from "./token-store";
 
 // -----------------------------------------------------
 // CONTAS (uma por loja)
@@ -44,7 +52,7 @@ export type ZurichAccount = {
   agenteNr: string;
   username: string;
   password: string;
-  /** Token inicial (de arranque) — depois passa a viver na BD. */
+  /** Token de arranque (env) — o que conta é o da BD (token-store). */
   token: string;
   /**
    * Código a usar em store_external_refs para resolver a loja
@@ -94,9 +102,10 @@ export function getZurichAccounts(): ZurichAccount[] {
   const password = process.env.ZURICH_PASSWORD;
   const token = process.env.ZURICH_TOKEN;
 
-  if (!agenteNr || !username || !password || !token) {
+  // ZURICH_TOKEN é opcional: depois do arranque o token vive na BD.
+  if (!agenteNr || !username || !password) {
     throw new Error(
-      "Nem ZURICH_ACCOUNTS nem as env vars de conta única (ZURICH_AGENTE_NR/ZURICH_USERNAME/ZURICH_PASSWORD/ZURICH_TOKEN) estão configuradas.",
+      "Nem ZURICH_ACCOUNTS nem as env vars de conta única (ZURICH_AGENTE_NR/ZURICH_USERNAME/ZURICH_PASSWORD) estão configuradas.",
     );
   }
 
@@ -106,7 +115,7 @@ export function getZurichAccounts(): ZurichAccount[] {
       agenteNr,
       username,
       password,
-      token,
+      token: token ?? "",
       storeExternalCode: agenteNr,
     },
   ];
@@ -278,12 +287,41 @@ function resolveAccount(account?: ZurichAccount): ZurichAccount {
 }
 
 // -----------------------------------------------------
-// TOKEN (SÓ DO ENV; SEM RENOVAÇÃO NEM PERSISTÊNCIA)
+// TOKEN (BD PRIMEIRO; ENV SÓ PARA ARRANCAR)
 // -----------------------------------------------------
 //
-// O token vem de account.token e mais nenhum sítio: nada de BD
-// (a tabela integration_tokens já não é usada por este client) e
-// nada de renovação automática. Ver o cabeçalho do ficheiro.
+// Ver o cabeçalho do ficheiro e token-store.ts.
+
+/**
+ * Token em vigor para a conta: o da BD; se ainda não houver linha (ou
+ * a BD falhar), o do env.
+ */
+export async function getCurrentZurichToken(
+  account: ZurichAccount,
+  options: { fresh?: boolean } = {},
+): Promise<string> {
+  let stored: string | null = null;
+
+  try {
+    stored = (await readStoredZurichToken(account.key, options))?.token ?? null;
+  } catch (error) {
+    // BD indisponível: segue com o env em vez de parar o sync.
+    console.warn("[Zurich] Token: leitura da BD falhou, a usar o env", {
+      account: account.key,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const token = stored ?? account.token;
+
+  if (typeof token !== "string" || token.trim() === "") {
+    throw new Error(
+      `Token Zurich em falta para a conta ${account.key}: não há token na BD nem no env (ZURICH_TOKEN ou o campo "token" em ZURICH_ACCOUNTS).`,
+    );
+  }
+
+  return token.trim();
+}
 
 const cachedTokenParts = new Map<
   string,
@@ -292,30 +330,27 @@ const cachedTokenParts = new Map<
 
 async function getTokenParts(
   account: ZurichAccount,
-): Promise<{ token1: string; token2: string }> {
-  const token = account.token;
-
-  if (typeof token !== "string" || token.trim() === "") {
-    throw new Error(
-      `Token Zurich em falta para a conta ${account.key} (ZURICH_TOKEN ou o campo "token" da entrada em ZURICH_ACCOUNTS).`,
-    );
-  }
-
+  options: { fresh?: boolean } = {},
+): Promise<{ token: string; token1: string; token2: string }> {
+  const token = await getCurrentZurichToken(account, options);
   const cached = cachedTokenParts.get(account.key);
 
   if (cached && cached.token === token) {
-    return cached.parts;
+    return { token, ...cached.parts };
   }
 
   const parts = splitZurichToken(token);
   cachedTokenParts.set(account.key, { token, parts });
 
-  return parts;
+  return { token, ...parts };
 }
 
 // -----------------------------------------------------
 // HTTP HELPER
 // -----------------------------------------------------
+
+/** Tempo máximo de espera por UMA resposta da Zurich (ms). */
+const ZURICH_REQUEST_TIMEOUT_MS = 30_000;
 
 type ZurichBaseOutput = {
   Successo?: boolean;
@@ -330,15 +365,17 @@ async function zurichRequest<T>(
   extraParams: Record<string, string | number | undefined>,
   init?: { method?: "GET" | "POST"; body?: unknown },
   agenteParamName: string = "AgenteNr",
-  // Reservado: já não há repetição automática (ver TOKEN no cabeçalho).
-  // Mantém-se só para não mudar a posição dos argumentos dos chamadores.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _isRetry: boolean = false,
+  // true na repetição com o token relido da BD (ver mais abaixo).
+  isRetry: boolean = false,
   account?: ZurichAccount,
 ): Promise<T> {
   const resolvedAccount = resolveAccount(account);
   const { agenteNr, username, password } = resolvedAccount;
-  const { token1, token2 } = await getTokenParts(resolvedAccount);
+  const {
+    token: usedToken,
+    token1,
+    token2,
+  } = await getTokenParts(resolvedAccount, { fresh: isRetry });
 
   const params = new URLSearchParams({
     [agenteParamName]: agenteNr,
@@ -363,6 +400,10 @@ async function zurichRequest<T>(
     {
       method: init?.method || "GET",
 
+      // Sem isto, uma Zurich que aceita a ligação mas não responde
+      // deixa o sync pendurado minutos (até a função ser cortada).
+      signal: AbortSignal.timeout(ZURICH_REQUEST_TIMEOUT_MS),
+
       headers: {
         Authorization: `Basic ${basicAuth}`,
         Accept: "application/json",
@@ -375,7 +416,21 @@ async function zurichRequest<T>(
 
       cache: "no-store",
     },
-  );
+  ).catch((error: unknown) => {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      console.warn("[Zurich] Request sem resposta", {
+        operation: path,
+        account: resolvedAccount.key,
+        durationMs: Date.now() - startedAt,
+      });
+
+      throw new Error(
+        `A Zurich não respondeu em ${ZURICH_REQUEST_TIMEOUT_MS / 1000} s (${path}) [conta ${resolvedAccount.key}]`,
+      );
+    }
+
+    throw error;
+  });
 
   const durationMs = Date.now() - startedAt;
 
@@ -422,13 +477,38 @@ async function zurichRequest<T>(
   // sem o campo Successo/Sucesso — por isso tratamos qualquer
   // CodigoErro truthy (não-zero) como falha também.
   if (sucesso === false || (codigoErro !== undefined && codigoErro !== 0)) {
+    const tokenRejected = codigoErro === 1 || codigoErro === 5;
+
+    // Token rejeitado: outra instância (o cron) pode ter renovado
+    // depois de esta ter lido. Relê a BD e, se o token mudou, repete
+    // UMA vez. Nunca se emite um token aqui.
+    if (tokenRejected && !isRetry && path !== "CriarNovoToken") {
+      forgetCachedZurichToken(resolvedAccount.key);
+
+      const latest = await getCurrentZurichToken(resolvedAccount, {
+        fresh: true,
+      }).catch(() => null);
+
+      if (latest && latest !== usedToken) {
+        return zurichRequest<T>(
+          baseUrl,
+          path,
+          extraParams,
+          init,
+          agenteParamName,
+          true,
+          resolvedAccount,
+        );
+      }
+    }
+
     // "Código N" tem de se manter tal e qual: o sync reconhece os
     // códigos 6/7 ("sem ficheiro/dados") por esse texto. A Mensagem
     // é redigida porque pode repetir NIF, IBAN ou outros dados.
     throw new Error(
       `Zurich devolveu erro em ${path} (Código ${codigoErro}) [conta ${resolvedAccount.key}]: ${sanitizeZurichText(String(raw.Mensagem))}${
-        codigoErro === 1 || codigoErro === 5
-          ? " [token rejeitado: a renovação automática está desativada porque o token é partilhado; atualiza o token no env]"
+        tokenRejected
+          ? " [token rejeitado: gera um token novo no MyZurich e grava-o em /api/dev/zurich-token]"
           : ""
       }`,
     );
@@ -445,20 +525,26 @@ export type CriarNovoTokenOutput = ZurichBaseOutput & {
   Token: string;
 };
 
+/** Interruptor geral: sem ZURICH_ALLOW_TOKEN_ISSUE=1 nunca se emite. */
+export function isZurichTokenIssueEnabled(): boolean {
+  return process.env.ZURICH_ALLOW_TOKEN_ISSUE === "1";
+}
+
 /**
- * DESATIVADO POR OMISSÃO. Emite um token novo na Zurich, o que pode
- * ANULAR o token que os outros CRMs partilham. Nada neste projeto o
- * chama automaticamente. Só corre com ZURICH_ALLOW_TOKEN_ISSUE=1, de
- * forma deliberada e coordenada; o token devolvido NÃO é guardado em
- * lado nenhum: tem de ser copiado manualmente para o env de todos os
- * consumidores.
+ * Emite um token novo na Zurich com o token atual. O token anterior
+ * fica INVÁLIDO nesse instante, por isso:
+ *   - NÃO chamar diretamente: usar renewZurichTokenIfDue
+ *     (token-renewal.ts), que reserva a renovação e GRAVA o token
+ *     novo na BD. Um token emitido e não gravado deixa tudo parado
+ *     até alguém gerar outro à mão no MyZurich;
+ *   - só corre com ZURICH_ALLOW_TOKEN_ISSUE=1.
  */
 export async function criarNovoTokenZurich(
   account?: ZurichAccount,
 ): Promise<CriarNovoTokenOutput> {
-  if (process.env.ZURICH_ALLOW_TOKEN_ISSUE !== "1") {
+  if (!isZurichTokenIssueEnabled()) {
     throw new Error(
-      "Emitir tokens Zurich está desativado: o utilizador/token é partilhado por vários CRMs e uma emissão nova pode anular o token dos outros. Só com ZURICH_ALLOW_TOKEN_ISSUE=1, de forma deliberada e coordenada.",
+      "Emitir tokens Zurich está desativado (ZURICH_ALLOW_TOKEN_ISSUE não é 1).",
     );
   }
 
@@ -641,8 +727,11 @@ export async function obterClientePorIdNif(
     urls.consultas,
     "ObterClientePorIDNIF",
     {
-      ClienteNIF: params.clienteNif,
-      ClienteID: params.clienteId,
+      // A Zurich exige os DOIS parâmetros no URL, mesmo que um vá
+      // vazio: sem isso responde 400 ("The 'ClienteID' URL parameter
+      // is missing in the request.").
+      ClienteNIF: params.clienteNif ?? "",
+      ClienteID: params.clienteId ?? "",
     },
     undefined,
     undefined,

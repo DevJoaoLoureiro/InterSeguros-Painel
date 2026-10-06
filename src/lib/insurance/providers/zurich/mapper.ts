@@ -1,6 +1,7 @@
 import type { ZurichApoliceFicheiro, ZurichClienteFicheiro } from "./file-parser";
 import { parseZurichFileDecimal } from "./file-parser";
 import { compactMetadata } from "@/lib/insurance/sync/client-metadata";
+import { pickEmail, pickPhone } from "@/lib/insurance/sync/client-contacts";
 
 /*
  * Mesma "forma" que NormalizedPrevoirPolicy / NormalizedPolicy
@@ -58,6 +59,10 @@ export type NormalizedZurichPolicy = {
     street: string | null;
     postalCode: string | null;
     city: string | null;
+    // Contactos, quando a companhia os envia. Só preenchem o que
+    // estiver vazio no CRM (ver sync/client-contacts).
+    phone?: string | null;
+    email?: string | null;
     // Tudo o que a companhia envia sobre o cliente (para a aba
     // "Dados do cliente"). Guardado em client_external_refs.
     metadata?: Record<string, unknown>;
@@ -220,6 +225,9 @@ export function mapZurichPolicy(
         cliente?.LocalidadePostal.trim() ||
         cliente?.Localidade.trim() ||
         null,
+      // Telemóvel primeiro: é o que serve para ligar/WhatsApp.
+      phone: cliente ? pickPhone(cliente.Telemovel, cliente.Telefone) : null,
+      email: cliente ? pickEmail(cliente.Email) : null,
       // Ficha completa do cliente (sexo, profissão, contactos, CC,
       // NIB, ...), sem campos vazios.
       metadata: cliente ? compactMetadata({ ...cliente }) : undefined,

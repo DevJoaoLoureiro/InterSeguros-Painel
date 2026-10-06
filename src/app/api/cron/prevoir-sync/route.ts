@@ -5,7 +5,6 @@ import { revalidateTag } from "next/cache";
 
 import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
 import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
-import { runRecoveryLeads } from "@/lib/recovery/recovery-leads";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 import {
@@ -98,13 +97,6 @@ export async function POST() {
     await reconcileProcessReceipts(createAdminClient());
   } catch (error) {
     console.error("[cron prévoir] reconcileProcessReceipts", error);
-  }
-
-  // Clientes perdidos: leads de recuperação (sem duplicados).
-  try {
-    await runRecoveryLeads(createAdminClient());
-  } catch (error) {
-    console.error("[cron prévoir] runRecoveryLeads", error);
   }
 
   return NextResponse.json(

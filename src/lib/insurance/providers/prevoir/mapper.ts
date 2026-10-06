@@ -79,6 +79,10 @@ export type NormalizedPrevoirPolicy = {
     street: string | null;
     postalCode: string | null;
     city: string | null;
+    // Contactos, quando a companhia os envia. Só preenchem o que
+    // estiver vazio no CRM (ver sync/client-contacts).
+    phone?: string | null;
+    email?: string | null;
     // Tudo o que a companhia envia sobre o cliente (para a aba
     // "Dados do cliente"). Guardado em client_external_refs.
     metadata?: Record<string, unknown>;
