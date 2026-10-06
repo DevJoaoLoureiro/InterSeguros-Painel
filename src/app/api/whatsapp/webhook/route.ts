@@ -331,25 +331,45 @@ async function saveMessage(params: {
   const { body, mediaId, messageType } =
     extractMessageContent(message);
 
+  const externalMessageId: string | null = message?.id ?? null;
+
+  // A Meta repete webhooks: a mesma mensagem não se guarda duas vezes.
+  //
+  // Feito com uma consulta e não com upsert/ON CONFLICT, porque a
+  // tabela não tem restrição única em external_message_id: o upsert
+  // falhava sempre ("no unique or exclusion constraint matching the
+  // ON CONFLICT specification") e NENHUMA mensagem recebida era
+  // guardada.
+  if (externalMessageId) {
+    const { data: existing, error: existingError } = await supabase
+      .from("whatsapp_messages")
+      .select("id")
+      .eq("external_message_id", externalMessageId)
+      .limit(1);
+
+    if (existingError) {
+      console.error(
+        "[WhatsApp] Erro ao procurar mensagem repetida:",
+        existingError
+      );
+    }
+
+    if ((existing ?? []).length > 0) return;
+  }
+
   const { error } = await supabase
     .from("whatsapp_messages")
-    .upsert(
-      {
-        conversation_id: conversationId,
-        whatsapp_account_id: whatsappAccount.id,
-        external_message_id: message?.id ?? null,
-        direction,
-        message_type: messageType,
-        body,
-        media_id: mediaId,
-        sent_at: toIsoTimestamp(message?.timestamp),
-        raw_payload: message,
-      },
-      {
-        onConflict: "external_message_id",
-        ignoreDuplicates: true,
-      }
-    );
+    .insert({
+      conversation_id: conversationId,
+      whatsapp_account_id: whatsappAccount.id,
+      external_message_id: externalMessageId,
+      direction,
+      message_type: messageType,
+      body,
+      media_id: mediaId,
+      sent_at: toIsoTimestamp(message?.timestamp),
+      raw_payload: message,
+    });
 
   if (error) {
     console.error(
