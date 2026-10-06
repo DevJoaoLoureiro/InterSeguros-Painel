@@ -4,10 +4,10 @@
  * - OWNER e ADMIN veem tudo.
  * - Funcionários (GESTOR_LOJA, COMERCIAL, ...) veem, de TODAS as lojas
  *   (se um colega está de férias, outro trata dos clientes dele):
- *     Dashboard, Clientes, Recibos, Vencimentos e as Atividades
- *     (Tarefas, Oportunidades, Simulador, Conversas).
- *   NÃO veem: Comissões, Carteira por loja, Estatísticas, Leads e a
- *   secção Gestão (Lojas, Utilizadores, Configurações).
+ *     Dashboard, Leads, Clientes, Recibos, Vencimentos e as
+ *     Atividades (Tarefas, Oportunidades, Simulador, Conversas).
+ *   NÃO veem: Comissões, Carteira por loja, Estatísticas e a secção
+ *   Gestão (Lojas, Utilizadores, Configurações).
  *
  * Usado no proxy (bloqueio de páginas pelo URL) e na sidebar (o que
  * aparece no menu). Sem imports de servidor: corre em qualquer lado.
@@ -17,6 +17,7 @@ export const FULL_ACCESS_ROLES = ["OWNER", "ADMIN"] as const;
 
 export const EMPLOYEE_PAGES = [
   "/dashboard",
+  "/leads",
   "/clientes",
   "/recibos",
   "/vencimentos",

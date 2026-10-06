@@ -4,7 +4,12 @@ import ConversasBoard from "./conversas-board";
 export default async function ConversasPage() {
   const supabase = await createClient();
 
-  const { data: accounts, error: accountsError } = await supabase
+  // As duas consultas são independentes: correm em paralelo.
+  const [
+    { data: accounts, error: accountsError },
+    { data: conversations, error: conversationsError },
+  ] = await Promise.all([
+    supabase
     .from("whatsapp_accounts")
     .select(`
       id,
@@ -18,15 +23,9 @@ export default async function ConversasPage() {
       )
     `)
     .eq("is_active", true)
-    .order("created_at", { ascending: true });
+    .order("created_at", { ascending: true }),
 
-    if (accountsError) {
-        throw new Error(
-            `[Conversas] ${accountsError.code ?? ""} | ${accountsError.message ?? ""} | ${accountsError.details ?? ""} | ${accountsError.hint ?? ""}`
-        );
-        }
-
-  const { data: conversations, error: conversationsError } = await supabase
+    supabase
     .from("whatsapp_conversations")
     .select(`
       id,
@@ -53,7 +52,14 @@ export default async function ConversasPage() {
     .order("last_message_at", {
       ascending: false,
       nullsFirst: false,
-    });
+    }),
+  ]);
+
+    if (accountsError) {
+        throw new Error(
+            `[Conversas] ${accountsError.code ?? ""} | ${accountsError.message ?? ""} | ${accountsError.details ?? ""} | ${accountsError.hint ?? ""}`
+        );
+        }
 
     if (conversationsError) {
     throw new Error(

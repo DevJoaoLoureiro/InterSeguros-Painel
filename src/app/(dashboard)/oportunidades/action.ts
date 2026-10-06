@@ -100,29 +100,6 @@ async function getAuthenticatedProfile() {
  * lista paginada de negócios fechados,
  * e utilizadores para atribuição.
  */
-export async function getOpportunitiesPageData(
-  input: {
-    closedPage?: number;
-  } = {},
-) {
-  const currentProfile =
-    await getAuthenticatedProfile();
-
-  const privileged =
-    canAssignOthers(
-      currentProfile.role,
-    );
-
-  // Nota: a leitura do cookie "selected_store_id"
-  // continua a acontecer no page.tsx (Server Component),
-  // porque cookies() só pode ser lido lá. Aqui recebemos
-  // já o storeId resolvido.
-  return {
-    privileged,
-    currentProfile,
-  };
-}
-
 export async function getOpportunitiesData(
   input: {
     selectedStoreId: string | null;

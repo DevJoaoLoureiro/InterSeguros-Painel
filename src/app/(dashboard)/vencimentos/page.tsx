@@ -1,10 +1,16 @@
 import { redirect } from "next/navigation";
-import { AlertTriangle, CalendarClock, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarClock,
+  RefreshCw,
+  UserX,
+} from "lucide-react";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { getSelectedStoreId } from "@/lib/auth/store-selection";
 
 import {
+  getLikelySwitches,
   getUpcomingReceipts,
   getUpcomingRenewals,
 } from "./action";
@@ -21,9 +27,10 @@ export default async function VencimentosPage() {
   // Loja = filtro do seletor do topo, igual para todos.
   const selectedStoreId = await getSelectedStoreId();
 
-  const [renewals, upcomingReceipts] = await Promise.all([
+  const [renewals, upcomingReceipts, likelySwitches] = await Promise.all([
     getUpcomingRenewals({ storeId: selectedStoreId }),
     getUpcomingReceipts({ storeId: selectedStoreId }),
+    getLikelySwitches({ storeId: selectedStoreId }),
   ]);
 
   const overdueRenewals = renewals.filter((r) => r.overdue).length;
@@ -40,13 +47,14 @@ export default async function VencimentosPage() {
 
         <p className="mt-1 text-sm text-[#737a84]">
           Apólices a renovar e recibos a vencer nos próximos 30
-          dias, incluindo o que já passou o prazo.
+          dias, incluindo o que já passou o prazo — e as apólices
+          anuladas ou não renovadas, para tentar recuperar o cliente.
         </p>
       </div>
 
       {/* CARDS RESUMO */}
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <SummaryCard
           label="Renovações"
           value={renewals.length}
@@ -72,11 +80,19 @@ export default async function VencimentosPage() {
           icon={<AlertTriangle className="h-5 w-5" />}
           alert={overdueReceipts > 0}
         />
+
+        <SummaryCard
+          label="Anuladas"
+          value={likelySwitches.length}
+          icon={<UserX className="h-5 w-5" />}
+          alert={likelySwitches.length > 0}
+        />
       </section>
 
       <VencimentosBoard
         renewals={renewals}
         upcomingReceipts={upcomingReceipts}
+        likelySwitches={likelySwitches}
       />
     </div>
   );

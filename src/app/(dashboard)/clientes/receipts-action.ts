@@ -27,7 +27,6 @@ import {
 } from "@/lib/clients/load-client-profile";
 import {
   assertClientAccess,
-  assertPolicyAccess,
   assertReceiptAccess,
 } from "@/lib/auth/access";
 
@@ -78,16 +77,9 @@ function getReceiptComparisonDate(receipt: NormalizedReceipt): string {
  * - prémio comercial do recibo anterior;
  * - variação percentual;
  * - alerta quando o aumento é superior a 5%.
+ *
+ * Sem verificação de acesso: só depois de o chamador validar.
  */
-export async function getPolicyReceipts(
-  policyId: string,
-): Promise<PolicyReceiptRow[]> {
-  await assertPolicyAccess(policyId);
-
-  return loadPolicyReceipts(policyId);
-}
-
-/* Sem verificação de acesso: só depois de o chamador validar. */
 async function loadPolicyReceipts(
   policyId: string,
 ): Promise<PolicyReceiptRow[]> {

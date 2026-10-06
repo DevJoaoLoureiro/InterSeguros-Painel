@@ -24,13 +24,21 @@ export default async function UsersPage() {
 
   const admin = createAdminClient();
 
-  const { data: stores } = await admin
+  // Três leituras independentes: correm em paralelo.
+  const [
+    { data: stores },
+    { data: profiles },
+    {
+      data: { users: authUsers },
+    },
+  ] = await Promise.all([
+    admin
     .from("stores")
     .select("id, name")
     .eq("active", true)
-    .order("name");
+    .order("name"),
 
-  const { data: profiles } = await admin
+    admin
     .from("profiles")
     .select(`
       id,
@@ -42,11 +50,10 @@ export default async function UsersPage() {
         name
       )
     `)
-    .order("full_name");
+    .order("full_name"),
 
-  const {
-    data: { users: authUsers },
-  } = await admin.auth.admin.listUsers();
+    admin.auth.admin.listUsers(),
+  ]);
 
   const emails = new Map(
     authUsers.map((user) => [

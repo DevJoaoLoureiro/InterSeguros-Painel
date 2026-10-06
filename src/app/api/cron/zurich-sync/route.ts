@@ -6,6 +6,7 @@ import {
 } from "@/lib/insurance/providers/zurich/sync";
 import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
 import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
+import { runRecoveryLeads } from "@/lib/recovery/recovery-leads";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -30,11 +31,21 @@ export async function GET() {
       },
     );
 
+    // Clientes perdidos: leads de recuperação 45 dias antes do
+    // aniversário da saída (sem duplicados — o Prévoir também corre).
+    const recovery = await runRecoveryLeads(createAdminClient()).catch(
+      (error: unknown) => {
+        console.error("[cron zurich] runRecoveryLeads", error);
+        return null;
+      },
+    );
+
     return Response.json({
       success: true,
       policies: policiesResult,
       receipts: receiptsResult,
       processes,
+      recovery,
     });
   } catch (error) {
     return Response.json(
