@@ -36,8 +36,25 @@ export const maxDuration = 60;
  *   na API oficial), mas só escreve o que mudou. 
  */
 
-export async function POST() {
+/*
+ * ?missing=N — execução manual: em vez do incremental, importa até N
+ * apólices que a Prévoir tem na conta e o CRM ainda não (ex.: carteira
+ * nova atribuída ao mediador). Repetir até "missingRemaining" ser 0.
+ * N é limitado para a execução caber nos 60 segundos.
+ */
+const MAX_MISSING_PER_RUN = 60;
+
+function missingLimit(request: Request) {
+  const value = Number(new URL(request.url).searchParams.get("missing"));
+
+  return Number.isInteger(value) && value > 0
+    ? Math.min(value, MAX_MISSING_PER_RUN)
+    : null;
+}
+
+export async function POST(request: Request) {
   const startedAt = new Date().toISOString();
+  const missing = missingLimit(request);
 
   let policiesResult: Awaited<
     ReturnType<typeof syncPrevoirPolicies>
@@ -55,7 +72,9 @@ export async function POST() {
   // ========================================
 
   try {
-    policiesResult = await syncPrevoirPolicies();
+    policiesResult = await syncPrevoirPolicies(
+      missing ? { missingOnly: true, limit: missing } : {},
+    );
   } catch (error) {
     policiesError =
       error instanceof Error ? error.message : String(error);

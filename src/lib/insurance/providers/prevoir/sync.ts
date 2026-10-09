@@ -21,6 +21,14 @@ import {
 
 type SyncOptions = {
   limit?: number;
+  /*
+   * Importa as apolices que a Prevoir tem na conta e que ainda nao
+   * existem no CRM (ex.: carteira transferida para o mediador). O
+   * incremental nunca as traz, porque nao foram alteradas. Com
+   * `limit`, importa so esse numero por execucao: repetir ate a
+   * resposta dizer que nao falta nenhuma.
+   */
+  missingOnly?: boolean;
 };
 
 export async function syncPrevoirPolicies(
@@ -90,6 +98,8 @@ export async function syncPrevoirPolicies(
   let updated = 0;
   const skipped = 0;
   let failed = 0;
+  // So no modo missingOnly: quantas faltavam antes desta execucao.
+  let missingBefore: number | null = null;
 
   const errors: string[] = [];
 
@@ -109,9 +119,33 @@ export async function syncPrevoirPolicies(
 
         let sourcePolicies: Awaited<ReturnType<typeof getPrevoirPolicies>>;
 
-    let syncMode: "FULL" | "INCREMENTAL" = "FULL";
+    let syncMode: "FULL" | "INCREMENTAL" | "MISSING" = "FULL";
 
-    if (syncState?.last_successful_sync_at) {
+    if (options.missingOnly) {
+      const { data: existing, error: existingError } = await supabase
+        .from("policies")
+        .select("external_id")
+        .eq("company_id", company.id)
+        // Sem isto a consulta devolve no maximo 1000 linhas.
+        .range(0, 9999);
+
+      if (existingError) {
+        throw new Error(
+          `Erro ao carregar apolices existentes: ${existingError.message}`,
+        );
+      }
+
+      const known = new Set(
+        (existing ?? []).map((policy) => policy.external_id),
+      );
+
+      sourcePolicies = (await getPrevoirPolicies()).filter(
+        (source) => !known.has(mapPrevoirPolicy(source).externalId),
+      );
+
+      missingBefore = sourcePolicies.length;
+      syncMode = "MISSING";
+    } else if (syncState?.last_successful_sync_at) {
       const lastSync = new Date(
         syncState.last_successful_sync_at,
       );
@@ -406,6 +440,12 @@ export async function syncPrevoirPolicies(
         finalStatus,
 
       syncMode,
+
+      // Modo missingOnly: quantas ficam por importar depois desta execucao.
+      missingRemaining:
+        missingBefore === null
+          ? null
+          : missingBefore - created - updated,
 
       received,
       created,
