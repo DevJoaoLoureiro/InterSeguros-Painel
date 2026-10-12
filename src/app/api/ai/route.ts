@@ -6,6 +6,9 @@ import {
   runAiAgent,
 } from "@/lib/ai/agent";
 
+// A prospeção pesquisa na web antes de responder: precisa de mais tempo.
+export const maxDuration = 60;
+
 export async function POST(
   request: Request,
 ) {

@@ -44,6 +44,14 @@ import {
   getExpiryAlertsForAi,
 } from "@/lib/ai/tools/tasks";
 
+import {
+  searchProspects,
+} from "@/lib/ai/tools/prospecting";
+
+import type {
+  Prospect,
+} from "@/lib/prospecting/types";
+
 const tools = [
   {
     type: "function" as const,
@@ -460,6 +468,43 @@ const tools = [
   },
   strict: true,
 },
+
+{
+  type: "function" as const,
+  name: "search_prospects",
+  description:
+    "Prospeção: procura na web PME independentes de um tipo de negócio num concelho, que ainda não são leads nem clientes, e devolve só as que valem a chamada, com a nota e os seguros a propor. Só chamar depois de saber o tipo de negócio concreto, a zona concreta e o seguro-alvo (ver PROSPEÇÃO DE LEADS). Só empresas, nunca particulares.",
+  parameters: {
+    type: "object",
+    properties: {
+      business: {
+        type: "string",
+        description:
+          "Tipo de negócio concreto, em português (ex.: oficinas, restaurantes, empresas de construção). Nunca genérico como 'empresas'.",
+      },
+      zone: {
+        type: "string",
+        description:
+          "Concelho ou cidade (ex.: Braga, Guimarães). Nunca o país inteiro.",
+      },
+      product: {
+        type: ["string", "null"],
+        enum: [
+          "Acidentes de trabalho",
+          "Multirriscos",
+          "Frota automóvel",
+          "Responsabilidade civil",
+          null,
+        ],
+        description:
+          "Seguro que o utilizador quer vender nesta pesquisa, ou null se disser que é qualquer um.",
+      },
+    },
+    required: ["business", "zone", "product"],
+    additionalProperties: false,
+  },
+  strict: true,
+},
 ];
 
 /*
@@ -633,7 +678,29 @@ TAREFAS E PROCESSOS
 
 ALERTAS DE VENCIMENTO
 - Para "o que vence nos próximos dias", "alertas", "o que está a vencer" ou no resumo do dia, usa get_expiry_alerts (janela de 5 dias).
+
+PROSPEÇÃO DE LEADS
+- Para "procura leads novas", "encontra oficinas/restaurantes em <zona>" ou pedidos semelhantes, usa search_prospects.
+- ANTES de pesquisar precisas de três respostas:
+  1. Tipo de negócio concreto (ex.: oficinas, construção civil, transportes, restaurantes). "Empresas" ou "leads" não chega.
+  2. Concelho ou cidade (ex.: Braga, Guimarães). "Portugal" ou "o norte" não chega.
+  3. Seguro que querem vender: Acidentes de trabalho, Multirriscos, Frota automóvel, Responsabilidade civil, ou qualquer um.
+- Se faltar alguma, faz SÓ as perguntas em falta, numa única mensagem, numeradas e com os exemplos acima. Nunca pesquises a adivinhar.
+- Se o utilizador não souber que negócio escolher, sugere: construção civil e transportes (acidentes de trabalho e frota), oficinas (acidentes de trabalho e multirriscos), restauração e alojamento (multirriscos).
+- Quando tiveres as três respostas, pesquisa logo, sem pedir confirmação. Nas pesquisas seguintes da mesma conversa reutiliza o que já foi respondido.
+- A pesquisa só devolve PME independentes: grandes empresas, cadeias e franchisings ficam de fora (têm corretor próprio), tal como as de nota fraca.
+- As empresas encontradas aparecem em cartões por baixo da tua resposta, com telefone, nota e botão para guardar como lead. NÃO as listes no texto.
+- Responde em 2 ou 3 frases: quantas valem a chamada, qual é a melhor e porquê (usa o "reason" dela), e quantas ficaram de fora (grandes empresas, fracas, já leads/clientes).
+- Se não vier nenhuma, diz isso sem rodeios e sugere outra zona ou outro tipo de negócio.
+- A pesquisa demora alguns segundos e pode trazer poucas empresas de cada vez. Se vierem poucas, sugere repetir com uma zona vizinha ou um tipo de negócio mais específico.
+- Se houver telefones por confirmar (phoneVerified falso), diz quantos numa frase curta.
+- A nota é uma estimativa de encaixe pelo tipo de negócio. Nunca afirmes que a empresa não tem seguro ou que precisa de um.
+- Só empresas. Se pedirem particulares, explica que a prospeção é só para empresas.
 `;
+
+  // Empresas da última pesquisa de prospeção: seguem para o painel em
+  // cartões, fora do texto da resposta.
+  let prospects: Prospect[] | undefined;
   let response =
   await openai.responses.create({
     model:
@@ -670,6 +737,8 @@ ALERTAS DE VENCIMENTO
 
         responseId:
           response.id,
+
+        prospects,
       };
     }
 
@@ -940,6 +1009,53 @@ ALERTAS DE VENCIMENTO
             );
 
         break;
+
+    case "search_prospects": {
+        const found =
+            await searchProspects(
+            context,
+            {
+                business:
+                String(
+                    args.business ?? "",
+                ),
+                zone:
+                String(
+                    args.zone ?? "",
+                ),
+                product:
+                args.product
+                    ? String(args.product)
+                    : null,
+            },
+            );
+
+        if ("error" in found) {
+            result = found;
+            break;
+        }
+
+        prospects = found.prospects;
+
+        // Para o modelo vai só o necessário para resumir; os
+        // contactos ficam nos cartões.
+        result = {
+            summary: found.summary,
+            prospects: found.prospects.map(
+            (prospect) => ({
+                name: prospect.name,
+                activity: prospect.activity,
+                locality: prospect.locality,
+                grade: prospect.grade,
+                reason: prospect.reason,
+                phoneVerified: prospect.phoneVerified,
+                products: prospect.products,
+            }),
+            ),
+        };
+
+        break;
+    }
 
     case "__not_allowed__":
       result = {

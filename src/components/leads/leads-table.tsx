@@ -231,6 +231,7 @@ export function LeadsTable({
                           site: "Site",
                           manual: "Manual",
                           recuperacao: "Recuperação",
+                          prospecao: "Prospeção",
                         }[lead.source] ?? lead.source)
                       : "—"}
                   </span>

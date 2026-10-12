@@ -7,10 +7,14 @@ import {
   useState,
 } from "react";
 
+import type { Prospect } from "@/lib/prospecting/types";
+
 export type AiMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /* Empresas encontradas na prospeção, mostradas em cartões. */
+  prospects?: Prospect[];
 };
 
 type OpenAssistantOptions = {

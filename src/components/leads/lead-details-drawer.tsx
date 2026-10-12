@@ -219,6 +219,16 @@ function formatAnswerLabel(
     contact: "Contacto",
     phone: "Telefone",
     name: "Nome",
+    avaliacao_da_lead:
+      "Avaliação da lead",
+    avaliacao_google:
+      "Avaliação no Google",
+    seguros_a_propor:
+      "Seguros a propor",
+    guiao_de_chamada:
+      "Guião de chamada",
+    fonte_do_contacto:
+      "Fonte do contacto",
   };
 
   return (
@@ -247,6 +257,7 @@ function getSourceLabel(
     chatbot: "Chatbot",
     website: "Website",
     manual: "Manual",
+    prospecao: "Prospeção",
   };
 
   return sources[source] ?? source;
@@ -962,7 +973,10 @@ useEffect(() => {
             <h3 className="flex items-center gap-2 font-semibold text-[#20242a]">
               <MessageSquareText className="h-4 w-4 text-[#ff4b0a]" />
 
-              Respostas do chatbot
+              {lead.source ===
+              "prospecao"
+                ? "Dados da prospeção"
+                : "Respostas do chatbot"}
             </h3>
 
             {answers.length >
@@ -985,7 +999,7 @@ useEffect(() => {
                         )}
                       </dt>
 
-                      <dd className="text-sm font-medium text-[#333842]">
+                      <dd className="whitespace-pre-wrap break-words text-sm font-medium text-[#333842]">
                         {formatAnswer(
                           answer,
                         )}

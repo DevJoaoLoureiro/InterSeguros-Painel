@@ -4,6 +4,7 @@ import {
   Bot,
   Loader2,
   MessageCircle,
+  Mic,
   RotateCcw,
   Send,
   X,
@@ -21,6 +22,16 @@ import { usePathname } from "next/navigation";
 import {
   useAssistant,
 } from "@/components/ai/assistant-provider";
+
+import {
+  ProspectCard,
+} from "@/components/ai/prospect-card";
+
+import {
+  speak,
+  stopSpeaking,
+  useVoiceInput,
+} from "@/components/ai/use-voice-input";
 
 export default function AssistantPanel() {
   const onConversas = usePathname().startsWith("/conversas");
@@ -80,14 +91,34 @@ export default function AssistantPanel() {
     clearPendingMessage,
     ]);
 
-  async function handleSubmit(
+  // Pergunta feita por voz: envia logo e lê a resposta em voz alta.
+  const voice = useVoiceInput(
+    (transcript) => {
+      void sendMessage(
+        transcript,
+        true,
+      );
+    },
+  );
+
+  function handleSubmit(
     event:
       FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
 
+    void sendMessage(
+      input,
+      false,
+    );
+  }
+
+  async function sendMessage(
+    text: string,
+    viaVoice: boolean,
+  ) {
     const message =
-      input.trim();
+      text.trim();
 
     if (
       !message ||
@@ -95,6 +126,8 @@ export default function AssistantPanel() {
     ) {
       return;
     }
+
+    stopSpeaking();
 
     const userMessage = {
       id:
@@ -157,6 +190,10 @@ export default function AssistantPanel() {
         );
       }
 
+      const answer: string =
+        data.answer ??
+        "Não consegui responder.";
+
       setMessages(
         (current) => [
           ...current,
@@ -168,11 +205,21 @@ export default function AssistantPanel() {
               "assistant",
 
             content:
-              data.answer ??
-              "Não consegui responder.",
+              answer,
+
+            prospects:
+              Array.isArray(
+                data.prospects,
+              )
+                ? data.prospects
+                : undefined,
           },
         ],
       );
+
+      if (viaVoice) {
+        speak(answer);
+      }
     } catch (error) {
       setMessages(
         (current) => [
@@ -234,7 +281,7 @@ export default function AssistantPanel() {
                 </p>
 
                 <p className="text-xs text-[#7d848e]">
-                  Carteira e produção
+                  Carteira, produção e prospeção
                 </p>
               </div>
             </div>
@@ -305,6 +352,13 @@ export default function AssistantPanel() {
                       setInput
                     }
                   />
+
+                  <Suggestion
+                    text="Procura leads novas"
+                    onClick={
+                      setInput
+                    }
+                  />
                 </div>
               </div>
             ) : (
@@ -314,25 +368,52 @@ export default function AssistantPanel() {
                     key={
                       message.id
                     }
-                    className={`flex ${
-                      message.role ===
-                      "user"
-                        ? "justify-end"
-                        : "justify-start"
-                    }`}
+                    className="space-y-2"
                   >
                     <div
-                      className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${
+                      className={`flex ${
                         message.role ===
                         "user"
-                          ? "rounded-br-md bg-[#17191d] text-white"
-                          : "rounded-bl-md bg-[#f3f4f6] text-[#25292f]"
+                          ? "justify-end"
+                          : "justify-start"
                       }`}
                     >
-                      {
-                        message.content
-                      }
+                      <div
+                        className={`max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-6 ${
+                          message.role ===
+                          "user"
+                            ? "rounded-br-md bg-[#17191d] text-white"
+                            : "rounded-bl-md bg-[#f3f4f6] text-[#25292f]"
+                        }`}
+                      >
+                        {
+                          message.content
+                        }
+                      </div>
                     </div>
+
+                    {message.prospects &&
+                      message.prospects
+                        .length > 0 && (
+                        <div className="space-y-2">
+                          {message.prospects.map(
+                            (prospect) => (
+                              <ProspectCard
+                                key={
+                                  prospect.placeId
+                                }
+                                prospect={
+                                  prospect
+                                }
+                              />
+                            ),
+                          )}
+
+                          <p className="text-[10px] leading-4 text-[#9aa0a8]">
+                            Nota estimada pelo tipo de negócio. Antes de ligar, confirma que a empresa não está na lista de oposição da Direção-Geral do Consumidor.
+                          </p>
+                        </div>
+                      )}
                   </div>
                 ),
               )
@@ -388,9 +469,42 @@ export default function AssistantPanel() {
                   }
                 }}
                 rows={1}
-                placeholder="Pergunta ao assistente..."
+                placeholder={
+                  voice.listening
+                    ? "A ouvir..."
+                    : "Pergunta ao assistente..."
+                }
                 className="max-h-32 min-h-[40px] flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none"
               />
+
+              {voice.supported && (
+                <button
+                  type="button"
+                  onClick={
+                    voice.listening
+                      ? voice.stop
+                      : voice.start
+                  }
+                  disabled={loading}
+                  title={
+                    voice.listening
+                      ? "Parar de ouvir"
+                      : "Falar com o assistente"
+                  }
+                  aria-label={
+                    voice.listening
+                      ? "Parar de ouvir"
+                      : "Falar com o assistente"
+                  }
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg disabled:cursor-not-allowed disabled:opacity-40 ${
+                    voice.listening
+                      ? "animate-pulse bg-[#ff4b0a] text-white"
+                      : "text-[#59616d] hover:bg-[#f3f4f6]"
+                  }`}
+                >
+                  <Mic className="h-4 w-4" />
+                </button>
+              )}
 
               <button
                 type="submit"
