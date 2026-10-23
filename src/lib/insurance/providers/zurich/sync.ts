@@ -411,6 +411,8 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     type PolicyWithAccount = {
       source: Awaited<ReturnType<typeof getApolicesDoDia>>[number];
       account: ZurichAccount;
+      // Dia do ficheiro (AAAA-MM-DD); null quando vem de sourcePolicies.
+      day: string | null;
     };
 
     const sourcePolicies: PolicyWithAccount[] = [];
@@ -430,7 +432,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     >();
 
     for (const source of options.sourcePolicies ?? []) {
-      sourcePolicies.push({ source, account: accounts[0] });
+      sourcePolicies.push({ source, account: accounts[0], day: null });
     }
 
     for (const account of options.sourcePolicies ? [] : accounts) {
@@ -450,7 +452,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
         }
 
         for (const source of apolicesDoDia) {
-          sourcePolicies.push({ source, account });
+          sourcePolicies.push({ source, account, day: dia });
         }
 
         for (const cliente of clientesDoDia) {
@@ -479,7 +481,46 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
       );
     }
 
-    const uniquePolicies = Array.from(latestPolicies.values());
+    let uniquePolicies = Array.from(latestPolicies.values());
+
+    // Apólice já sincronizada num dia POSTERIOR ao do ficheiro: os dados
+    // desse ficheiro já estão no CRM (os ficheiros diários não mudam),
+    // por isso salta-se. Assim cada corrida só trata o que é novo e cabe
+    // no tempo máximo da Vercel, mesmo com o lookback de 7 dias.
+    if (!dryRun && !options.sourcePolicies) {
+      const lastSynced = new Map<string, string>();
+      const numbers = uniquePolicies.map((item) =>
+        item.source.NumeroApolice.trim(),
+      );
+
+      for (let i = 0; i < numbers.length; i += 150) {
+        const { data, error } = await supabase
+          .from("policies")
+          .select("external_id, last_synced_at")
+          .eq("company_id", company.id)
+          .in("external_id", numbers.slice(i, i + 150));
+
+        if (error) {
+          throw new Error(`Erro ao ler apólices já sincronizadas: ${error.message}`);
+        }
+
+        for (const row of data ?? []) {
+          if (row.last_synced_at) {
+            lastSynced.set(String(row.external_id), String(row.last_synced_at));
+          }
+        }
+      }
+
+      uniquePolicies = uniquePolicies.filter((item) => {
+        const synced = lastSynced.get(item.source.NumeroApolice.trim());
+        const alreadyDone =
+          item.day !== null && synced !== undefined && synced.slice(0, 10) > item.day;
+
+        if (alreadyDone) skipped += 1;
+
+        return !alreadyDone;
+      });
+    }
 
     const selectedPolicies = options.limit
       ? uniquePolicies.slice(0, options.limit)
