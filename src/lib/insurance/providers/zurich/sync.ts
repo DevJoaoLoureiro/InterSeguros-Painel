@@ -465,9 +465,25 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
       }
     }
 
+    // A mesma apólice aparece em vários ficheiros diários da janela
+    // (lookback de 7 dias): processa-se uma vez só, com a versão do dia
+    // mais recente (os dias vêm por ordem). Sem isto, uma semana com
+    // ficheiros grandes repetia milhares de apólices e o cron passava
+    // o tempo máximo da Vercel.
+    const latestPolicies = new Map<string, PolicyWithAccount>();
+
+    for (const item of sourcePolicies) {
+      latestPolicies.set(
+        `${item.account.key}:${item.source.NumeroApolice.trim()}`,
+        item,
+      );
+    }
+
+    const uniquePolicies = Array.from(latestPolicies.values());
+
     const selectedPolicies = options.limit
-      ? sourcePolicies.slice(0, options.limit)
-      : sourcePolicies;
+      ? uniquePolicies.slice(0, options.limit)
+      : uniquePolicies;
 
     received = selectedPolicies.length;
 

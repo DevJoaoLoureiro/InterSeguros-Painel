@@ -9,6 +9,10 @@ import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
 import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+// Sync de apólices + recibos (com consultas individuais à Zurich) pode
+// levar minutos; sem isto a Vercel cortava a meio e o estado não avançava.
+export const maxDuration = 300;
+
 /**
  * Cron diário da Zurich. Protegido pelo mesmo padrão CRON_SECRET
  * que já usas para /api/cron/libax-import — o proxy.ts já trata
