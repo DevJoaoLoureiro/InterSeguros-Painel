@@ -74,6 +74,13 @@ export default async function CarteiraPage() {
                 <p className="mt-0.5 text-lg font-semibold text-[#20242a]">
                   {formatCurrency(company.totalAnualizado)}
                 </p>
+
+                {company.missingCommercialCount > 0 && (
+                  <p className="mt-1 text-[11px] text-amber-700">
+                    {company.missingCommercialCount} apólices sem recibo
+                    ainda não contam
+                  </p>
+                )}
               </div>
             </Link>
           ))}

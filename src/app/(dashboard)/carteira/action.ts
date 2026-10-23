@@ -19,6 +19,7 @@ export type CompanyOverview = {
   name: string;
   totalCount: number;
   totalAnualizado: number;
+  missingCommercialCount: number;
 };
 
 export type ProductBreakdown = {
@@ -41,6 +42,11 @@ export type StorePortfolio = {
   totalCount: number;
   totalAnualizado: number;
   seguroTotal: number;
+  missingCommercialCount: number;
+  // Zurich: prémio comercial dos recibos de 1 de janeiro até hoje — o
+  // valor de "Produção" do painel MyZurich (que mete os Financeiros
+  // dentro do Vida).
+  yearProduction: { vida: number; naoVida: number; total: number } | null;
   plans: PlanBreakdown[];
 };
 
@@ -58,6 +64,8 @@ type RawPolicyRow = {
   annualized_premium: number | string | null;
   payment_frequency: string | null;
   portfolio_premium: number;
+  // Zurich sem recibo no CRM: não há prémio comercial (conta 0).
+  missing_commercial: boolean;
   issue_date: string | null;
   start_date: string | null;
   issuing_store_id: string | null;
@@ -109,6 +117,20 @@ function isReversalReceipt(receipt: ZurichReceiptRow): boolean {
     externalNature === "9" ||
     receiptType.includes("ESTORNO") ||
     receiptType.includes("REVERSAL")
+  );
+}
+
+/*
+ * Entregas pontuais (ex.: PPR): não são o prémio periódico da apólice,
+ * por isso não se anualizam nem servem de "último recibo".
+ */
+function isOneOffReceipt(receipt: ZurichReceiptRow): boolean {
+  const receiptType = (receipt.receipt_type ?? "").trim().toUpperCase();
+
+  return (
+    receiptType.includes("SUPLEMENTAR") ||
+    receiptType.includes("PRÉMIO ÚNICO") ||
+    receiptType.includes("PREMIO UNICO")
   );
 }
 
@@ -172,10 +194,9 @@ export async function getAccessibleStores(): Promise<{
  * - O recibo cobre só o seu período (um mês, um trimestre...): o valor
  *   é anualizado — prémio × 12 ÷ meses cobertos. Antes contava só a
  *   prestação, e uma apólice mensal valia 1/12 do real.
- * - Apólice SEM recibos no CRM (os ficheiros diários só existem desde
- *   a ativação dos WebServices): usa-se o prémio anual da própria
- *   apólice em vez de 0. Esse valor é o prémio TOTAL (com encargos),
- *   ligeiramente acima do comercial — melhor aproximação disponível.
+ * - A Carteira é SEMPRE prémio comercial. Apólice SEM recibo no CRM
+ *   conta 0 e é sinalizada (missing_commercial) — o prémio da própria
+ *   apólice é o TOTAL (com encargos) e não serve.
  *
  * A ordenação é por period_end e depois issue_date, ambos descendentes.
  * Como percorremos nessa ordem e só guardamos o primeiro recibo válido
@@ -185,6 +206,9 @@ export async function getAccessibleStores(): Promise<{
 // Ids por pedido: com centenas de ids, o URL do .in() fica grande
 // demais e o pedido falha ("fetch failed").
 const RECEIPTS_CHUNK = 150;
+
+// Limite de linhas por pedido do Supabase.
+const POLICIES_PAGE = 1000;
 
 const INSTALLMENTS_PER_YEAR: Record<string, number> = {
   ANNUAL: 1,
@@ -226,11 +250,14 @@ async function getZurichAnnualPremiums(
   const ids = policies.map((policy) => policy.id);
   const admin = createAdminClient();
 
-  const chunks = await Promise.all(
-    Array.from({ length: Math.ceil(ids.length / RECEIPTS_CHUNK) }, (_, i) =>
-      admin
+  async function loadChunk(chunkIds: string[]): Promise<ZurichReceiptRow[]> {
+    const out: ZurichReceiptRow[] = [];
+
+    for (let from = 0; ; from += POLICIES_PAGE) {
+      const { data, error } = await admin
         .from("receipts")
         .select(`
+          id,
           policy_id,
           commercial_premium,
           period_start,
@@ -239,32 +266,42 @@ async function getZurichAnnualPremiums(
           receipt_type,
           external_nature
         `)
-        .in("policy_id", ids.slice(i * RECEIPTS_CHUNK, (i + 1) * RECEIPTS_CHUNK))
+        .in("policy_id", chunkIds)
         .not("commercial_premium", "is", null)
-        .order("period_end", { ascending: false })
-        .order("issue_date", { ascending: false }),
+        .order("id")
+        .range(from, from + POLICIES_PAGE - 1);
+
+      if (error) {
+        throw new Error(
+          `Erro ao carregar prémios comerciais Zurich: ${error.message}`,
+        );
+      }
+
+      out.push(...((data ?? []) as ZurichReceiptRow[]));
+
+      if ((data ?? []).length < POLICIES_PAGE) return out;
+    }
+  }
+
+  const chunks = await Promise.all(
+    Array.from({ length: Math.ceil(ids.length / RECEIPTS_CHUNK) }, (_, i) =>
+      loadChunk(ids.slice(i * RECEIPTS_CHUNK, (i + 1) * RECEIPTS_CHUNK)),
     ),
   );
 
-  const receipts: ZurichReceiptRow[] = [];
+  const receipts = chunks.flat();
 
-  for (const { data, error } of chunks) {
-    if (error) {
-      throw new Error(
-        `Erro ao carregar prémios comerciais Zurich: ${error.message}`,
-      );
-    }
-
-    receipts.push(...((data ?? []) as ZurichReceiptRow[]));
-  }
-
-  // Cada bloco vem ordenado; juntos, reordenar para o mais recente
-  // ficar primeiro.
+  // Ordenar para o mais recente ficar primeiro.
   receipts.sort(
     (a, b) =>
       (b.period_end ?? "").localeCompare(a.period_end ?? "") ||
       (b.issue_date ?? "").localeCompare(a.issue_date ?? ""),
   );
+
+  const oneYearAgo = new Date(Date.now() - 365 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+  const oneOffTotals = new Map<string, number>();
 
   for (const receipt of receipts) {
     if (!receipt.policy_id) {
@@ -279,14 +316,137 @@ async function getZurichAnnualPremiums(
       continue;
     }
 
-    const premium =
-      toNumber(receipt.commercial_premium) *
-      receiptsPerYear(receipt, frequencies.get(receipt.policy_id) ?? null);
+    if (isOneOffReceipt(receipt)) {
+      // Prémio único / entregas livres (PPR, Investimento): sem prémio
+      // periódico — soma-se o que entrou nos últimos 12 meses, sem
+      // anualizar (ver abaixo).
+      if ((receipt.period_start ?? "") >= oneYearAgo) {
+        oneOffTotals.set(
+          receipt.policy_id,
+          (oneOffTotals.get(receipt.policy_id) ?? 0) +
+            toNumber(receipt.commercial_premium),
+        );
+      }
 
-    result.set(receipt.policy_id, Math.round(premium * 100) / 100);
+      continue;
+    }
+
+    const perYear = receiptsPerYear(
+      receipt,
+      frequencies.get(receipt.policy_id) ?? null,
+    );
+
+    result.set(
+      receipt.policy_id,
+      Math.round(toNumber(receipt.commercial_premium) * perYear * 100) / 100,
+    );
+  }
+
+  for (const [policyId, total] of oneOffTotals) {
+    if (!result.has(policyId)) {
+      result.set(policyId, Math.round(total * 100) / 100);
+    }
   }
 
   return result;
+}
+
+// ============================================================
+// ZURICH — PRODUÇÃO DO ANO (como no painel MyZurich)
+// ============================================================
+
+type YearReceiptRow = ZurichReceiptRow & {
+  status: string | null;
+  policy:
+    | {
+        issuing_store_id: string | null;
+        insurance_line: { plan_type: string } | { plan_type: string }[] | null;
+      }
+    | null;
+};
+
+/*
+ * O painel MyZurich ("Produção") NÃO é a carteira anual: é o prémio
+ * comercial dos recibos com início entre 1 de janeiro e hoje, sem os
+ * anulados e com os estornos a abater. O "Vida" do painel inclui os
+ * Financeiros (PPR, Unit Linked, poupança), que o CRM classifica à
+ * parte. Confirmado a 2026-10-23: 540.084 € no CRM vs 546.894 € no
+ * painel (98,8 %). Só para Zurich; nas outras companhias devolve null.
+ */
+async function getZurichYearProduction(
+  storeIds: string[],
+  companyId: string,
+): Promise<{ vida: number; naoVida: number; total: number } | null> {
+  const companies = await getCachedCompanies();
+  const company = companies.find((item) => item.id === companyId);
+
+  if (!isZurichCompanyCode(company?.code)) {
+    return null;
+  }
+
+  const admin = createAdminClient();
+  const today = new Date().toISOString().slice(0, 10);
+  const yearStart = `${today.slice(0, 4)}-01-01`;
+  const allowedStores = new Set(storeIds);
+  let vida = 0;
+  let naoVida = 0;
+
+  for (let from = 0; ; from += POLICIES_PAGE) {
+    const { data, error } = await admin
+      .from("receipts")
+      .select(`
+        id,
+        policy_id,
+        commercial_premium,
+        period_start,
+        period_end,
+        issue_date,
+        receipt_type,
+        external_nature,
+        status,
+        policy:policies!inner (
+          issuing_store_id,
+          insurance_line:insurance_lines ( plan_type )
+        )
+      `)
+      .eq("company_id", companyId)
+      .gte("period_start", yearStart)
+      .lte("period_start", today)
+      .neq("status", "CANCELLED")
+      .not("commercial_premium", "is", null)
+      .order("id")
+      .range(from, from + POLICIES_PAGE - 1);
+
+    if (error) {
+      throw new Error(`Erro ao carregar produção Zurich: ${error.message}`);
+    }
+
+    const page = (data ?? []) as unknown as YearReceiptRow[];
+
+    for (const receipt of page) {
+      const storeId = receipt.policy?.issuing_store_id ?? null;
+
+      if (storeId && !allowedStores.has(storeId)) continue;
+
+      const planType = firstRelation(receipt.policy?.insurance_line)?.plan_type;
+
+      const absolute = Math.abs(toNumber(receipt.commercial_premium));
+      const premium = isReversalReceipt(receipt) ? -absolute : absolute;
+
+      if (planType === "VIDA" || planType === "FINANCEIROS") vida += premium;
+      else if (planType === "NAO_VIDA") naoVida += premium;
+    }
+
+    if (page.length < POLICIES_PAGE) break;
+  }
+
+  const round = (value: number) => Math.round(value * 100) / 100;
+
+  return {
+    vida: round(vida),
+    naoVida: round(naoVida),
+    total: round(vida + naoVida),
+  };
 }
 
 // ============================================================
@@ -323,42 +483,59 @@ async function fetchActivePolicies(
     companyCode = company.code;
   }
 
-  let query = admin
-    .from("policies")
-    .select(`
-      id,
-      product_code,
-      product_name,
-      annualized_premium,
-      payment_frequency,
-      issue_date,
-      start_date,
-      issuing_store_id,
-      insurance_line:insurance_lines ( plan_type )
-    `)
-    .eq("status", "ACTIVE")
-    .eq("company_id", companyId)
-    .not("start_date", "is", null)
-    .lte("start_date", todayKey);
+  if (storeIds !== null && storeIds.length === 0) {
+    return [];
+  }
 
-  if (storeIds !== null) {
-    if (storeIds.length === 0) {
-      return [];
+  function pageQuery(from: number) {
+    let query = admin
+      .from("policies")
+      .select(`
+        id,
+        product_code,
+        product_name,
+        annualized_premium,
+        payment_frequency,
+        issue_date,
+        start_date,
+        issuing_store_id,
+        insurance_line:insurance_lines ( plan_type )
+      `)
+      .eq("status", "ACTIVE")
+      .eq("company_id", companyId)
+      .not("start_date", "is", null)
+      .lte("start_date", todayKey);
+
+    if (storeIds !== null) {
+      query = query.or(storeOrUnassignedFilter(storeIds));
     }
 
-    query = query.or(storeOrUnassignedFilter(storeIds));
+    return query.order("id").range(from, from + POLICIES_PAGE - 1);
   }
 
-  const { data, error } = await query;
-
-  if (error) {
-    throw new Error(`Erro ao carregar carteira: ${error.message}`);
-  }
-
-  const rows = (data ?? []) as unknown as Omit<
+  /*
+   * O Supabase devolve no máximo 1000 linhas por pedido: sem paginar,
+   * uma companhia com mais apólices ficava cortada (e com um corte
+   * arbitrário — ex.: só apólices até 2023).
+   */
+  const rows: Omit<
     RawPolicyRow,
-    "portfolio_premium"
-  >[];
+    "portfolio_premium" | "missing_commercial"
+  >[] = [];
+
+  for (let from = 0; ; from += POLICIES_PAGE) {
+    const { data, error } = await pageQuery(from);
+
+    if (error) {
+      throw new Error(`Erro ao carregar carteira: ${error.message}`);
+    }
+
+    const page = (data ?? []) as unknown as typeof rows;
+
+    rows.push(...page);
+
+    if (page.length < POLICIES_PAGE) break;
+  }
 
   /*
    * Todas as companhias, exceto Zurich:
@@ -368,20 +545,25 @@ async function fetchActivePolicies(
     return rows.map((row) => ({
       ...row,
       portfolio_premium: toNumber(row.annualized_premium),
+      missing_commercial: false,
     }));
   }
 
   /*
    * Zurich: prémio comercial do último recibo, anualizado; sem
-   * recibos, o prémio anual da apólice (ver getZurichAnnualPremiums).
+   * recibo conta 0 (ver getZurichAnnualPremiums).
    */
   const annualPremiums = await getZurichAnnualPremiums(rows);
 
-  return rows.map((row) => ({
-    ...row,
-    portfolio_premium:
-      annualPremiums.get(row.id) ?? toNumber(row.annualized_premium),
-  }));
+  return rows.map((row) => {
+    const premium = annualPremiums.get(row.id);
+
+    return {
+      ...row,
+      portfolio_premium: premium ?? 0,
+      missing_commercial: premium === undefined,
+    };
+  });
 }
 
 // ============================================================
@@ -431,6 +613,8 @@ export async function getCompaniesOverview(): Promise<CompanyOverview[]> {
         name: company.name,
         totalCount: rows.length,
         totalAnualizado: totalPremium,
+        missingCommercialCount: rows.filter((row) => row.missing_commercial)
+          .length,
       } satisfies CompanyOverview;
     }),
   );
@@ -447,6 +631,7 @@ function buildPlans(rows: RawPolicyRow[]): {
   totalCount: number;
   totalAnualizado: number;
   seguroTotal: number;
+  missingCommercialCount: number;
 } {
   type ProductKey = string;
 
@@ -543,6 +728,8 @@ function buildPlans(rows: RawPolicyRow[]): {
     totalCount,
     totalAnualizado,
     seguroTotal,
+    missingCommercialCount: rows.filter((row) => row.missing_commercial)
+      .length,
   };
 }
 
@@ -576,13 +763,17 @@ export async function getStorePortfolio(
    * Mantém a regra atual:
    * loja selecionada + apólices ainda sem issuing_store_id.
    */
-  const rows = await fetchActivePolicies([storeId], companyId);
+  const [rows, yearProduction] = await Promise.all([
+    fetchActivePolicies([storeId], companyId),
+    getZurichYearProduction([storeId], companyId),
+  ]);
 
   const {
     plans,
     totalCount,
     totalAnualizado,
     seguroTotal,
+    missingCommercialCount,
   } = buildPlans(rows);
 
   return {
@@ -591,6 +782,8 @@ export async function getStorePortfolio(
     totalCount,
     totalAnualizado,
     seguroTotal,
+    missingCommercialCount,
+    yearProduction,
     plans,
   };
 }
@@ -605,16 +798,20 @@ export async function getAllStoresPortfolio(
   const { stores } = await getAccessibleStores();
   const storeIds = stores.map((store) => store.id);
 
-  const rows =
+  const [rows, yearProduction] =
     storeIds.length > 0
-      ? await fetchActivePolicies(storeIds, companyId)
-      : [];
+      ? await Promise.all([
+          fetchActivePolicies(storeIds, companyId),
+          getZurichYearProduction(storeIds, companyId),
+        ])
+      : [[], null];
 
   const {
     plans,
     totalCount,
     totalAnualizado,
     seguroTotal,
+    missingCommercialCount,
   } = buildPlans(rows);
 
   return {
@@ -623,6 +820,8 @@ export async function getAllStoresPortfolio(
     totalCount,
     totalAnualizado,
     seguroTotal,
+    missingCommercialCount,
+    yearProduction,
     plans,
   };
 }

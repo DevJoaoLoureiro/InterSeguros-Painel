@@ -113,7 +113,7 @@ export function CarteiraBoard({
     return () => {
       cancelled = true;
     };
-  }, [selectedStoreId]);
+  }, [selectedStoreId, companyId]);
 
   function togglePlan(planType: string) {
     setExpandedPlans((prev) => {
@@ -206,6 +206,13 @@ export function CarteiraBoard({
                 <p className="mt-1 text-sm text-[#7d848e]">
                   {portfolio.totalCount} apólices ativas
                 </p>
+
+                {portfolio.missingCommercialCount > 0 && (
+                  <p className="mt-1 text-xs text-amber-700">
+                    {portfolio.missingCommercialCount} apólices sem recibo
+                    (sem prémio comercial) ainda não contam no total.
+                  </p>
+                )}
               </div>
 
               <div className="rounded-xl bg-[#f7f8f9] px-3 py-2 text-right">
@@ -213,6 +220,23 @@ export function CarteiraBoard({
                 <p className="mt-0.5 text-sm font-semibold text-[#20242a]">
                   {formatCurrency(portfolio.seguroTotal)}
                 </p>
+
+                {portfolio.yearProduction !== null && (
+                  <div
+                    className="mt-2 border-t border-[#e5e8ec] pt-2 text-[11px] text-[#8a9099]"
+                    title="Prémio comercial dos recibos de 1 de janeiro até hoje — o valor de Produção do painel MyZurich. A Zurich conta os Financeiros (PPR, poupança) dentro do Vida."
+                  >
+                    <p className="font-medium text-[#59616d]">
+                      Produção do ano (como na Zurich):{" "}
+                      {formatCurrency(portfolio.yearProduction.total)}
+                    </p>
+                    <p>
+                      Vida (c/ Financeiros){" "}
+                      {formatCurrency(portfolio.yearProduction.vida)} · Não Vida{" "}
+                      {formatCurrency(portfolio.yearProduction.naoVida)}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
 

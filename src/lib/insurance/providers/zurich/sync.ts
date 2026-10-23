@@ -36,6 +36,7 @@ import { upsertPolicy } from "@/lib/insurance/sync/upsert-policy";
 import { batchUpsertReceipts } from "@/lib/insurance/sync/batch-upsert-receipts";
 
 import type {
+  ZurichApoliceFicheiro,
   ZurichClienteFicheiro,
   ZurichCoberturaFicheiro,
   ZurichObjetoFicheiro,
@@ -213,6 +214,14 @@ type SyncOptions = {
 
   /** Pausa (ms) após cada consulta individual do fallback. */
   fallbackDelayMs?: number;
+
+  /**
+   * Processa estas apólices (ex.: lidas uma a uma com ObterApolicePorNr,
+   * no formato do ficheiro) em vez dos ficheiros diários — para apólices
+   * que nunca vieram nos ficheiros (ex.: Vida). Usa a conta default e
+   * não mexe no estado incremental.
+   */
+  sourcePolicies?: ZurichApoliceFicheiro[];
 };
 
 function isEnrichmentEnabled(options: SyncOptions): boolean {
@@ -420,7 +429,11 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
       DayBucket<ZurichCoberturaFicheiro>
     >();
 
-    for (const account of accounts) {
+    for (const source of options.sourcePolicies ?? []) {
+      sourcePolicies.push({ source, account: accounts[0] });
+    }
+
+    for (const account of options.sourcePolicies ? [] : accounts) {
       for (const dia of dateRange(fromDate, today)) {
         const [apolicesDoDia, clientesDoDia, objetosDoDia, coberturasDoDia] =
           await Promise.all([
@@ -875,7 +888,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     const finalStatus =
       failed === 0 ? "SUCCESS" : created + updated > 0 ? "PARTIAL" : "ERROR";
 
-    if (failed === 0 && !options.limit && !dryRun) {
+    if (failed === 0 && !options.limit && !dryRun && !options.sourcePolicies) {
       await supabase.from("integration_sync_state").upsert(
         {
           company_id: company.id,
