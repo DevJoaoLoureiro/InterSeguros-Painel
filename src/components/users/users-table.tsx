@@ -3,13 +3,19 @@
 import { useState } from "react";
 import {
   Building2,
+  Check,
+  MessageCircle,
   MoreHorizontal,
+  Pencil,
   Power,
   ShieldCheck,
   UserRound,
 } from "lucide-react";
 
-import { toggleEmployeeStatus } from "@/app/(dashboard)/utilizadores/actions";
+import {
+  toggleEmployeeStatus,
+  updateEmployeeWhatsapp,
+} from "@/app/(dashboard)/utilizadores/actions";
 
 type UserItem = {
   id: string;
@@ -17,6 +23,7 @@ type UserItem = {
   email: string;
   role: string;
   active: boolean;
+  whatsappPhone: string | null;
   storeName: string | null;
   isCurrentUser: boolean;
 };
@@ -126,13 +133,14 @@ export function UsersTable({
 
       {/* Desktop */}
       <div className="hidden overflow-x-auto md:block">
-        <table className="w-full min-w-[900px]">
+        <table className="w-full min-w-[1040px]">
           <thead className="bg-[#fafbfc]">
             <tr>
               {[
                 "Funcionário",
                 "Perfil",
                 "Loja",
+                "WhatsApp",
                 "Estado",
                 "Ações",
               ].map((title) => (
@@ -205,6 +213,13 @@ export function UsersTable({
                       : user.storeName ??
                         "Sem loja"}
                   </div>
+                </td>
+
+                <td className="px-6 py-4">
+                  <WhatsappPhoneCell
+                    userId={user.id}
+                    phone={user.whatsappPhone}
+                  />
                 </td>
 
                 <td className="px-6 py-4">
@@ -322,6 +337,19 @@ export function UsersTable({
               </div>
             </div>
 
+            <div className="mt-3">
+              <p className="text-xs text-[#9298a1]">
+                WhatsApp
+              </p>
+
+              <div className="mt-1">
+                <WhatsappPhoneCell
+                  userId={user.id}
+                  phone={user.whatsappPhone}
+                />
+              </div>
+            </div>
+
             <button
               type="button"
               disabled={
@@ -349,5 +377,91 @@ export function UsersTable({
         ))}
       </div>
     </section>
+  );
+}
+/*
+ * Telemóvel onde o utilizador recebe avisos por WhatsApp (ex.: nova
+ * apólice de um parceiro). Edita-se aqui mesmo.
+ */
+function WhatsappPhoneCell({
+  userId,
+  phone,
+}: {
+  userId: string;
+  phone: string | null;
+}) {
+  const [value, setValue] = useState(phone ?? "");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function save() {
+    setSaving(true);
+    setError("");
+
+    try {
+      const result = await updateEmployeeWhatsapp(userId, value);
+      setValue(result.phone ?? "");
+      setEditing(false);
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Erro ao guardar.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="inline-flex items-center gap-1.5 text-sm text-[#4d5560] hover:text-[#ff4b0a]"
+      >
+        <MessageCircle className="h-4 w-4 text-[#9298a1]" />
+
+        {value ? `+${value}` : "Adicionar"}
+
+        <Pencil className="h-3 w-3 text-[#b0b5bc]" />
+      </button>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="tel"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") setEditing(false);
+          }}
+          placeholder="912345678"
+          autoFocus
+          className="h-8 w-36 rounded-lg border border-[#e4e6e9] px-2 text-sm outline-none focus:border-[#ff4b0a]"
+        />
+
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#ff4b0a] text-white disabled:opacity-50"
+          aria-label="Guardar telemóvel"
+        >
+          <Check className="h-4 w-4" />
+        </button>
+      </div>
+
+      {error && (
+        <p className="mt-1 max-w-[220px] text-xs text-red-600">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

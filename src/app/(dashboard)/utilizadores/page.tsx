@@ -45,6 +45,7 @@ export default async function UsersPage() {
       full_name,
       role,
       active,
+      whatsapp_phone,
       store:stores (
         id,
         name
@@ -74,6 +75,7 @@ export default async function UsersPage() {
         email: emails.get(user.id) ?? "",
         role: user.role,
         active: user.active,
+        whatsappPhone: user.whatsapp_phone ?? null,
         storeName: store?.name ?? null,
         isCurrentUser: user.id === profile.id,
       };

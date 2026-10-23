@@ -25,6 +25,7 @@ type AppSidebarProps = {
   mobile?: boolean;
   profile: SidebarProfile;
   overdueReceiptsCount?: number;
+  partnerSubmissionsCount?: number;
 };
 
 function getInitials(name: string) {
@@ -56,6 +57,7 @@ export function AppSidebar({
   mobile = false,
   profile,
   overdueReceiptsCount = 0,
+  partnerSubmissionsCount = 0,
 }: AppSidebarProps) {
   const pathname = usePathname();
 
@@ -121,7 +123,10 @@ export function AppSidebar({
                   const badge =
                     item.href === "/vencimentos" && overdueReceiptsCount > 0
                       ? overdueReceiptsCount
-                      : undefined;
+                      : item.href === "/apolices-parceiros" &&
+                          partnerSubmissionsCount > 0
+                        ? partnerSubmissionsCount
+                        : undefined;
 
                   return (
                     <Link
@@ -156,7 +161,11 @@ export function AppSidebar({
                               ? "bg-white/25 text-white"
                               : "bg-red-500 text-white",
                           ].join(" ")}
-                          title="Recibos em atraso"
+                          title={
+                            item.href === "/vencimentos"
+                              ? "Recibos em atraso"
+                              : "Apólices de parceiros por abrir"
+                          }
                         >
                           {badge}
                         </span>

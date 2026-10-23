@@ -104,6 +104,7 @@ export default async function DashboardLayout({
             <SidebarWithBadge
               profile={profile}
               storeId={scopedStoreId}
+              userId={profile.id}
             />
           </Suspense>
         </aside>

@@ -171,3 +171,42 @@ export async function toggleEmployeeStatus(
     success: true,
   };
 }
+/*
+ * Telemóvel onde o utilizador recebe avisos por WhatsApp (ex.: nova
+ * apólice de um parceiro). Guardado só com dígitos e indicativo;
+ * um número português de 9 dígitos ganha o 351 à frente.
+ */
+export async function updateEmployeeWhatsapp(
+  userId: string,
+  phone: string,
+) {
+  await getCurrentOwner();
+
+  let digits = phone.replace(/\D/g, "").replace(/^00/, "");
+
+  if (/^9\d{8}$/.test(digits)) digits = `351${digits}`;
+
+  if (digits && !/^\d{10,15}$/.test(digits)) {
+    throw new Error(
+      "Telemóvel inválido. Usa o formato 912345678 ou +351912345678.",
+    );
+  }
+
+  const admin = createAdminClient();
+
+  const { error } = await admin
+    .from("profiles")
+    .update({
+      whatsapp_phone: digits || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  revalidatePath("/utilizadores");
+
+  return { phone: digits || null };
+}

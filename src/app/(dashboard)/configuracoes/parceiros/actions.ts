@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { invalidateReference } from "@/lib/cache/reference-data";
+import { generatePartnerToken } from "@/lib/partner-submissions/partner-token";
 
 export type PartnerRow = {
   id: string;
@@ -16,6 +17,8 @@ export type PartnerRow = {
   active: boolean;
   created_at: string;
   policies_count: number;
+  // Link do formulário de envio de apólices (/parceiro/<token>).
+  submission_token: string | null;
 };
 
 export type PartnerInput = {
@@ -74,7 +77,9 @@ export async function getPartnersData(): Promise<{
   const [partnersResult, policiesResult] = await Promise.all([
     admin
       .from("partners")
-      .select("id, name, partner_type, nif, email, phone, active, created_at")
+      .select(
+        "id, name, partner_type, nif, email, phone, active, created_at, submission_token",
+      )
       .order("active", { ascending: false })
       .order("name", { ascending: true }),
     admin
@@ -99,6 +104,8 @@ export async function getPartnersData(): Promise<{
     isAdmin,
     partners: (partnersResult.data ?? []).map((partner) => ({
       ...partner,
+      // O link é uma credencial: só os administradores o veem.
+      submission_token: isAdmin ? partner.submission_token : null,
       policies_count: counts.get(partner.id) ?? 0,
     })),
   };
@@ -147,4 +154,46 @@ export async function setPartnerActive(id: string, active: boolean) {
 
   revalidatePath("/configuracoes/parceiros");
   invalidateReference("partners");
+}
+
+/*
+ * Link do formulário de envio de apólices. Gerar de novo troca o
+ * token: o link antigo deixa de funcionar na hora.
+ */
+export async function generatePartnerLink(id: string) {
+  await requireAdmin();
+
+  const token = generatePartnerToken();
+
+  const { error } = await createAdminClient()
+    .from("partners")
+    .update({
+      submission_token: token,
+      submission_token_created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao gerar link: ${error.message}`);
+
+  revalidatePath("/configuracoes/parceiros");
+
+  return token;
+}
+
+export async function removePartnerLink(id: string) {
+  await requireAdmin();
+
+  const { error } = await createAdminClient()
+    .from("partners")
+    .update({
+      submission_token: null,
+      submission_token_created_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) throw new Error(`Erro ao desativar link: ${error.message}`);
+
+  revalidatePath("/configuracoes/parceiros");
 }

@@ -6,6 +6,7 @@ import { ExpiryAlertsPopup } from "@/components/alerts/expiry-alerts";
 
 import { getNotifications } from "@/lib/notifications/get-notifications";
 import { getExpiryAlerts, getOverdueCount } from "@/lib/alerts/expiry-alerts";
+import { getUnseenPartnerSubmissionsCount } from "@/lib/partner-submissions/unseen-count";
 
 /*
  * Partes do layout que dependem de dados "secundários" (sino,
@@ -17,16 +18,26 @@ import { getExpiryAlerts, getOverdueCount } from "@/lib/alerts/expiry-alerts";
 
 type SidebarProps = Omit<
   ComponentProps<typeof AppSidebar>,
-  "overdueReceiptsCount"
+  "overdueReceiptsCount" | "partnerSubmissionsCount"
 >;
 
 export async function SidebarWithBadge({
   storeId,
+  userId,
   ...props
-}: SidebarProps & { storeId: string | null }) {
-  const overdueReceiptsCount = await getOverdueCount(storeId);
+}: SidebarProps & { storeId: string | null; userId: string }) {
+  const [overdueReceiptsCount, partnerSubmissionsCount] = await Promise.all([
+    getOverdueCount(storeId),
+    getUnseenPartnerSubmissionsCount(userId),
+  ]);
 
-  return <AppSidebar {...props} overdueReceiptsCount={overdueReceiptsCount} />;
+  return (
+    <AppSidebar
+      {...props}
+      overdueReceiptsCount={overdueReceiptsCount}
+      partnerSubmissionsCount={partnerSubmissionsCount}
+    />
+  );
 }
 
 type HeaderProps = Omit<

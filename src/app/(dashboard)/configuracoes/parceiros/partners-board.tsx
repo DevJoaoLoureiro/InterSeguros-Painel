@@ -1,12 +1,25 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Handshake, Loader2, Pencil, Plus, Search, X } from "lucide-react";
+import {
+  Check,
+  Copy,
+  Handshake,
+  Link2,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
 
 import { PARTNER_TYPE_LABELS } from "@/components/clientes/policy-roles-card";
 
 import {
   createPartner,
+  generatePartnerLink,
+  removePartnerLink,
   setPartnerActive,
   updatePartner,
   type PartnerInput,
@@ -26,6 +39,7 @@ export function PartnersBoard({
   const [search, setSearch] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [editing, setEditing] = useState<PartnerRow | "new" | null>(null);
+  const [linkFor, setLinkFor] = useState<PartnerRow | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
@@ -154,6 +168,16 @@ export function PartnersBoard({
 
                   {isAdmin && (
                     <>
+                      {partner.active && (
+                        <button
+                          type="button"
+                          onClick={() => setLinkFor(partner)}
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-[#59616d] hover:text-[#20242a]"
+                        >
+                          <Link2 className="h-3 w-3" />
+                          {partner.submission_token ? "Link ativo" : "Criar link"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => setEditing(partner)}
@@ -184,6 +208,167 @@ export function PartnersBoard({
           onClose={() => setEditing(null)}
         />
       )}
+
+      {linkFor && (
+        <PartnerLinkModal
+          partner={
+            partners.find((p) => p.id === linkFor.id) ?? linkFor
+          }
+          onClose={() => setLinkFor(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/*
+ * Link do formulário de envio de apólices do parceiro. O parceiro
+ * preenche sem conta; quem tiver o link pode enviar em nome dele, por
+ * isso pode ser trocado ou desativado a qualquer momento.
+ */
+function PartnerLinkModal({
+  partner,
+  onClose,
+}: {
+  partner: PartnerRow;
+  onClose: () => void;
+}) {
+  const [token, setToken] = useState(partner.submission_token);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  // Sempre o domínio público: o link vai para fora (gerado em
+  // localhost, sairia um link que o parceiro não consegue abrir).
+  const baseUrl =
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/+$/, "") ||
+    window.location.origin;
+  const url = token ? `${baseUrl}/parceiro/${token}` : null;
+
+  function run(action: () => Promise<void>) {
+    setError(null);
+    setCopied(false);
+
+    startTransition(async () => {
+      try {
+        await action();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erro ao guardar.");
+      }
+    });
+  }
+
+  async function copy() {
+    if (!url) return;
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } catch {
+      setError("Não foi possível copiar. Seleciona o link e copia à mão.");
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-[#edf0f2] px-5 py-4">
+          <h2 className="font-semibold text-[#20242a]">
+            Link de envio · {partner.name}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-[#a0a5ac] transition hover:bg-[#f4f5f7] hover:text-[#606771]"
+            aria-label="Fechar"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="space-y-3.5 px-5 py-4">
+          <p className="text-sm text-[#59616d]">
+            O parceiro usa este link para enviar apólices (dados, anexos e
+            observações) e escolher quem as recebe. Não precisa de conta.
+          </p>
+
+          {url ? (
+            <div className="flex gap-2">
+              <input
+                type="text"
+                readOnly
+                value={url}
+                onFocus={(e) => e.target.select()}
+                className="h-10 w-full min-w-0 rounded-lg border border-[#e4e6e9] bg-[#fafbfc] px-3 font-mono text-xs text-[#40464f] outline-none focus:border-[#ff4b0a]"
+              />
+              <button
+                type="button"
+                onClick={copy}
+                className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg bg-[#ff4b0a] px-3 text-sm font-medium text-white transition hover:bg-[#e64409]"
+              >
+                {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copied ? "Copiado" : "Copiar"}
+              </button>
+            </div>
+          ) : (
+            <p className="rounded-xl bg-[#fafbfc] px-4 py-3 text-sm text-[#8a9099]">
+              Este parceiro ainda não tem link.
+            </p>
+          )}
+
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-[#edf0f2] px-5 py-3.5">
+          {pending && (
+            <Loader2 className="mr-auto h-5 w-5 animate-spin self-center text-[#8a9099]" />
+          )}
+
+          {token && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() =>
+                run(async () => {
+                  await removePartnerLink(partner.id);
+                  setToken(null);
+                })
+              }
+              className="h-10 rounded-lg px-4 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+            >
+              Desativar link
+            </button>
+          )}
+
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => {
+              if (
+                token &&
+                !window.confirm(
+                  "O link atual deixa de funcionar. Gerar um novo?",
+                )
+              ) {
+                return;
+              }
+
+              run(async () => {
+                setToken(await generatePartnerLink(partner.id));
+              });
+            }}
+            className="inline-flex h-10 items-center gap-2 rounded-lg border border-[#e4e6e9] px-4 text-sm font-medium text-[#59616d] transition hover:border-[#ffb899] disabled:opacity-50"
+          >
+            <RefreshCw className="h-4 w-4" />
+            {token ? "Gerar novo link" : "Criar link"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

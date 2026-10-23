@@ -56,6 +56,7 @@ type RawPolicyRow = {
   product_code: string | null;
   product_name: string | null;
   annualized_premium: number | string | null;
+  payment_frequency: string | null;
   portfolio_premium: number;
   issue_date: string | null;
   start_date: string | null;
@@ -66,6 +67,7 @@ type RawPolicyRow = {
 type ZurichReceiptRow = {
   policy_id: string | null;
   commercial_premium: number | string | null;
+  period_start: string | null;
   period_end: string | null;
   issue_date: string | null;
   receipt_type: string | null;
@@ -162,51 +164,107 @@ export async function getAccessibleStores(): Promise<{
 // ============================================================
 
 /*
- * Regra da Carteira para Zurich:
+ * Regra da Carteira para Zurich (valor ANUAL de cada apólice):
  *
- * - O ficheiro de apólices Zurich não traz PremioComercial.
- * - O ficheiro de recibos traz PremioComercial.
- * - Para cada apólice, usamos o recibo válido mais recente que tenha
- *   commercial_premium preenchido.
- * - Estornos/reversões não são usados como valor da carteira.
+ * - O ficheiro de apólices Zurich não traz PremioComercial; o de
+ *   recibos traz. Para cada apólice usa-se o recibo válido mais
+ *   recente com commercial_premium (estornos/reversões não contam).
+ * - O recibo cobre só o seu período (um mês, um trimestre...): o valor
+ *   é anualizado — prémio × 12 ÷ meses cobertos. Antes contava só a
+ *   prestação, e uma apólice mensal valia 1/12 do real.
+ * - Apólice SEM recibos no CRM (os ficheiros diários só existem desde
+ *   a ativação dos WebServices): usa-se o prémio anual da própria
+ *   apólice em vez de 0. Esse valor é o prémio TOTAL (com encargos),
+ *   ligeiramente acima do comercial — melhor aproximação disponível.
  *
  * A ordenação é por period_end e depois issue_date, ambos descendentes.
  * Como percorremos nessa ordem e só guardamos o primeiro recibo válido
- * por policy_id, ficamos com o valor mais recente.
+ * por policy_id, ficamos com o mais recente.
  */
-async function getZurichCommercialPremiums(
-  policyIds: string[],
+
+// Ids por pedido: com centenas de ids, o URL do .in() fica grande
+// demais e o pedido falha ("fetch failed").
+const RECEIPTS_CHUNK = 150;
+
+const INSTALLMENTS_PER_YEAR: Record<string, number> = {
+  ANNUAL: 1,
+  SEMIANNUAL: 2,
+  QUARTERLY: 4,
+  MONTHLY: 12,
+};
+
+/* Quantas vezes por ano se paga um recibo como este. */
+function receiptsPerYear(
+  receipt: ZurichReceiptRow,
+  paymentFrequency: string | null,
+): number {
+  if (receipt.period_start && receipt.period_end) {
+    const days =
+      (Date.parse(receipt.period_end) - Date.parse(receipt.period_start)) /
+        86_400_000 +
+      1;
+    const months = Math.min(12, Math.max(1, Math.round(days / 30.44)));
+
+    if (Number.isFinite(months)) return 12 / months;
+  }
+
+  return INSTALLMENTS_PER_YEAR[(paymentFrequency ?? "").toUpperCase()] ?? 1;
+}
+
+async function getZurichAnnualPremiums(
+  policies: Pick<RawPolicyRow, "id" | "payment_frequency">[],
 ): Promise<Map<string, number>> {
   const result = new Map<string, number>();
 
-  if (policyIds.length === 0) {
+  if (policies.length === 0) {
     return result;
   }
 
+  const frequencies = new Map(
+    policies.map((policy) => [policy.id, policy.payment_frequency]),
+  );
+  const ids = policies.map((policy) => policy.id);
   const admin = createAdminClient();
 
-  const { data, error } = await admin
-    .from("receipts")
-    .select(`
-      policy_id,
-      commercial_premium,
-      period_end,
-      issue_date,
-      receipt_type,
-      external_nature
-    `)
-    .in("policy_id", policyIds)
-    .not("commercial_premium", "is", null)
-    .order("period_end", { ascending: false })
-    .order("issue_date", { ascending: false });
+  const chunks = await Promise.all(
+    Array.from({ length: Math.ceil(ids.length / RECEIPTS_CHUNK) }, (_, i) =>
+      admin
+        .from("receipts")
+        .select(`
+          policy_id,
+          commercial_premium,
+          period_start,
+          period_end,
+          issue_date,
+          receipt_type,
+          external_nature
+        `)
+        .in("policy_id", ids.slice(i * RECEIPTS_CHUNK, (i + 1) * RECEIPTS_CHUNK))
+        .not("commercial_premium", "is", null)
+        .order("period_end", { ascending: false })
+        .order("issue_date", { ascending: false }),
+    ),
+  );
 
-  if (error) {
-    throw new Error(
-      `Erro ao carregar prémios comerciais Zurich: ${error.message}`,
-    );
+  const receipts: ZurichReceiptRow[] = [];
+
+  for (const { data, error } of chunks) {
+    if (error) {
+      throw new Error(
+        `Erro ao carregar prémios comerciais Zurich: ${error.message}`,
+      );
+    }
+
+    receipts.push(...((data ?? []) as ZurichReceiptRow[]));
   }
 
-  const receipts = (data ?? []) as ZurichReceiptRow[];
+  // Cada bloco vem ordenado; juntos, reordenar para o mais recente
+  // ficar primeiro.
+  receipts.sort(
+    (a, b) =>
+      (b.period_end ?? "").localeCompare(a.period_end ?? "") ||
+      (b.issue_date ?? "").localeCompare(a.issue_date ?? ""),
+  );
 
   for (const receipt of receipts) {
     if (!receipt.policy_id) {
@@ -221,9 +279,11 @@ async function getZurichCommercialPremiums(
       continue;
     }
 
-    const premium = toNumber(receipt.commercial_premium);
+    const premium =
+      toNumber(receipt.commercial_premium) *
+      receiptsPerYear(receipt, frequencies.get(receipt.policy_id) ?? null);
 
-    result.set(receipt.policy_id, premium);
+    result.set(receipt.policy_id, Math.round(premium * 100) / 100);
   }
 
   return result;
@@ -270,6 +330,7 @@ async function fetchActivePolicies(
       product_code,
       product_name,
       annualized_premium,
+      payment_frequency,
       issue_date,
       start_date,
       issuing_store_id,
@@ -311,16 +372,15 @@ async function fetchActivePolicies(
   }
 
   /*
-   * Zurich:
-   * o valor da Carteira vem de receipts.commercial_premium.
+   * Zurich: prémio comercial do último recibo, anualizado; sem
+   * recibos, o prémio anual da apólice (ver getZurichAnnualPremiums).
    */
-  const commercialPremiums = await getZurichCommercialPremiums(
-    rows.map((row) => row.id),
-  );
+  const annualPremiums = await getZurichAnnualPremiums(rows);
 
   return rows.map((row) => ({
     ...row,
-    portfolio_premium: commercialPremiums.get(row.id) ?? 0,
+    portfolio_premium:
+      annualPremiums.get(row.id) ?? toNumber(row.annualized_premium),
   }));
 }
 

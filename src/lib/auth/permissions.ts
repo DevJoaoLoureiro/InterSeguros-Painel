@@ -6,7 +6,7 @@
  *   (se um colega está de férias, outro trata dos clientes dele):
  *     Dashboard, Leads, Clientes, Recibos, Vencimentos e as
  *     Atividades (Tarefas, Processos, Oportunidades, Simulador,
- *     Conversas).
+ *     Conversas, Apólices de Parceiros).
  *   NÃO veem: Comissões, Carteira por loja, Estatísticas e a secção
  *   Gestão (Lojas, Utilizadores, Configurações).
  *
@@ -27,6 +27,7 @@ export const EMPLOYEE_PAGES = [
   "/oportunidades",
   "/simulador",
   "/conversas",
+  "/apolices-parceiros",
 ] as const;
 
 /* Para onde vai um funcionário que abre uma página que não pode ver. */

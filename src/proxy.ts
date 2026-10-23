@@ -18,6 +18,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Formulário dos parceiros (/parceiro/<token>): sem sessão, o token
+  // é validado na página e em cada server action.
+  if (pathname.startsWith("/parceiro/")) {
+    return NextResponse.next();
+  }
+
   // WhatsApp webhook - chamado diretamente pela Meta
 if (pathname === "/api/whatsapp/webhook") {
   return NextResponse.next();
