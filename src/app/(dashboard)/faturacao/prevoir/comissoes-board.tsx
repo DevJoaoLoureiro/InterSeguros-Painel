@@ -293,7 +293,7 @@ export function ComissoesBoard({
   }, [activeTab, loadedMovementsMonth, month, official]);
 
   const totalMonth = useMemo(
-    () => summary.reduce((sum, store) => sum + store.totalLiquido, 0),
+    () => summary.reduce((sum, store) => sum + store.totalBruto, 0),
     [summary],
   );
 
@@ -302,8 +302,9 @@ export function ComissoesBoard({
     [selectedStoreId, summary],
   );
 
+  // AP em bruto ("Total bruto calculado AP" do PDF), como a estimativa.
   const officialTotal = official
-    ? official.vidaLiquido + official.apLiquido + official.saudeLiquido
+    ? official.vidaLiquido + official.apBruto + official.saudeLiquido
     : null;
 
   const difference = officialTotal === null ? null : totalMonth - officialTotal;
@@ -617,9 +618,12 @@ export function ComissoesBoard({
                   </p>
                 </div>
                 <div className="rounded-xl bg-[#fafbfc] p-4">
-                  <p className="text-xs text-[#8a9099]">AP líquido</p>
+                  <p className="text-xs text-[#8a9099]">AP bruto</p>
                   <p className="mt-1 text-lg font-semibold text-[#20242a]">
-                    {formatCurrency(official.apLiquido)}
+                    {formatCurrency(official.apBruto)}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-[#a0a6ae]">
+                    Líquido: {formatCurrency(official.apLiquido)}
                   </p>
                 </div>
                 <div className="rounded-xl bg-[#fafbfc] p-4">
@@ -672,7 +676,7 @@ export function ComissoesBoard({
                   <Building2 className="h-4 w-4" />
                   {store.storeName}
                   <span className={active ? "text-white/70" : "text-[#a0a6ae]"}>
-                    {formatCurrency(store.totalLiquido)}
+                    {formatCurrency(store.totalBruto)}
                   </span>
                 </button>
               );
@@ -687,13 +691,13 @@ export function ComissoesBoard({
                   value={formatCurrency(selectedStore.vidaBruto)}
                 />
                 <MetricCard
-                  label="Não Vida líquido"
-                  value={formatCurrency(selectedStore.naoVidaLiquido)}
-                  helper={`Retenção: ${formatCurrency(selectedStore.naoVidaRetencao)}`}
+                  label="Não Vida bruto"
+                  value={formatCurrency(selectedStore.naoVidaBruto)}
+                  helper={`Retenção estimada: ${formatCurrency(selectedStore.naoVidaRetencao)}`}
                 />
                 <MetricCard
                   label="Total da loja"
-                  value={formatCurrency(selectedStore.totalLiquido)}
+                  value={formatCurrency(selectedStore.totalBruto)}
                   tone="orange"
                 />
               </div>

@@ -25,11 +25,11 @@ export default async function PrevoirComissoesPage() {
     <div className="space-y-5">
       <div>
         <Link
-          href="/comissoes"
+          href="/faturacao"
           className="inline-flex items-center gap-1.5 text-sm font-medium text-[#7d848e] transition hover:text-[#ff4b0a]"
         >
           <ArrowLeft className="h-4 w-4" />
-          Comissões
+          Faturação
         </Link>
 
         <div className="mt-4">

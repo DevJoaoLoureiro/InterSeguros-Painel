@@ -31,6 +31,19 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
+
+  // A área "Comissões" passou a "Faturação" (2026-11): links antigos
+  // e favoritos continuam a funcionar.
+  async redirects() {
+    return [
+      { source: "/comissoes", destination: "/faturacao", permanent: false },
+      {
+        source: "/comissoes/:path*",
+        destination: "/faturacao/:path*",
+        permanent: false,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

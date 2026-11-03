@@ -89,13 +89,13 @@ export async function upsertPolicy({
   // Para a PrÃ©voir, neste momento:
   //
   // API oficial:
-  //   04931 -> Rio Mau
-  //   04932 -> Inter Seguros / Braga
+  //   04931 -> Ribeira do Neiva
+  //   04932 -> Braga
   //   04933 -> Balazar
   //
   // Portal:
-  //   10806 -> Rio Mau
-  //   10807 -> Inter Seguros / Braga
+  //   10806 -> Ribeira do Neiva
+  //   10807 -> Braga
   //   10808 -> Balazar
   //
   // Os mappings reais estÃ£o guardados em

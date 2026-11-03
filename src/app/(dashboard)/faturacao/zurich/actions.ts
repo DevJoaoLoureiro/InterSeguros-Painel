@@ -34,6 +34,8 @@ export type StoreCommissionSummary = {
 
 const PAGE_SIZE = 1000;
 const COMPANY_CODE = "ZURICH";
+// Imposto de selo sobre comissões de mediação Não Vida.
+const ZURICH_STAMP_DUTY_RATE = 0.02;
 
 export async function getAccessibleStores(): Promise<{
   stores: StoreOption[];
@@ -115,6 +117,8 @@ type CalculatedZurichCommissionReceipt = {
   companyName: string;
   planType: string | null;
   commissionDate: string | null;
+  // Recibo com data de pagamento (comissão efetivamente ganha).
+  paid: boolean;
   commissionCobranca: number;
   commissionAngariacao: number;
 };
@@ -225,6 +229,7 @@ async function getCalculatedZurichCommissionReceipts(): Promise<
         companyName: company?.name ?? "Zurich",
         planType: line?.plan_type ?? null,
         commissionDate: row.payment_date ?? row.issue_date,
+        paid: row.payment_date !== null,
         commissionCobranca,
         commissionAngariacao,
       });
@@ -405,4 +410,77 @@ export async function getZurichCommissionsDetail(
   return rows.sort((a, b) =>
     (b.commissionDate ?? "").localeCompare(a.commissionDate ?? ""),
   );
+}
+/*
+ * Mapa anual para a contabilidade: cobrança + angariação da agência
+ * inteira (todas as lojas e as apólices sem loja), por mês de
+ * pagamento. Só recibos PAGOS: a página da Zurich usa a data de
+ * emissão quando não há pagamento e acaba por somar recibos
+ * pendentes e anulados — comissões que nunca foram recebidas.
+ */
+export async function getZurichMonthlyCommissions(
+  year: number,
+): Promise<
+  {
+    month: string;
+    // Vida inclui os Financeiros (ramo Vida), como na Prévoir.
+    vida: { amount: number; receipts: number };
+    naoVida: { amount: number; receipts: number };
+    // A Zurich não envia o imposto de selo da comissão: estimativa de
+    // 2% sobre o Não Vida (verba 17.3.4 da TGIS).
+    stampDuty: { amount: number; official: boolean };
+  }[]
+> {
+  await requireAdmin();
+
+  const receipts = await getCalculatedZurichCommissionReceipts();
+  const totals = new Map<
+    string,
+    {
+      vida: { amount: number; receipts: number };
+      naoVida: { amount: number; receipts: number };
+    }
+  >();
+
+  for (const receipt of receipts) {
+    const month = receipt.commissionDate?.slice(0, 7);
+
+    if (!receipt.paid || !month?.startsWith(`${year}-`)) {
+      continue;
+    }
+
+    const current = totals.get(month) ?? {
+      vida: { amount: 0, receipts: 0 },
+      naoVida: { amount: 0, receipts: 0 },
+    };
+    const bucket =
+      receipt.planType === "NAO_VIDA" ? current.naoVida : current.vida;
+    bucket.amount +=
+      receipt.commissionCobranca + receipt.commissionAngariacao;
+    bucket.receipts += 1;
+    totals.set(month, current);
+  }
+
+  const round = (value: number) => Math.round(value * 100) / 100;
+
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = `${year}-${String(index + 1).padStart(2, "0")}`;
+    const current = totals.get(month);
+
+    return {
+      month,
+      vida: {
+        amount: round(current?.vida.amount ?? 0),
+        receipts: current?.vida.receipts ?? 0,
+      },
+      naoVida: {
+        amount: round(current?.naoVida.amount ?? 0),
+        receipts: current?.naoVida.receipts ?? 0,
+      },
+      stampDuty: {
+        amount: round((current?.naoVida.amount ?? 0) * ZURICH_STAMP_DUTY_RATE),
+        official: false,
+      },
+    };
+  });
 }

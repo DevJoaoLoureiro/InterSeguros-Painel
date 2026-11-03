@@ -16,7 +16,7 @@ export default async function ComissoesPage() {
         <p className="text-sm font-medium text-[#ff4b0a]">Carteira</p>
 
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#17191d]">
-          Comissões
+          Faturação
         </h1>
 
         <p className="mt-1 text-sm text-[#737a84]">
@@ -27,7 +27,32 @@ export default async function ComissoesPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Link
-          href="/comissoes/prevoir"
+          href="/faturacao/mapa"
+          className="group rounded-2xl border border-[#ff4b0a]/40 bg-[#fff8f5] p-5 transition hover:border-[#ff4b0a] hover:shadow-sm sm:col-span-2 xl:col-span-3"
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-lg font-semibold text-[#17191d]">
+                Mapa de comissões
+              </p>
+
+              <p className="mt-1 text-sm text-[#737a84]">
+                Todas as companhias, mês a mês, para enviar à contabilidade.
+              </p>
+            </div>
+
+            <span className="shrink-0 whitespace-nowrap rounded-full bg-[#fff1eb] px-3 py-1 text-xs font-medium text-[#ff4b0a]">
+              Excel / PDF
+            </span>
+          </div>
+
+          <p className="mt-6 text-sm font-medium text-[#ff4b0a]">
+            Abrir mapa →
+          </p>
+        </Link>
+
+        <Link
+          href="/faturacao/prevoir"
           className="group rounded-2xl border border-[#e6e8eb] bg-white p-5 transition hover:border-[#ff4b0a] hover:shadow-sm"
         >
           <div className="flex items-start justify-between gap-4">
@@ -52,7 +77,7 @@ export default async function ComissoesPage() {
         </Link>
 
         <Link
-          href="/comissoes/zurich"
+          href="/faturacao/zurich"
           className="group rounded-2xl border border-[#e6e8eb] bg-white p-5 transition hover:border-[#ff4b0a] hover:shadow-sm"
         >
           <div className="flex items-start justify-between gap-4">

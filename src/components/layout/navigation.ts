@@ -87,10 +87,10 @@ export const menuGroups: MenuGroup[] = [
         keywords: "companhias zurich prévoir",
       },
       {
-        label: "Comissões",
-        href: "/comissoes",
+        label: "Faturação",
+        href: "/faturacao",
         icon: Coins,
-        keywords: "comissão ganhos",
+        keywords: "faturação comissões comissão ganhos contabilidade",
       },
     ],
   },

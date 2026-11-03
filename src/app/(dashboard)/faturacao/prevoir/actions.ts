@@ -30,6 +30,9 @@ export type StoreCommissionSummary = {
   naoVidaLiquido: number;
   financeirosBruto: number;
   totalLiquido: number;
+  // Vida + Não Vida BRUTO + Financeiros: a mesma base do fecho oficial
+  // (que usa o "Total bruto calculado AP").
+  totalBruto: number;
   receiptCount: number;
 };
 
@@ -681,6 +684,10 @@ export async function getCommissionsSummaryByStore(
         current.vidaBruto +
         naoVidaLiquido +
         current.financeirosBruto,
+      totalBruto:
+        current.vidaBruto +
+        current.naoVidaBruto +
+        current.financeirosBruto,
       receiptCount: current.count,
     };
   });
@@ -733,6 +740,113 @@ export async function getCommissionsDetail(
  * FECHO OFICIAL
  * ============================================================
  */
+
+export type CommissionSplit = {
+  amount: number;
+  receipts: number;
+};
+
+export type MonthlyCompanyCommission = {
+  month: string; // AAAA-MM
+  // "official": valor do fecho oficial registado; "estimate": cálculo
+  // automático a partir dos recibos (ainda sem fecho).
+  source: "official" | "estimate";
+  // Vida inclui os Financeiros (PPR/capitalização são ramo Vida e o
+  // fecho da Prévoir também os mete no "Vida"). Não Vida = AP + Saúde.
+  // receipts a 0 numa estimativa = sem dados (a Prévoir só envia
+  // comissões a partir de maio de 2026), não zero.
+  vida: CommissionSplit;
+  naoVida: CommissionSplit;
+  // Imposto de selo sobre a comissão Não Vida: o "Retenção (Imposto
+  // Selo) AP" do fecho quando há fecho; senão 2% do Não Vida bruto.
+  stampDuty: { amount: number; official: boolean };
+};
+
+/*
+ * Mapa anual para a contabilidade: agência inteira (todas as lojas e
+ * as apólices sem loja), mês a mês, com o AP em BRUTO ("Total bruto
+ * calculado AP" do fecho — o imposto de selo fica para a
+ * contabilidade). Quando o mês já tem fecho oficial, vale o fecho;
+ * senão, a estimativa da página da Prévoir, que é bruta.
+ */
+export async function getPrevoirMonthlyCommissions(
+  year: number,
+): Promise<MonthlyCompanyCommission[]> {
+  await requireAdmin();
+
+  const admin = createAdminClient();
+
+  const [receipts, closingsResult] = await Promise.all([
+    getCalculatedCommissionReceipts(),
+    admin
+      .from("prevoir_commission_closings")
+      .select("month, vida_liquido, ap_bruto, ap_retencao, saude_liquido")
+      .gte("month", `${year}-01`)
+      .lte("month", `${year}-12`),
+  ]);
+
+  if (closingsResult.error) {
+    throw new Error(
+      `Erro ao carregar fechos oficiais: ${closingsResult.error.message}`,
+    );
+  }
+
+  const official = new Map(
+    (closingsResult.data ?? []).map((row) => [
+      row.month as string,
+      {
+        vida: Number(row.vida_liquido),
+        naoVida: Number(row.ap_bruto) + Number(row.saude_liquido),
+        stampDuty: Number(row.ap_retencao),
+      },
+    ]),
+  );
+
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = `${year}-${String(index + 1).padStart(2, "0")}`;
+    const closing = official.get(month);
+    const { monthStart, monthEnd } = getMonthBounds(month);
+    const vida = { amount: 0, receipts: 0 };
+    const naoVida = { amount: 0, receipts: 0 };
+
+    for (const receipt of receipts) {
+      if (!includeCommissionInMonth(receipt, monthStart, monthEnd)) {
+        continue;
+      }
+
+      const bucket = receipt.planType === "NAO_VIDA" ? naoVida : vida;
+      bucket.amount += receipt.commissionAmount;
+      bucket.receipts += 1;
+    }
+
+    if (closing) {
+      return {
+        month,
+        source: "official",
+        vida: { amount: cents(closing.vida) / 100, receipts: vida.receipts },
+        naoVida: {
+          amount: cents(closing.naoVida) / 100,
+          receipts: naoVida.receipts,
+        },
+        stampDuty: { amount: cents(closing.stampDuty) / 100, official: true },
+      };
+    }
+
+    return {
+      month,
+      source: "estimate",
+      vida: { amount: cents(vida.amount) / 100, receipts: vida.receipts },
+      naoVida: {
+        amount: cents(naoVida.amount) / 100,
+        receipts: naoVida.receipts,
+      },
+      stampDuty: {
+        amount: cents(naoVida.amount * STAMP_DUTY_RATE) / 100,
+        official: false,
+      },
+    };
+  });
+}
 
 export async function getOfficialClosing(
   month: string,

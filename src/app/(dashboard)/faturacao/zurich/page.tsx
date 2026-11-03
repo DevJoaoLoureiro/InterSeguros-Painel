@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
-import { getAccessibleStores } from "@/app/(dashboard)/comissoes/zurich/actions";
-import { ComissoesBoardZurich } from "@/app/(dashboard)/comissoes/zurich/comissoes-board";
+import { getAccessibleStores } from "@/app/(dashboard)/faturacao/zurich/actions";
+import { ComissoesBoardZurich } from "@/app/(dashboard)/faturacao/zurich/comissoes-board";
 
 function getCurrentMonth(): string {
   const now = new Date();
@@ -24,7 +24,7 @@ export default async function ComissoesZurichPage() {
     <div className="space-y-6">
       <div>
         <p className="text-sm font-medium text-[#ff4b0a]">
-          Carteira · Comissões
+          Carteira · Faturação
         </p>
 
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#17191d]">

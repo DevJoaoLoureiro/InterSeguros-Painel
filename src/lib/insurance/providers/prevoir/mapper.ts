@@ -63,8 +63,8 @@ export type NormalizedPrevoirPolicy = {
    * idUtlizador porque validámos a relação
    * na carteira atual:
    *
-   * 04931 -> Rio Mau
-   * 04932 -> Inter Seguros / Braga
+   * 04931 -> Ribeira do Neiva
+   * 04932 -> Braga
    * 04933 -> Balazar
    *
    * Não assumimos que idUtlizador seja
