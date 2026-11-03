@@ -416,38 +416,27 @@ export async function getOverdueReceiptsCount({
   const supabase = createAdminClient();
   const todayKey = getDateKey(new Date());
 
-  let policyIdsFilter: string[] | null = null;
+  let query = supabase
+    .from("receipts")
+    .select(
+      "policy_id, external_nature, receipt_type, policy:policies!inner(issuing_store_id)",
+    )
+    .eq("status", "PENDING")
+    .lt("due_date", todayKey);
 
   if (storeId) {
     // Tal como nas outras funções: inclui também apólices sem
     // loja atribuída, para não escondermos recibos Zurich por
     // associar do gestor de loja.
-    const { data: storePolicies, error: storePoliciesError } = await supabase
-      .from("policies")
-      .select("id")
-      .or(`issuing_store_id.eq.${storeId},issuing_store_id.is.null`);
-
-    if (storePoliciesError) {
-      throw new Error(
-        `Erro ao filtrar apólices por loja: ${storePoliciesError.message}`,
-      );
-    }
-
-    policyIdsFilter = (storePolicies ?? []).map((row) => row.id);
-
-    if (policyIdsFilter.length === 0) {
-      return 0;
-    }
-  }
-
-  let query = supabase
-    .from("receipts")
-    .select("policy_id, external_nature, receipt_type")
-    .eq("status", "PENDING")
-    .lt("due_date", todayKey);
-
-  if (policyIdsFilter) {
-    query = query.in("policy_id", policyIdsFilter);
+    //
+    // Filtro por join (!inner) e não por .in("policy_id", [...]):
+    // a lista de ids de milhares de apólices rebentava o tamanho do
+    // URL ("Bad Request") e deitava abaixo todas as páginas com uma
+    // loja selecionada.
+    query = query.or(
+      `issuing_store_id.eq.${storeId},issuing_store_id.is.null`,
+      { referencedTable: "policy" },
+    );
   }
 
   const { data, error } = await query;
