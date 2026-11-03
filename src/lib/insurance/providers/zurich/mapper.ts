@@ -66,6 +66,8 @@ export type NormalizedZurichPolicy = {
     // Tudo o que a companhia envia sobre o cliente (para a aba
     // "Dados do cliente"). Guardado em client_external_refs.
     metadata?: Record<string, unknown>;
+    // Ficha do cliente não veio (ver o tipo da Prévoir).
+    dataMissing?: boolean;
   };
 
   providerMetadata: Record<string, unknown>;
@@ -231,6 +233,9 @@ export function mapZurichPolicy(
       // Ficha completa do cliente (sexo, profissão, contactos, CC,
       // NIB, ...), sem campos vazios.
       metadata: cliente ? compactMetadata({ ...cliente }) : undefined,
+      // Sem ficha (cliente antigo/anulado que a Zurich já não devolve,
+      // ou consulta falhada): o nome acima é só o provisório.
+      dataMissing: !cliente,
     },
 
     providerMetadata: {

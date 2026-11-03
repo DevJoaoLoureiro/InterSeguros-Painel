@@ -69,6 +69,18 @@ export async function upsertClient({
     );
   }
 
+  if (externalRef?.client_id && policy.client.dataMissing) {
+    // A companhia não enviou a ficha desta vez (ex.: a apólice
+    // anulada de um cliente que também tem uma ativa). Antes isto
+    // sobrescrevia o nome verdadeiro por "Cliente NIF ..." e apagava
+    // a morada; agora fica o que já está no CRM.
+    return {
+      clientId:
+        externalRef.client_id,
+      created: false,
+    };
+  }
+
   if (externalRef?.client_id) {
     const { error } = await supabase
       .from("clients")

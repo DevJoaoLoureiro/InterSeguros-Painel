@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { sendWhatsAppText } from "@/lib/whatsapp/client";
+import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -8,6 +9,12 @@ const supabase = createClient(
 );
 
 export async function POST(request: NextRequest) {
+  // O proxy já exige sessão de uma conta ativa; repetido aqui porque
+  // esta rota usa a service role e envia em nome da agência.
+  if (!(await getCurrentProfile())) {
+    return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
+  }
+
   try {
     const { conversationId, text } = await request.json();
 

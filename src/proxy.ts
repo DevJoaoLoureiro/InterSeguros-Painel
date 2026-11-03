@@ -150,17 +150,26 @@ if (pathname === "/api/zurich/login-code") {
   // - Páginas: funcionários só entram em Tarefas, Oportunidades,
   //   Simulador e Conversas (lib/auth/permissions.ts). O resto vai
   //   para /tarefas. OWNER/ADMIN entram em tudo.
-  // - /api/dev/*: só OWNER/ADMIN (chamam a Zurich com o token
-  //   partilhado ou escrevem na BD).
+  // - /api/dev/*, /api/zurich/*, /api/prevoir/*, /api/generali/*:
+  //   só OWNER/ADMIN (chamam as companhias — a Zurich com o token
+  //   partilhado — ou correm syncs/escrevem na BD). Nenhuma página
+  //   do CRM as chama.
+  // - Restantes APIs (Conversas, assistente de IA): qualquer
+  //   utilizador ATIVO. Sem isto, uma conta desativada com a sessão
+  //   ainda aberta continuava a enviar WhatsApps, por exemplo.
   //
-  // Só se consulta o perfil nestes casos (páginas e /api/dev), não
-  // nas restantes APIs nem nos ficheiros estáticos.
+  // As APIs públicas e os crons já saíram mais acima. Só se consulta
+  // o perfil nas páginas e nas APIs, não nos ficheiros estáticos.
 
-  const isDevApi = pathname.startsWith("/api/dev/");
-  const isPage =
-    request.method === "GET" && !pathname.startsWith("/api/");
+  const isApi = pathname.startsWith("/api/");
+  const isAdminApi =
+    pathname.startsWith("/api/dev/") ||
+    pathname.startsWith("/api/zurich/") ||
+    pathname.startsWith("/api/prevoir/") ||
+    pathname.startsWith("/api/generali/");
+  const isPage = request.method === "GET" && !isApi;
 
-  if (user && (isDevApi || isPage)) {
+  if (user && (isApi || isPage)) {
     const { data: profile } = await supabase
       .from("profiles")
       .select("role, active")
@@ -169,7 +178,14 @@ if (pathname === "/api/zurich/login-code") {
 
     const role = profile?.active === true ? profile.role : null;
 
-    if (isDevApi && !hasFullAccess(role)) {
+    if (isApi && !role) {
+      return NextResponse.json(
+        { success: false, error: "Conta inativa." },
+        { status: 403 },
+      );
+    }
+
+    if (isAdminApi && !hasFullAccess(role)) {
       return NextResponse.json(
         { success: false, error: "Sem permissões." },
         { status: 403 },

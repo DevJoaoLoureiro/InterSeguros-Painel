@@ -501,7 +501,10 @@ async function fetchActivePolicies(
         issuing_store_id,
         insurance_line:insurance_lines ( plan_type )
       `)
-      .eq("status", "ACTIVE")
+      // Em vigor = ativas + reduzidas (deixaram de pagar mas a
+      // apólice continua, com capital reduzido) — como o portal da
+      // Prévoir conta os totais.
+      .in("status", ["ACTIVE", "REDUCED"])
       .eq("company_id", companyId)
       .not("start_date", "is", null)
       .lte("start_date", todayKey);

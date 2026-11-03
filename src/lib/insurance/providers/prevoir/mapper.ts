@@ -86,6 +86,10 @@ export type NormalizedPrevoirPolicy = {
     // Tudo o que a companhia envia sobre o cliente (para a aba
     // "Dados do cliente"). Guardado em client_external_refs.
     metadata?: Record<string, unknown>;
+    // true quando a companhia não enviou a ficha do cliente: o nome
+    // é um provisório ("Cliente NIF ...") e o resto vem vazio. Serve
+    // para criar o cliente, nunca para sobrescrever um existente.
+    dataMissing?: boolean;
   };
 
   providerMetadata:
@@ -156,6 +160,11 @@ function normalizeStatus(
     case "ativa":
     case "activo":
     case "ativo":
+    // Continuam em vigor e o portal da Prévoir conta-as nos totais:
+    // o cliente levantou parte do capital / recebeu o aviso de prazo
+    // para pagar, mas a apólice ainda não foi anulada.
+    case "parcialmente resgatada":
+    case "com carta fixação de prazo":
       return "ACTIVE";
 
     case "pendente":

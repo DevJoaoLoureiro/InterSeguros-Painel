@@ -17,6 +17,61 @@ import {
   upsertPolicy,
 } from "@/lib/insurance/sync/upsert-policy";
 
+type PrevoirSource = Awaited<ReturnType<typeof getPrevoirPolicies>>[number];
+
+/*
+ * Apólices que JÁ estão no CRM mas que a Prévoir tem diferentes nos
+ * campos que contam para a carteira (estado, prémio, fracionamento,
+ * produto, datas). As que faltam no CRM ficam para o modo
+ * missingOnly, que tem limite por execução.
+ */
+async function findChangedPolicies(
+  supabase: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  sources: PrevoirSource[],
+): Promise<PrevoirSource[]> {
+  const { data, error } = await supabase
+    .from("policies")
+    .select(
+      "external_id, status, annualized_premium, payment_frequency, product_code, start_date, renewal_date",
+    )
+    .eq("company_id", companyId)
+    // Sem isto a consulta devolve no máximo 1000 linhas.
+    .range(0, 9999);
+
+  if (error) {
+    throw new Error(
+      `Erro ao comparar apólices com a Prévoir: ${error.message}`,
+    );
+  }
+
+  const stored = new Map(
+    (data ?? []).map((row) => [row.external_id, row]),
+  );
+
+  return sources.filter((source) => {
+    const policy = mapPrevoirPolicy(source);
+    const row = stored.get(policy.externalId);
+
+    if (!row) return false;
+
+    const premiumChanged =
+      Math.abs(
+        Number(row.annualized_premium ?? 0) -
+          Number(policy.annualizedPremium ?? 0),
+      ) > 0.005;
+
+    return (
+      premiumChanged ||
+      row.status !== policy.status ||
+      row.payment_frequency !== policy.paymentFrequency ||
+      (row.product_code ?? null) !== (policy.productCode ?? null) ||
+      (row.start_date ?? null) !== (policy.startDate ?? null) ||
+      (row.renewal_date ?? null) !== (policy.renewalDate ?? null)
+    );
+  });
+}
+
 
 
 type SyncOptions = {
@@ -157,8 +212,31 @@ export async function syncPrevoirPolicies(
           lastSync.getDate(),
         ).padStart(2, "0")}`;
 
-      sourcePolicies =
+      const incremental =
         await getPrevoirPoliciesIncremental(sinceDate);
+
+      // O incremental não traz tudo: atualizações de prémio (ex.: no
+      // aniversário da apólice) não aparecem como alteradas e o CRM
+      // ficava com o valor antigo para sempre. A lista completa custa
+      // ~1 s, por isso compara-se também com o CRM e juntam-se as
+      // apólices que mudaram nos campos principais.
+      const changed = await findChangedPolicies(
+        supabase,
+        company.id,
+        await getPrevoirPolicies(),
+      );
+
+      const incrementalIds = new Set(
+        incremental.map((source) => mapPrevoirPolicy(source).externalId),
+      );
+
+      sourcePolicies = [
+        ...incremental,
+        ...changed.filter(
+          (source) =>
+            !incrementalIds.has(mapPrevoirPolicy(source).externalId),
+        ),
+      ];
 
       syncMode = "INCREMENTAL";
     } else {

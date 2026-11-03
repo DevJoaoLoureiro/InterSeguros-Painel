@@ -164,6 +164,22 @@ export async function toggleEmployeeStatus(
     throw new Error(error.message);
   }
 
+  // profiles.active só bloqueia o CRM; a sessão no Supabase Auth
+  // continuava a ser renovada. O ban impede renovar a sessão (o JWT
+  // atual expira em minutos) e é levantado ao reativar.
+  const { error: banError } = await admin.auth.admin.updateUserById(
+    userId,
+    { ban_duration: active ? "none" : "876000h" },
+  );
+
+  if (banError) {
+    throw new Error(
+      `Estado guardado, mas não foi possível ${
+        active ? "desbloquear" : "terminar"
+      } a sessão: ${banError.message}`,
+    );
+  }
+
   revalidatePath("/utilizadores");
   invalidateReference("profiles");
 
