@@ -69,6 +69,8 @@ export type TaskRow = {
   lead_id: string | null;
   policy_id: string | null;
   created_at: string;
+  // Última alteração (para "parado há X dias").
+  updated_at: string | null;
 
   // Campos de processo (kind = PROCESS)
   client_name: string | null;
@@ -119,6 +121,7 @@ const TASK_SELECT = `
   lead_id,
   policy_id,
   created_at,
+  updated_at,
   client_name,
   client_nif,
   insurance_line_id,
@@ -161,6 +164,7 @@ const SIMULATION_COMPANY_MAX = 80;
 function revalidateBoards() {
   revalidatePath("/tarefas");
   revalidatePath("/processos");
+  revalidatePath("/hoje");
 }
 
 function assertValidDate(value: string | null | undefined, label: string) {

@@ -91,7 +91,9 @@ const getCachedVencimentos = unstable_cache(
     return { receipts, renewals };
   },
   // v2: linhas passaram a trazer clientId (link para o cliente).
-  ["vencimentos-snapshot-v2"],
+  // v3: nomes de clientes/apólices pedidos em blocos (antes falhavam
+  //     com muitos recibos e apareciam como "Cliente").
+  ["vencimentos-snapshot-v3"],
   { revalidate: 120, tags: [VENCIMENTOS_TAG] },
 );
 

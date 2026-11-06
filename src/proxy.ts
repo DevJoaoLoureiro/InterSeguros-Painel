@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import {
   EMPLOYEE_HOME,
+  HOME_PAGE,
   canAccessPage,
   hasFullAccess,
 } from "@/lib/auth/permissions";
@@ -138,7 +139,7 @@ if (pathname === "/api/zurich/login-code") {
     const url =
       request.nextUrl.clone();
 
-    url.pathname = "/dashboard";
+    url.pathname = HOME_PAGE;
 
     return NextResponse.redirect(url);
   }

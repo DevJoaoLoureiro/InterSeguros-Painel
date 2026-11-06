@@ -13,6 +13,47 @@ const WINDOW_DAYS_AHEAD = 30;
 const WINDOW_DAYS_BEHIND = 30;
 const PAGE_SIZE = 1000;
 
+// IDs por pedido em .in(): centenas de UUIDs num só pedido passam o
+// limite do URL e o pedido falha (os nomes apareciam como "Cliente").
+const IN_CHUNK = 150;
+
+/*
+ * SELECT ... WHERE id IN (...) em blocos. Erros não são silenciosos:
+ * registam-se, e as linhas desse bloco ficam de fora (o resto da
+ * página continua a funcionar).
+ */
+async function selectByIds<T>(
+  table: string,
+  columns: string,
+  ids: string[],
+): Promise<T[]> {
+  const supabase = createAdminClient();
+  const unique = Array.from(new Set(ids.filter(Boolean)));
+  const chunks: string[][] = [];
+
+  for (let i = 0; i < unique.length; i += IN_CHUNK) {
+    chunks.push(unique.slice(i, i + IN_CHUNK));
+  }
+
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      supabase.from(table).select(columns).in("id", chunk),
+    ),
+  );
+
+  const rows: T[] = [];
+
+  for (const { data, error } of results) {
+    if (error) {
+      console.error(`[vencimentos] ${table}: ${error.message}`);
+      continue;
+    }
+    rows.push(...((data ?? []) as unknown as T[]));
+  }
+
+  return rows;
+}
+
 function getDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -193,23 +234,13 @@ export async function getUpcomingRenewals({
     ),
   );
 
-  const [clientsResult, storesResult] = await Promise.all([
-    clientIds.length > 0
-      ? supabase.from("clients").select("id, name").in("id", clientIds)
-      : Promise.resolve({ data: [], error: null }),
-
-    storeIds.length > 0
-      ? supabase.from("stores").select("id, name").in("id", storeIds)
-      : Promise.resolve({ data: [], error: null }),
+  const [clients, stores] = await Promise.all([
+    selectByIds<{ id: string; name: string }>("clients", "id, name", clientIds),
+    selectByIds<{ id: string; name: string }>("stores", "id, name", storeIds),
   ]);
 
-  const clientMap = new Map(
-    (clientsResult.data ?? []).map((c) => [c.id, c.name]),
-  );
-
-  const storeMap = new Map(
-    (storesResult.data ?? []).map((s) => [s.id, s.name]),
-  );
+  const clientMap = new Map(clients.map((c) => [c.id, c.name]));
+  const storeMap = new Map(stores.map((s) => [s.id, s.name]));
 
   const rows = policiesInWindow
     .map((policy) => {
@@ -259,30 +290,38 @@ export async function getUpcomingReceipts({
   const supabase = createAdminClient();
   const { todayKey, fromKey, toKey } = getWindow();
 
-  const { data: receiptsData, error: receiptsError } = await supabase
-    .from("receipts")
-    .select(`
-      id,
-      policy_id,
-      company_id,
-      receipt_number,
-      due_date,
-      commercial_premium,
-      total_premium,
-      status,
-      external_nature,
-      receipt_type
-    `)
-    .eq("status", "PENDING")
-    .not("due_date", "is", null)
-    .gte("due_date", fromKey)
-    .lte("due_date", toKey)
-    .order("due_date", { ascending: true });
+  // Por páginas: o Supabase devolve no máximo 1000 linhas por pedido.
+  const receiptsData = [];
 
-  if (receiptsError) {
-    throw new Error(
-      `Erro ao carregar recibos a vencer: ${receiptsError.message}`,
-    );
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .from("receipts")
+      .select(`
+        id,
+        policy_id,
+        company_id,
+        receipt_number,
+        due_date,
+        commercial_premium,
+        total_premium,
+        status,
+        external_nature,
+        receipt_type
+      `)
+      .eq("status", "PENDING")
+      .not("due_date", "is", null)
+      .gte("due_date", fromKey)
+      .lte("due_date", toKey)
+      .order("due_date", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(`Erro ao carregar recibos a vencer: ${error.message}`);
+    }
+
+    receiptsData.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
   }
 
   // Exclui estornos, mesmo que status apareça como PENDING.
@@ -311,26 +350,28 @@ export async function getUpcomingReceipts({
     new Set(receipts.map((r) => r.company_id).filter(Boolean)),
   );
 
-  const [policiesResult, companiesResult] = await Promise.all([
-    policyIds.length > 0
-      ? supabase
-          .from("policies")
-          .select("id, client_id, policy_number, issuing_store_id")
-          .in("id", policyIds)
-      : Promise.resolve({ data: [], error: null }),
+  type PolicyLink = {
+    id: string;
+    client_id: string | null;
+    policy_number: string;
+    issuing_store_id: string | null;
+  };
 
-    companyIds.length > 0
-      ? supabase.from("companies").select("id, name").in("id", companyIds)
-      : Promise.resolve({ data: [], error: null }),
+  const [policies, companies] = await Promise.all([
+    selectByIds<PolicyLink>(
+      "policies",
+      "id, client_id, policy_number, issuing_store_id",
+      policyIds,
+    ),
+    selectByIds<{ id: string; name: string }>(
+      "companies",
+      "id, name",
+      companyIds,
+    ),
   ]);
 
-  const policyMap = new Map(
-    (policiesResult.data ?? []).map((p) => [p.id, p]),
-  );
-
-  const companyMap = new Map(
-    (companiesResult.data ?? []).map((c) => [c.id, c.name]),
-  );
+  const policyMap = new Map(policies.map((p) => [p.id, p]));
+  const companyMap = new Map(companies.map((c) => [c.id, c.name]));
 
   // Filtrar por loja aqui, já que receipts não tem issuing_store_id
   // direto. IMPORTANTE: tal como nas renovações, incluímos também
@@ -360,23 +401,13 @@ export async function getUpcomingReceipts({
     ),
   );
 
-  const [clientsResult, storesResult] = await Promise.all([
-    clientIds.length > 0
-      ? supabase.from("clients").select("id, name").in("id", clientIds)
-      : Promise.resolve({ data: [], error: null }),
-
-    storeIds.length > 0
-      ? supabase.from("stores").select("id, name").in("id", storeIds)
-      : Promise.resolve({ data: [], error: null }),
+  const [clients, stores] = await Promise.all([
+    selectByIds<{ id: string; name: string }>("clients", "id, name", clientIds),
+    selectByIds<{ id: string; name: string }>("stores", "id, name", storeIds),
   ]);
 
-  const clientMap = new Map(
-    (clientsResult.data ?? []).map((c) => [c.id, c.name]),
-  );
-
-  const storeMap = new Map(
-    (storesResult.data ?? []).map((s) => [s.id, s.name]),
-  );
+  const clientMap = new Map(clients.map((c) => [c.id, c.name]));
+  const storeMap = new Map(stores.map((s) => [s.id, s.name]));
 
   return filteredReceipts.map((receipt) => {
     const policy = policyMap.get(receipt.policy_id);

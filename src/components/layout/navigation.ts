@@ -13,6 +13,7 @@ import {
   MessageCircle,
   MessagesSquare,
   Settings,
+  Sun,
   Target,
   Users,
 } from "lucide-react";
@@ -47,6 +48,12 @@ export type MenuGroup = {
 export const menuGroups: MenuGroup[] = [
   {
     items: [
+      {
+        label: "O meu dia",
+        href: "/hoje",
+        icon: Sun,
+        keywords: "hoje pendentes por fazer lista trabalho seguimento atrasado",
+      },
       {
         label: "Dashboard",
         href: "/dashboard",

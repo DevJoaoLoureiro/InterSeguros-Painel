@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LockKeyhole, Mail } from "lucide-react";
 
+import { HOME_PAGE } from "@/lib/auth/permissions";
 import { createClient } from "@/lib/supabase/client";
 
 export function LoginForm() {
@@ -35,7 +36,7 @@ export function LoginForm() {
       return;
     }
 
-    router.replace("/dashboard");
+    router.replace(HOME_PAGE);
     router.refresh();
   }
 

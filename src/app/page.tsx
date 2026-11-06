@@ -1,5 +1,7 @@
 ﻿import { redirect } from "next/navigation";
 
+import { HOME_PAGE } from "@/lib/auth/permissions";
+
 export default function HomePage() {
-  redirect("/dashboard");
+  redirect(HOME_PAGE);
 }

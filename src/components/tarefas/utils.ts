@@ -224,6 +224,69 @@ export function isInNextDays(task: TaskRow, days: number) {
 }
 
 /*
+ * Processo que pede atenção (usado em "O meu dia"):
+ *   overdue — o seguro já começou e o processo não fechou;
+ *   soon    — o seguro começa nos próximos 5 dias;
+ *   stale   — parado (sem mexer) há demasiado tempo para a fase.
+ */
+export const PROCESS_STALE_DAYS: Record<ProcessStage, number> = {
+  TO_SIMULATE: 2,
+  SIMULATED: 3,
+  ISSUED: 7,
+  DONE: Infinity,
+};
+
+export type ProcessAttention = {
+  level: "overdue" | "soon" | "stale";
+  label: string;
+  // Mais urgente = menor.
+  rank: number;
+};
+
+export function processAttention(task: TaskRow): ProcessAttention | null {
+  if (!isOpen(task) || task.receipt_paid) return null;
+
+  const days = daysToAgenda(task);
+
+  if (days !== null && days < 0) {
+    return {
+      level: "overdue",
+      label: days === -1 ? "Seguro começou ontem" : `Seguro começou há ${-days} dias`,
+      rank: -1000 + days,
+    };
+  }
+
+  if (days !== null && days <= 5) {
+    return {
+      level: "soon",
+      label:
+        days === 0
+          ? "Seguro começa hoje"
+          : days === 1
+            ? "Seguro começa amanhã"
+            : `Seguro começa em ${days} dias`,
+      rank: -500 + days,
+    };
+  }
+
+  const stage = processStage(task);
+  // À espera do recibo do webservice: fecha sozinho, não é atraso.
+  if (stage === "ISSUED" && task.receipt_source === "WEBSERVICE") return null;
+
+  const idle = -(diffDaysFromToday(task.updated_at ?? task.created_at) ?? 0);
+
+  if (idle >= PROCESS_STALE_DAYS[stage]) {
+    return {
+      level: "stale",
+      label: `Parado há ${idle} dias`,
+      rank: -idle,
+    };
+  }
+
+  return null;
+}
+
+/*
  * Aplica localmente (otimista) as mesmas regras que o servidor
  * (deriveProcessStatus): marcar passos avança, desmarcar recua.
  */
@@ -251,6 +314,8 @@ export function applyProcessPatch(task: TaskRow, patch: ProcessPatch): TaskRow {
         ? patch.simulationCompany?.trim() || null
         : task.simulation_company,
     issued: patch.issued ?? task.issued,
+    // Mexeu agora: deixa de contar como "parado".
+    updated_at: new Date().toISOString(),
   };
 
   if (patch.receiptPaid !== undefined) {

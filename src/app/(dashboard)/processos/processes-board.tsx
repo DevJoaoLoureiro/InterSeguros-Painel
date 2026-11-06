@@ -1,47 +1,32 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState } from "react";
 import { Plus, Search, TrendingUp } from "lucide-react";
 
-import { ClientMessageModal } from "@/components/tarefas/client-message-modal";
 import { ProcessCard } from "@/components/tarefas/process-card";
 import {
-  CreateTaskModal,
-  NotIssuedModal,
-  ProcessModal,
-  SimulationCompanyModal,
-  type TaskEditInput,
-} from "@/components/tarefas/task-modals";
-import { Toaster, useToasts } from "@/components/tarefas/toasts";
+  ProcessDialogs,
+  useProcessWorkspace,
+} from "@/components/tarefas/process-workspace";
+import { CreateTaskModal } from "@/components/tarefas/task-modals";
 import {
-  applyProcessPatch,
   daysToAgenda,
   isInNextDays,
   isOverdue,
   processStage,
   processStages,
-  processStatusFor,
   type ProcessStage,
 } from "@/components/tarefas/utils";
 import type {
   MessageLineKind,
   MessageTemplate,
 } from "@/lib/tasks/client-message";
-import {
-  NOT_ISSUED_REASONS,
-  type NotIssuedReason,
-} from "@/lib/tasks/not-issued";
+import { NOT_ISSUED_REASONS } from "@/lib/tasks/not-issued";
 
-import {
-  deleteTask,
-  markProcessNotIssued,
-  updateProcess,
-  updateTask,
-  updateTaskStatus,
-  type InsuranceLineOption,
-  type ProcessPatch,
-  type ProfileOption,
-  type TaskRow,
+import type {
+  InsuranceLineOption,
+  ProfileOption,
+  TaskRow,
 } from "@/app/(dashboard)/tarefas/action";
 
 type Props = {
@@ -53,10 +38,9 @@ type Props = {
   messageTemplates: Record<MessageLineKind, MessageTemplate>;
   // Companhias ativas (para "Que companhia simulou?").
   companyNames: string[];
+  // Processo a abrir logo (link de "O meu dia").
+  initialOpenId?: string | null;
 };
-
-const MIGRATION_WARNING =
-  "Passo guardado, mas a companhia não: falta correr a migração 20261106130000_process_simulation_company.sql.";
 
 type View = "ACTIVE" | "NOT_ISSUED";
 type Focus = "ALL" | "NEXT7" | "OVERDUE";
@@ -85,16 +69,17 @@ export function ProcessesBoard({
   currentProfileId,
   messageTemplates,
   companyNames,
+  initialOpenId = null,
 }: Props) {
-  const [processes, setProcesses] = useState(initialProcesses);
-  const [synced, setSynced] = useState(initialProcesses);
-
-  // Depois de cada ação o servidor (revalidatePath) devolve dados
-  // novos: substituem o estado otimista local sem recarregar a página.
-  if (initialProcesses !== synced) {
-    setSynced(initialProcesses);
-    setProcesses(initialProcesses);
-  }
+  // Estado, ações e ecrãs partilhados com "O meu dia".
+  const ws = useProcessWorkspace({
+    initialProcesses,
+    profiles,
+    insuranceLines,
+    companyNames,
+    initialOpenId,
+  });
+  const { processes } = ws;
 
   const [view, setView] = useState<View>("ACTIVE");
   const [focus, setFocus] = useState<Focus>("ALL");
@@ -105,49 +90,9 @@ export function ProcessesBoard({
   );
 
   const [creating, setCreating] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [notIssuedId, setNotIssuedId] = useState<string | null>(null);
-  const [messageId, setMessageId] = useState<string | null>(null);
-  const [simulatedId, setSimulatedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<
     Partial<Record<ProcessStage, boolean>>
   >({});
-
-  const [, startTransition] = useTransition();
-  const { toasts, push, dismiss } = useToasts();
-
-  const profileMap = useMemo(
-    () => new Map(profiles.map((p) => [p.id, p.full_name])),
-    [profiles],
-  );
-
-  const lineMap = useMemo(
-    () => new Map(insuranceLines.map((l) => [l.id, l.name])),
-    [insuranceLines],
-  );
-
-  const openProcess = processes.find((p) => p.id === openId) ?? null;
-  const notIssuedProcess = processes.find((p) => p.id === notIssuedId) ?? null;
-  const messageProcess = processes.find((p) => p.id === messageId) ?? null;
-  const simulatedProcess =
-    processes.find((p) => p.id === simulatedId) ?? null;
-
-  // Companhias da lista + as escritas à mão em processos anteriores,
-  // as mais usadas primeiro.
-  const companyOptions = useMemo(() => {
-    const usage = new Map<string, number>();
-
-    for (const name of companyNames) usage.set(name, 0);
-
-    for (const p of processes) {
-      const name = p.simulation_company?.trim();
-      if (name) usage.set(name, (usage.get(name) ?? 0) + 1);
-    }
-
-    return [...usage.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "pt"))
-      .map(([name]) => name);
-  }, [companyNames, processes]);
 
   // ----------------------------------------
   // FILTROS / CONTADORES
@@ -218,146 +163,6 @@ export function ProcessesBoard({
   })).filter((reason) => reason.count > 0);
 
   // ----------------------------------------
-  // AÇÕES (otimistas, com reversão em erro)
-  // ----------------------------------------
-
-  function replace(next: TaskRow) {
-    setProcesses((prev) => prev.map((p) => (p.id === next.id ? next : p)));
-  }
-
-  function run(
-    previous: TaskRow,
-    action: () => Promise<unknown>,
-    successMessage?: string,
-  ) {
-    startTransition(async () => {
-      try {
-        await action();
-        if (successMessage) push("success", successMessage);
-      } catch (error) {
-        setProcesses((prev) => {
-          const exists = prev.some((p) => p.id === previous.id);
-          return exists
-            ? prev.map((p) => (p.id === previous.id ? previous : p))
-            : [previous, ...prev];
-        });
-
-        push(
-          "error",
-          error instanceof Error ? error.message : "Não foi possível guardar.",
-        );
-      }
-    });
-  }
-
-  function handlePatch(process: TaskRow, patch: ProcessPatch) {
-    const next = applyProcessPatch(process, patch);
-    replace(next);
-
-    const from = processStage(process);
-    const to = processStage(next);
-
-    run(
-      process,
-      async () => {
-        const result = await updateProcess(process.id, patch);
-        if (result.companySaved === false) push("error", MIGRATION_WARNING);
-      },
-      from !== to
-        ? to === "DONE"
-          ? "Recibo pago — negócio fechado."
-          : `Passou para "${processStages.find((s) => s.key === to)?.label}"${
-              patch.simulationCompany ? ` · ${patch.simulationCompany}` : ""
-            }.`
-        : undefined,
-    );
-  }
-
-  // Fase 1 → 2, depois de responder "Que companhia simulou?".
-  function handleSimulated(process: TaskRow, company: string | null) {
-    handlePatch(process, {
-      simulationPresented: true,
-      ...(company ? { simulationCompany: company } : {}),
-    });
-  }
-
-  function applyEdit(process: TaskRow, input: TaskEditInput): TaskRow {
-    return {
-      ...process,
-      title: input.title?.trim() || process.title,
-      description:
-        input.description !== undefined
-          ? input.description
-          : process.description,
-      priority: input.priority ?? process.priority,
-      assigned_user_id: input.assignedUserId ?? process.assigned_user_id,
-    };
-  }
-
-  function handleSave(
-    process: TaskRow,
-    base: TaskEditInput,
-    patch: ProcessPatch,
-  ) {
-    replace(applyProcessPatch(applyEdit(process, base), patch));
-
-    run(
-      process,
-      async () => {
-        await updateTask(process.id, base);
-        const result = await updateProcess(process.id, patch);
-        if (result.companySaved === false) push("error", MIGRATION_WARNING);
-      },
-      "Processo guardado.",
-    );
-  }
-
-  function handleNotIssued(
-    process: TaskRow,
-    reason: NotIssuedReason,
-    note: string | null,
-  ) {
-    replace({
-      ...process,
-      status: "CANCELLED",
-      not_issued_reason: reason,
-      not_issued_note: note,
-      not_issued_at: new Date().toISOString(),
-    });
-
-    run(
-      process,
-      () => markProcessNotIssued(process.id, { reason, note }),
-      "Guardado em \"Não avançaram\".",
-    );
-  }
-
-  // Reabrir um processo "não emitida": volta à fase que os passos
-  // já marcados indicam e o motivo é apagado.
-  function handleReopen(process: TaskRow) {
-    const nextStatus = processStatusFor(process, "PENDING");
-
-    replace({
-      ...process,
-      status: nextStatus,
-      not_issued_reason: null,
-      not_issued_note: null,
-      not_issued_at: null,
-    });
-
-    run(
-      process,
-      () => updateTaskStatus(process.id, nextStatus),
-      "Processo reaberto.",
-    );
-  }
-
-  function handleDelete(process: TaskRow) {
-    setProcesses((prev) => prev.filter((p) => p.id !== process.id));
-    run(process, () => deleteTask(process.id), "Processo apagado.");
-  }
-
-  // ----------------------------------------
   // RENDER
   // ----------------------------------------
 
@@ -366,23 +171,15 @@ export function ProcessesBoard({
       <ProcessCard
         key={process.id}
         process={process}
-        lineName={
-          process.insurance_line_id
-            ? lineMap.get(process.insurance_line_id) ?? null
-            : null
-        }
-        assignedName={
-          process.assigned_user_id
-            ? profileMap.get(process.assigned_user_id) ?? null
-            : null
-        }
-        onOpen={(p) => setOpenId(p.id)}
-        onPatch={handlePatch}
-        onNotIssued={(p) => setNotIssuedId(p.id)}
-        onReopen={handleReopen}
-        onDelete={handleDelete}
-        onMessage={(p) => setMessageId(p.id)}
-        onSimulated={(p) => setSimulatedId(p.id)}
+        lineName={ws.lineName(process)}
+        assignedName={ws.assignedName(process)}
+        onOpen={ws.open}
+        onPatch={ws.handlePatch}
+        onNotIssued={ws.openNotIssued}
+        onReopen={ws.handleReopen}
+        onDelete={ws.handleDelete}
+        onMessage={ws.openMessage}
+        onSimulated={ws.openSimulated}
       />
     );
   }
@@ -435,7 +232,6 @@ export function ProcessesBoard({
       onClick: () => setView("NOT_ISSUED"),
     },
   ];
-
   return (
     <div className="space-y-5">
       {/* TOOLBAR */}
@@ -648,92 +444,19 @@ export function ProcessesBoard({
           privileged={privileged}
           currentProfileId={currentProfileId}
           initialKind="PROCESS"
-          onCreated={() => push("success", "Processo criado.")}
+          onCreated={() => ws.push("success", "Processo criado.")}
           onClose={() => setCreating(false)}
         />
       )}
 
-      {openProcess && (
-        <ProcessModal
-          key={openProcess.id}
-          task={openProcess}
-          lineName={
-            openProcess.insurance_line_id
-              ? lineMap.get(openProcess.insurance_line_id) ?? null
-              : null
-          }
-          insuranceLines={insuranceLines}
-          profiles={profiles}
-          companyOptions={companyOptions}
-          privileged={privileged}
-          canModify
-          onSave={(base, patch) => handleSave(openProcess, base, patch)}
-          onNotIssued={
-            openProcess.status !== "CANCELLED" && !openProcess.receipt_paid
-              ? () => {
-                  setOpenId(null);
-                  setNotIssuedId(openProcess.id);
-                }
-              : undefined
-          }
-          onClose={() => setOpenId(null)}
-        />
-      )}
-
-      {notIssuedProcess && (
-        <NotIssuedModal
-          key={notIssuedProcess.id}
-          task={notIssuedProcess}
-          onConfirm={(reason, note) =>
-            handleNotIssued(notIssuedProcess, reason, note)
-          }
-          onClose={() => setNotIssuedId(null)}
-        />
-      )}
-
-      {messageProcess && (
-        <ClientMessageModal
-          key={messageProcess.id}
-          process={messageProcess}
-          lineName={
-            messageProcess.insurance_line_id
-              ? lineMap.get(messageProcess.insurance_line_id) ?? null
-              : null
-          }
-          senderName={
-            profileMap.get(
-              messageProcess.assigned_user_id ?? currentProfileId,
-            ) ??
-            profileMap.get(currentProfileId) ??
-            ""
-          }
-          templates={messageTemplates}
-          // Enviada a simulação: pergunta logo a companhia.
-          onPresented={() => {
-            setMessageId(null);
-            setSimulatedId(messageProcess.id);
-          }}
-          onNotify={push}
-          onClose={() => setMessageId(null)}
-        />
-      )}
-
-      {simulatedProcess && (
-        <SimulationCompanyModal
-          key={simulatedProcess.id}
-          process={simulatedProcess}
-          lineName={
-            simulatedProcess.insurance_line_id
-              ? lineMap.get(simulatedProcess.insurance_line_id) ?? null
-              : null
-          }
-          options={companyOptions}
-          onConfirm={(company) => handleSimulated(simulatedProcess, company)}
-          onClose={() => setSimulatedId(null)}
-        />
-      )}
-
-      <Toaster toasts={toasts} onDismiss={dismiss} />
+      <ProcessDialogs
+        workspace={ws}
+        profiles={profiles}
+        insuranceLines={insuranceLines}
+        privileged={privileged}
+        currentProfileId={currentProfileId}
+        messageTemplates={messageTemplates}
+      />
     </div>
   );
 }

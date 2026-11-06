@@ -9,8 +9,14 @@ import { loadMessageTemplates } from "@/lib/tasks/message-templates";
 
 import { ProcessesBoard } from "./processes-board";
 
-export default async function ProcessosPage() {
+export default async function ProcessosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ abrir?: string }>;
+}) {
   const profile = await getCurrentProfile();
+  // ?abrir=<id> (vindo de "O meu dia"): abre o detalhe desse processo.
+  const { abrir } = await searchParams;
 
   if (!profile) {
     redirect("/login");
@@ -52,6 +58,7 @@ export default async function ProcessosPage() {
         currentProfileId={currentProfileId}
         messageTemplates={messageTemplates}
         companyNames={companies.map((company) => company.name)}
+        initialOpenId={typeof abrir === "string" ? abrir : null}
       />
     </div>
   );

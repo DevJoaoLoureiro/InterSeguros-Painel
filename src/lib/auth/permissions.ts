@@ -17,6 +17,7 @@
 export const FULL_ACCESS_ROLES = ["OWNER", "ADMIN"] as const;
 
 export const EMPLOYEE_PAGES = [
+  "/hoje",
   "/dashboard",
   "/leads",
   "/clientes",
@@ -31,7 +32,10 @@ export const EMPLOYEE_PAGES = [
 ] as const;
 
 /* Para onde vai um funcionário que abre uma página que não pode ver. */
-export const EMPLOYEE_HOME = "/dashboard";
+export const EMPLOYEE_HOME = "/hoje";
+
+/* Página de entrada de todos (após login, "/" e o logótipo). */
+export const HOME_PAGE = "/hoje";
 
 export function hasFullAccess(role: string | null | undefined) {
   return role === "OWNER" || role === "ADMIN";

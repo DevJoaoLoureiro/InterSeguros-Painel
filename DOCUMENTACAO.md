@@ -95,13 +95,14 @@ supabase/migrations/ migrações recentes (o esquema anterior a 2026-09-30 não 
   - Restantes APIs: qualquer utilizador **ativo**.
 - Permissões por **função**, não por loja (`lib/auth/permissions.ts`):
   - **OWNER / ADMIN:** tudo.
-  - **Funcionários:** Dashboard, Leads, Clientes, Vencimentos e Recibos, Tarefas, Processos, Oportunidades, Simulador, Conversas, Apólices de Parceiros. Não veem Carteira por companhia, Faturação, Estatísticas nem Gestão.
+  - **Funcionários:** O meu dia, Dashboard, Leads, Clientes, Vencimentos e Recibos, Tarefas, Processos, Oportunidades, Simulador, Conversas, Apólices de Parceiros. Não veem Carteira por companhia, Faturação, Estatísticas nem Gestão.
 - A **loja** é só um filtro escolhido no topo (cookie); todos podem ver todas as lojas.
 
 ## 7. Páginas
 
 | Menu | Rota | Notas |
 |---|---|---|
+| O meu dia | `/hoje` | **Página de entrada** (`HOME_PAGE` em `lib/auth/permissions.ts`). "Os meus processos" com o próximo passo à mão (mesmas ações e ecrãs dos Processos, via `components/tarefas/process-workspace.tsx`; "precisam de atenção" = `processAttention()` em `components/tarefas/utils.ts`) + lembretes por urgência (Atrasado / Hoje / Seguimento): tarefas, leads e oportunidades minhas; recibos, renovações e conversas da loja escolhida (ou da minha). Regras dos lembretes em `lib/today/get-today.ts` |
 | Dashboard | `/dashboard` | Produção do dia/mês, tarefas, recibos a vencer, alertas |
 | Leads (Chat) | `/leads` | Leads do site/chatbot, conversão, prospeção |
 | Clientes | `/clientes` | Ficha do cliente, apólices, recibos, papéis, transferências, conselho de IA |
@@ -109,7 +110,7 @@ supabase/migrations/ migrações recentes (o esquema anterior a 2026-09-30 não 
 | Carteira por Companhia | `/carteira`, `/carteira/[company]` | Sempre prémio comercial (ver §11) |
 | Faturação | `/faturacao`, `/faturacao/mapa`, `/faturacao/prevoir`, `/faturacao/zurich` | `/comissoes/*` redireciona para aqui (`next.config.ts`) |
 | Tarefas | `/tarefas` | |
-| Processos | `/processos` | Quadro por fase; "Mensagem ao cliente" (§11) |
+| Processos | `/processos` | Quadro por fase; "Mensagem ao cliente" (§11). `?abrir=<id>` abre o detalhe de um processo |
 | Oportunidades | `/oportunidades` | Kanban |
 | Simulador | `/simulador`, `/simulador/metricas` | Estimativa Zurich Auto + registo de cotações reais |
 | Conversas | `/conversas` | Inbox WhatsApp |
@@ -208,7 +209,6 @@ Funções SQL (RPC): `get_receipts_page`, `get_latest_renewal_dates`, `search_cl
 
 ## 13. Pendentes conhecidos
 
-- Aplicar a migração `20261106130000_process_simulation_company.sql` (companhia que simulou, nos Processos).
 
 - Importar as apólices Zurich Vida que faltam (ficheiro da carteira completa).
 - `/api/cron/prevoir-sync` ainda corre de forma síncrona (`maxDuration` 60) e pode dar timeout no cron-job.org; aplicar o mesmo padrão do cron da Zurich (202 + `after()`).

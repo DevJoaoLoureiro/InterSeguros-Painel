@@ -4,7 +4,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-import { canAccessPage, hasFullAccess } from "@/lib/auth/permissions";
+import {
+  canAccessPage,
+  hasFullAccess,
+  HOME_PAGE,
+} from "@/lib/auth/permissions";
 
 import { LogoutButton } from "@/components/auth/logout-button";
 import {
@@ -81,7 +85,7 @@ export function AppSidebar({
           por baixo, para o topo ser uma faixa contínua. */}
 
       <Link
-        href="/dashboard"
+        href={HOME_PAGE}
         className="flex h-[68px] shrink-0 items-center justify-center overflow-hidden border-b border-[#ece7e2] transition hover:bg-[#faf8f6]"
       >
         {/* A imagem tem muita margem em branco: ampliada (scale não
