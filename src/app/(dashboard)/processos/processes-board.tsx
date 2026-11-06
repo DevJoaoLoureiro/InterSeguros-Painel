@@ -9,6 +9,7 @@ import {
   CreateTaskModal,
   NotIssuedModal,
   ProcessModal,
+  SimulationCompanyModal,
   type TaskEditInput,
 } from "@/components/tarefas/task-modals";
 import { Toaster, useToasts } from "@/components/tarefas/toasts";
@@ -50,7 +51,12 @@ type Props = {
   privileged: boolean;
   currentProfileId: string;
   messageTemplates: Record<MessageLineKind, MessageTemplate>;
+  // Companhias ativas (para "Que companhia simulou?").
+  companyNames: string[];
 };
+
+const MIGRATION_WARNING =
+  "Passo guardado, mas a companhia não: falta correr a migração 20261106130000_process_simulation_company.sql.";
 
 type View = "ACTIVE" | "NOT_ISSUED";
 type Focus = "ALL" | "NEXT7" | "OVERDUE";
@@ -78,6 +84,7 @@ export function ProcessesBoard({
   privileged,
   currentProfileId,
   messageTemplates,
+  companyNames,
 }: Props) {
   const [processes, setProcesses] = useState(initialProcesses);
   const [synced, setSynced] = useState(initialProcesses);
@@ -101,6 +108,7 @@ export function ProcessesBoard({
   const [openId, setOpenId] = useState<string | null>(null);
   const [notIssuedId, setNotIssuedId] = useState<string | null>(null);
   const [messageId, setMessageId] = useState<string | null>(null);
+  const [simulatedId, setSimulatedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<
     Partial<Record<ProcessStage, boolean>>
   >({});
@@ -121,6 +129,25 @@ export function ProcessesBoard({
   const openProcess = processes.find((p) => p.id === openId) ?? null;
   const notIssuedProcess = processes.find((p) => p.id === notIssuedId) ?? null;
   const messageProcess = processes.find((p) => p.id === messageId) ?? null;
+  const simulatedProcess =
+    processes.find((p) => p.id === simulatedId) ?? null;
+
+  // Companhias da lista + as escritas à mão em processos anteriores,
+  // as mais usadas primeiro.
+  const companyOptions = useMemo(() => {
+    const usage = new Map<string, number>();
+
+    for (const name of companyNames) usage.set(name, 0);
+
+    for (const p of processes) {
+      const name = p.simulation_company?.trim();
+      if (name) usage.set(name, (usage.get(name) ?? 0) + 1);
+    }
+
+    return [...usage.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "pt"))
+      .map(([name]) => name);
+  }, [companyNames, processes]);
 
   // ----------------------------------------
   // FILTROS / CONTADORES
@@ -232,13 +259,26 @@ export function ProcessesBoard({
 
     run(
       process,
-      () => updateProcess(process.id, patch),
+      async () => {
+        const result = await updateProcess(process.id, patch);
+        if (result.companySaved === false) push("error", MIGRATION_WARNING);
+      },
       from !== to
         ? to === "DONE"
-          ? "Recibo pago — processo concluído."
-          : `Passou para "${processStages.find((s) => s.key === to)?.label}".`
+          ? "Recibo pago — negócio fechado."
+          : `Passou para "${processStages.find((s) => s.key === to)?.label}"${
+              patch.simulationCompany ? ` · ${patch.simulationCompany}` : ""
+            }.`
         : undefined,
     );
+  }
+
+  // Fase 1 → 2, depois de responder "Que companhia simulou?".
+  function handleSimulated(process: TaskRow, company: string | null) {
+    handlePatch(process, {
+      simulationPresented: true,
+      ...(company ? { simulationCompany: company } : {}),
+    });
   }
 
   function applyEdit(process: TaskRow, input: TaskEditInput): TaskRow {
@@ -265,7 +305,8 @@ export function ProcessesBoard({
       process,
       async () => {
         await updateTask(process.id, base);
-        await updateProcess(process.id, patch);
+        const result = await updateProcess(process.id, patch);
+        if (result.companySaved === false) push("error", MIGRATION_WARNING);
       },
       "Processo guardado.",
     );
@@ -287,7 +328,7 @@ export function ProcessesBoard({
     run(
       process,
       () => markProcessNotIssued(process.id, { reason, note }),
-      "Processo marcado como não emitida.",
+      "Guardado em \"Não avançaram\".",
     );
   }
 
@@ -341,6 +382,7 @@ export function ProcessesBoard({
         onReopen={handleReopen}
         onDelete={handleDelete}
         onMessage={(p) => setMessageId(p.id)}
+        onSimulated={(p) => setSimulatedId(p.id)}
       />
     );
   }
@@ -387,7 +429,7 @@ export function ProcessesBoard({
     },
     {
       key: "notIssued",
-      label: "Não emitidas",
+      label: "Não avançaram",
       count: counts.notIssued,
       active: view === "NOT_ISSUED",
       onClick: () => setView("NOT_ISSUED"),
@@ -550,7 +592,7 @@ export function ProcessesBoard({
             <div className="rounded-2xl border border-[#e5e8ec] bg-white p-4 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold text-[#40464f]">
-                  Porque não foram emitidas
+                  Porque não avançaram
                 </p>
 
                 {issueRate !== null && (
@@ -582,11 +624,11 @@ export function ProcessesBoard({
           {notIssued.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-[#dfe2e6] bg-white py-14 text-center">
               <p className="text-sm font-medium text-[#40464f]">
-                Sem processos não emitidos
+                Nenhum cliente desistiu
               </p>
               <p className="mt-1 text-xs text-[#8a9099]">
-                Os processos que marcares como &quot;Não emitida&quot;
-                aparecem aqui, com o motivo.
+                Quando marcares &quot;Cliente não avançou&quot; num processo,
+                ele aparece aqui com o motivo.
               </p>
             </div>
           ) : (
@@ -622,6 +664,7 @@ export function ProcessesBoard({
           }
           insuranceLines={insuranceLines}
           profiles={profiles}
+          companyOptions={companyOptions}
           privileged={privileged}
           canModify
           onSave={(base, patch) => handleSave(openProcess, base, patch)}
@@ -665,11 +708,28 @@ export function ProcessesBoard({
             ""
           }
           templates={messageTemplates}
-          onPresented={() =>
-            handlePatch(messageProcess, { simulationPresented: true })
-          }
+          // Enviada a simulação: pergunta logo a companhia.
+          onPresented={() => {
+            setMessageId(null);
+            setSimulatedId(messageProcess.id);
+          }}
           onNotify={push}
           onClose={() => setMessageId(null)}
+        />
+      )}
+
+      {simulatedProcess && (
+        <SimulationCompanyModal
+          key={simulatedProcess.id}
+          process={simulatedProcess}
+          lineName={
+            simulatedProcess.insurance_line_id
+              ? lineMap.get(simulatedProcess.insurance_line_id) ?? null
+              : null
+          }
+          options={companyOptions}
+          onConfirm={(company) => handleSimulated(simulatedProcess, company)}
+          onClose={() => setSimulatedId(null)}
         />
       )}
 

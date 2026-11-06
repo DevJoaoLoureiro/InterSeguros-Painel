@@ -194,7 +194,8 @@ Funções SQL (RPC): `get_receipts_page`, `get_latest_renewal_dates`, `search_cl
 - **Classificação:** PPR, Unit Linked, capitalização e poupança contam como **Financeiros**, não como Vida. Vida Risco e Crédito Habitação são **Vida**.
 - **Produção do ano (Zurich)** = prémio comercial dos recibos desde 1 de janeiro; não é a mesma coisa que a carteira anual.
 - **Comissões** (`lib/insurance/commissions.ts`): se há linha `TOTAL` (Prévoir) usa-se essa; senão somam-se as partes (Zurich: angariação + cobrança).
-- **Processos** (`lib/tasks/process-status.ts`): recibo pago → concluído; simulação ou emissão feita → em curso; nada feito → pendente. "Não emitida" (cancelado) é manual, com motivo.
+- **Processos** (`lib/tasks/process-status.ts`): recibo pago → concluído; simulação ou emissão feita → em curso; nada feito → pendente. "Não avançou" (cancelado, `not_issued_*`) é manual, com motivo. Colunas do quadro: Fazer simulação → À espera do cliente → À espera do pagamento → Fechados.
+- **Companhia da simulação** (`tasks.simulation_company`, texto): pedida ao passar à fase 2 ("Que companhia simulou?", `components/tarefas/simulation-company.tsx`), escolhida da lista de companhias ativas ou escrita à mão; editável no detalhe do processo. Sem a migração `20261106130000_process_simulation_company.sql` a página funciona, mas a companhia não é gravada (aparece um aviso).
 - **Mensagem ao cliente** (`lib/tasks/client-message.ts`): gerada a partir do ramo do processo, com planos standard editáveis. Os modelos editam-se em Configurações → Mensagens (tabela `message_templates`); sem modelo gravado usa-se o do código.
 - **Vencimentos:** janela de 30 dias para trás e 30 para a frente; estornos excluídos; uma loja escolhida inclui também apólices ainda sem loja.
 - **Anuladas:** apólices que saíram nos últimos 180 dias e não voltaram (`lib/recovery/`).
@@ -207,7 +208,8 @@ Funções SQL (RPC): `get_receipts_page`, `get_latest_renewal_dates`, `search_cl
 
 ## 13. Pendentes conhecidos
 
-- Aplicar a migração `20261106120000_message_templates.sql` (sem ela, os modelos das mensagens não se podem guardar).
+- Aplicar a migração `20261106130000_process_simulation_company.sql` (companhia que simulou, nos Processos).
+
 - Importar as apólices Zurich Vida que faltam (ficheiro da carteira completa).
 - `/api/cron/prevoir-sync` ainda corre de forma síncrona (`maxDuration` 60) e pode dar timeout no cron-job.org; aplicar o mesmo padrão do cron da Zurich (202 + `after()`).
 - Confirmar que `ZURICH_ALLOW_TOKEN_ISSUE` não está a `1` no `.env.local`.

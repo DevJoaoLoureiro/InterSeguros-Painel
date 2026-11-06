@@ -1,7 +1,15 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { FileText, Loader2, Lock, X } from "lucide-react";
+import { Fragment, useState, useTransition } from "react";
+import {
+  ArrowRight,
+  Building2,
+  Check,
+  FileText,
+  Loader2,
+  Lock,
+  X,
+} from "lucide-react";
 
 import {
   createTask,
@@ -19,6 +27,7 @@ import {
   type NotIssuedReason,
 } from "@/lib/tasks/not-issued";
 
+import { CompanyPicker } from "./simulation-company";
 import {
   formatCurrency,
   formatDate,
@@ -118,6 +127,7 @@ export function ModalShell({
   children,
   footer,
   wide = false,
+  icon,
 }: {
   title: string;
   subtitle?: React.ReactNode;
@@ -125,6 +135,8 @@ export function ModalShell({
   children: React.ReactNode;
   footer: React.ReactNode;
   wide?: boolean;
+  // Ícone opcional ao lado do título (janelas de um só passo).
+  icon?: React.ReactNode;
 }) {
   return (
     <div
@@ -137,11 +149,18 @@ export function ModalShell({
         className={`flex max-h-[92dvh] w-full animate-pop-in flex-col rounded-2xl bg-white shadow-2xl ${wide ? "max-w-lg" : "max-w-md"}`}
       >
         <div className="flex items-start justify-between gap-3 border-b border-[#edf0f2] px-5 py-4">
-          <div className="min-w-0">
-            <h2 className="truncate font-semibold text-[#20242a]">{title}</h2>
-            {subtitle && (
-              <p className="mt-0.5 text-xs text-[#8a9099]">{subtitle}</p>
+          <div className="flex min-w-0 items-center gap-3">
+            {icon && (
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[#ff6a2b] to-[#ea5b0c] text-white shadow-[0_4px_12px_rgba(234,91,12,0.30)]">
+                {icon}
+              </span>
             )}
+            <div className="min-w-0">
+              <h2 className="truncate font-semibold text-[#20242a]">{title}</h2>
+              {subtitle && (
+                <p className="mt-0.5 text-xs text-[#8a9099]">{subtitle}</p>
+              )}
+            </div>
           </div>
 
           <button
@@ -622,11 +641,104 @@ export function EditTaskModal({
 // PROCESSO
 // ============================================================
 
+export const PROCESS_STEPS = [
+  { step: 1, label: "Simulação enviada" },
+  { step: 2, label: "Apólice emitida" },
+  { step: 3, label: "Recibo pago" },
+] as const;
+
+/*
+ * Linha de progresso dos passos: carregar num passo marca-o (e os
+ * anteriores); carregar no último feito desfaz esse passo.
+ */
+function ProcessStepper({
+  progress,
+  onStep,
+  disabled,
+  receiptLocked,
+}: {
+  progress: number;
+  onStep: (step: number) => void;
+  disabled: (step: number) => boolean;
+  receiptLocked: boolean;
+}) {
+  return (
+    <div>
+      <div className="flex items-start">
+        {PROCESS_STEPS.map(({ step, label }, index) => {
+          const done = progress >= step;
+          const current = progress + 1 === step;
+          const isDisabled = disabled(step);
+
+          return (
+            <Fragment key={step}>
+              {index > 0 && (
+                <div
+                  className={[
+                    "mt-[15px] h-0.5 flex-1 rounded-full transition-colors duration-300",
+                    progress >= step ? "bg-[#ff4b0a]" : "bg-[#e4e6e9]",
+                  ].join(" ")}
+                />
+              )}
+
+              <button
+                type="button"
+                onClick={() => onStep(step)}
+                disabled={isDisabled}
+                title={
+                  done && progress === step
+                    ? `Desfazer "${label}"`
+                    : `Marcar "${label}"`
+                }
+                className="group flex w-20 shrink-0 cursor-pointer flex-col items-center gap-1.5 disabled:cursor-not-allowed"
+              >
+                <span
+                  className={[
+                    "flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-semibold transition duration-200",
+                    done
+                      ? "border-[#ff4b0a] bg-gradient-to-br from-[#ff6a2b] to-[#ea5b0c] text-white shadow-[0_3px_10px_rgba(234,91,12,0.32)]"
+                      : current
+                        ? "border-[#ff4b0a] bg-white text-[#ff4b0a] ring-4 ring-[#ff4b0a]/10"
+                        : "border-[#dfe2e6] bg-white text-[#a0a5ac]",
+                    isDisabled ? "" : "group-hover:scale-110",
+                  ].join(" ")}
+                >
+                  {done ? <Check className="h-4 w-4" strokeWidth={3} /> : step}
+                </span>
+
+                <span
+                  className={[
+                    "text-center text-[11px] leading-tight",
+                    done
+                      ? "font-semibold text-[#20242a]"
+                      : current
+                        ? "font-medium text-[#c2410c]"
+                        : "text-[#8a9099]",
+                  ].join(" ")}
+                >
+                  {label}
+                </span>
+              </button>
+            </Fragment>
+          );
+        })}
+      </div>
+
+      <p className="mt-3 text-center text-[11px] text-[#a0a5ac]">
+        {receiptLocked
+          ? "O recibo vem do webservice da companhia e fecha o processo sozinho."
+          : "Carrega num passo para o marcar. Carregar no último desfaz."}
+      </p>
+    </div>
+  );
+}
+
 export function ProcessModal({
   task,
   lineName,
   insuranceLines,
   profiles,
+  companyOptions = [],
   privileged,
   canModify,
   onSave,
@@ -637,6 +749,8 @@ export function ProcessModal({
   lineName: string | null;
   insuranceLines: InsuranceLineOption[];
   profiles: ProfileOption[];
+  // Companhias para "Que companhia simulou?".
+  companyOptions: string[];
   privileged: boolean;
   canModify: boolean;
   onSave: (base: TaskEditInput, process: ProcessPatch) => void;
@@ -664,6 +778,9 @@ export function ProcessModal({
   const [simulationPresented, setSimulationPresented] = useState(
     task.simulation_presented,
   );
+  const [simulationCompany, setSimulationCompany] = useState<string | null>(
+    task.simulation_company,
+  );
   const [issued, setIssued] = useState(task.issued);
   const [receiptPaid, setReceiptPaid] = useState(task.receipt_paid);
 
@@ -671,6 +788,25 @@ export function ProcessModal({
 
   const fromCompany = task.receipt_source === "WEBSERVICE";
   const receipt = task.receipt;
+
+  // Passos como uma linha de progresso: 0 = nada, 3 = recibo pago.
+  const progress = receiptPaid ? 3 : issued ? 2 : simulationPresented ? 1 : 0;
+
+  function setProgress(step: number) {
+    // Carregar no último passo feito desfaz esse passo.
+    const target = step === progress ? step - 1 : step;
+
+    setSimulationPresented(target >= 1);
+    setIssued(target >= 2);
+    if (!fromCompany) setReceiptPaid(target >= 3);
+  }
+
+  function stepDisabled(step: number) {
+    if (!canModify) return true;
+    // O recibo do webservice manda: nada abaixo dele se mexe.
+    if (fromCompany && receiptPaid) return true;
+    return fromCompany && step === 3;
+  }
 
   function handleSave() {
     if (!clientName.trim()) {
@@ -698,6 +834,11 @@ export function ProcessModal({
       issued,
     };
 
+    // Só envia a companhia se mudou (a coluna pode ainda não existir).
+    if ((simulationCompany ?? null) !== (task.simulation_company ?? null)) {
+      processPatch.simulationCompany = simulationCompany;
+    }
+
     if (!fromCompany && receiptPaid !== task.receipt_paid) {
       processPatch.receiptPaid = receiptPaid;
     }
@@ -717,13 +858,12 @@ export function ProcessModal({
   return (
     <ModalShell
       wide
-      title={task.title}
+      title={task.client_name || task.title}
       subtitle={
         <>
-          {task.status === "CANCELLED"
-            ? "Não emitida"
-            : statusLabel[task.status]}{" "}
-          · criado a {formatDate(task.created_at)}
+          {task.is_new_policy === false ? "Renegociação" : "Apólice nova"}
+          {task.status === "CANCELLED" ? " · Não avançou" : ""} · criado a{" "}
+          {formatDate(task.created_at)}
           {lineName ? ` · ${lineName}` : ""}
           {task.status === "COMPLETED" && task.completed_at
             ? ` · fechado a ${formatDate(task.completed_at)}`
@@ -739,7 +879,7 @@ export function ProcessModal({
               onClick={onNotIssued}
               className="mr-auto h-10 rounded-lg px-3 text-sm font-medium text-red-600 transition hover:bg-red-50"
             >
-              Não emitida…
+              Cliente não avançou…
             </button>
           )}
           <SecondaryButton onClick={onClose}>
@@ -754,7 +894,7 @@ export function ProcessModal({
       {task.status === "CANCELLED" && (
         <div className="rounded-xl border border-red-100 bg-red-50/60 p-3">
           <p className="text-xs font-semibold text-red-700">
-            Não emitida
+            Não avançou
             {task.not_issued_at
               ? ` · ${formatDate(task.not_issued_at)}`
               : ""}
@@ -773,42 +913,38 @@ export function ProcessModal({
 
       {/* PASSOS */}
 
-      <div className="rounded-xl border border-[#edf0f2] bg-[#fafbfc] p-3">
-        <p className="text-xs font-semibold text-[#40464f]">Passos</p>
+      <div className="rounded-2xl border border-[#edf0f2] bg-gradient-to-b from-[#fafbfc] to-white p-4">
+        <ProcessStepper
+          progress={progress}
+          onStep={setProgress}
+          disabled={stepDisabled}
+          receiptLocked={fromCompany}
+        />
 
-        <div className="mt-2 grid grid-cols-3 gap-3">
-          <div>
-            <Label>Simulação apresentada</Label>
-            <YesNo
-              value={simulationPresented}
-              onChange={setSimulationPresented}
+        {simulationPresented && (
+          <div className="mt-4 animate-fade-up border-t border-[#edf0f2] pt-3.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <Label>Companhia que simulou</Label>
+              {simulationCompany && canModify && (
+                <button
+                  type="button"
+                  onClick={() => setSimulationCompany(null)}
+                  className="cursor-pointer text-[11px] font-medium text-[#8a9099] transition hover:text-[#ff4b0a]"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
+
+            <CompanyPicker
+              compact
+              options={companyOptions}
+              value={simulationCompany}
+              onChange={setSimulationCompany}
               disabled={!canModify}
             />
           </div>
-
-          <div>
-            <Label>Apólice emitida</Label>
-            <YesNo
-              value={issued || receiptPaid}
-              onChange={setIssued}
-              disabled={!canModify || receiptPaid}
-            />
-          </div>
-
-          <div>
-            <Label>Recibo pago</Label>
-            <YesNo
-              value={receiptPaid}
-              onChange={setReceiptPaid}
-              disabled={!canModify || fromCompany}
-            />
-          </div>
-        </div>
-
-        <p className="mt-2 text-[11px] text-[#a0a5ac]">
-          O processo muda de coluna conforme os passos marcados. Com o
-          recibo pago fica concluído.
-        </p>
+        )}
       </div>
 
       {/* CLIENTE */}
@@ -948,23 +1084,13 @@ export function ProcessModal({
 
       <div className="space-y-3.5 border-t border-[#edf0f2] pt-3.5">
         <div>
-          <Label>Título</Label>
-          <input
-            type="text"
-            value={title}
-            disabled={!canModify}
-            onChange={(e) => setTitle(e.target.value)}
-            className={inputClass}
-          />
-        </div>
-
-        <div>
           <Label>Notas</Label>
           <textarea
             value={description}
             disabled={!canModify}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
+            placeholder="Ex.: prefere ser contactado por WhatsApp ao fim do dia"
             className="mt-1.5 w-full rounded-lg border border-[#e4e6e9] px-3 py-2 text-sm outline-none transition focus:border-[#ff4b0a] disabled:bg-[#f7f8f9]"
           />
         </div>
@@ -984,6 +1110,21 @@ export function ProcessModal({
             />
           )}
         </div>
+
+        {/* O título é gerado ao criar; quase nunca é preciso mexer. */}
+        <details className="group rounded-lg">
+          <summary className="cursor-pointer list-none text-[11px] font-medium text-[#8a9099] transition hover:text-[#40464f]">
+            <span className="group-open:hidden">Mostrar título interno</span>
+            <span className="hidden group-open:inline">Esconder título interno</span>
+          </summary>
+          <input
+            type="text"
+            value={title}
+            disabled={!canModify}
+            onChange={(e) => setTitle(e.target.value)}
+            className={inputClass}
+          />
+        </details>
       </div>
 
       {error && <p className="text-xs text-red-600">{error}</p>}
@@ -1025,14 +1166,14 @@ export function NotIssuedModal({
 
   return (
     <ModalShell
-      title="Não emitida"
-      subtitle={`${task.client_name ?? task.title} — porque não avançou?`}
+      title="Porque é que o cliente não avançou?"
+      subtitle={task.client_name ?? task.title}
       onClose={onClose}
       footer={
         <>
           <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
           <PrimaryButton onClick={handleConfirm}>
-            Marcar como não emitida
+            Confirmar
           </PrimaryButton>
         </>
       }
@@ -1090,11 +1231,88 @@ export function NotIssuedModal({
       </div>
 
       <p className="rounded-lg bg-[#fafbfc] px-3 py-2 text-[11px] text-[#8a9099]">
-        O processo sai do quadro e fica em &quot;Não emitidas&quot;. Podes
+        O processo sai do quadro e fica em &quot;Não avançaram&quot;. Podes
         reabri-lo mais tarde.
       </p>
 
       {error && <p className="text-xs text-red-600">{error}</p>}
+    </ModalShell>
+  );
+}
+
+// ============================================================
+// QUE COMPANHIA SIMULOU? (passagem à fase 2)
+// ============================================================
+
+/*
+ * Janela da passagem à fase 2.
+ */
+export function SimulationCompanyModal({
+  process,
+  lineName,
+  options,
+  onConfirm,
+  onClose,
+}: {
+  process: TaskRow;
+  lineName: string | null;
+  options: string[];
+  // null = avançar sem indicar a companhia.
+  onConfirm: (company: string | null) => void;
+  onClose: () => void;
+}) {
+  const [company, setCompany] = useState<string | null>(
+    process.simulation_company,
+  );
+
+  function confirm(value: string | null) {
+    onConfirm(value);
+    onClose();
+  }
+
+  return (
+    <ModalShell
+      icon={<Building2 className="h-5 w-5" />}
+      title="Que companhia simulou?"
+      subtitle={`${process.client_name ?? process.title}${lineName ? ` · ${lineName}` : ""}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={() => confirm(null)}
+            className="mr-auto h-10 cursor-pointer rounded-lg px-3 text-xs font-medium text-[#8a9099] transition hover:bg-[#f4f5f7] hover:text-[#40464f]"
+          >
+            Avançar sem companhia
+          </button>
+          <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
+          <button
+            type="button"
+            disabled={!company}
+            onClick={() => confirm(company)}
+            className="group inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#ff6a2b] to-[#ea5b0c] px-4 text-sm font-semibold text-white shadow-[0_2px_8px_rgba(234,91,12,0.28)] transition hover:shadow-[0_4px_14px_rgba(234,91,12,0.38)] disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
+          >
+            Confirmar
+            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          </button>
+        </>
+      }
+    >
+      <p className="text-sm text-[#59616d]">
+        O processo passa para{" "}
+        <strong className="font-semibold text-blue-700">
+          À espera do cliente
+        </strong>
+        . Indica a companhia da proposta enviada.
+      </p>
+
+      <CompanyPicker
+        options={options}
+        value={company}
+        onChange={setCompany}
+        autoFocus
+        onSubmit={(value) => confirm(value)}
+      />
     </ModalShell>
   );
 }

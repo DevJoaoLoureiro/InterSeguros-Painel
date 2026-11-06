@@ -4,6 +4,7 @@ import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { getSelectedStoreId } from "@/lib/auth/store-selection";
 
 import { getTasksData } from "@/app/(dashboard)/tarefas/action";
+import { getCachedCompanies } from "@/lib/cache/reference-data";
 import { loadMessageTemplates } from "@/lib/tasks/message-templates";
 
 import { ProcessesBoard } from "./processes-board";
@@ -21,9 +22,11 @@ export default async function ProcessosPage() {
   const [
     { tasks, profiles, insuranceLines, privileged, currentProfileId },
     messageTemplates,
+    companies,
   ] = await Promise.all([
     getTasksData({ selectedStoreId, kind: "PROCESS" }),
     loadMessageTemplates(),
+    getCachedCompanies(),
   ]);
 
   return (
@@ -36,8 +39,8 @@ export default async function ProcessosPage() {
         </h1>
 
         <p className="mt-1 text-sm text-[#737a84]">
-          Simulações e renegociações, da proposta ao recibo pago — ou ao
-          motivo por que não foram emitidas.
+          Cada cartão mostra o próximo passo: simular, esperar pelo
+          cliente, esperar pelo pagamento — até o negócio fechar.
         </p>
       </div>
 
@@ -48,6 +51,7 @@ export default async function ProcessosPage() {
         privileged={privileged}
         currentProfileId={currentProfileId}
         messageTemplates={messageTemplates}
+        companyNames={companies.map((company) => company.name)}
       />
     </div>
   );

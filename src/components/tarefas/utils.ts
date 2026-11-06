@@ -246,6 +246,10 @@ export function applyProcessPatch(task: TaskRow, patch: ProcessPatch): TaskRow {
     is_new_policy: patch.isNewPolicy ?? task.is_new_policy,
     simulation_presented:
       patch.simulationPresented ?? task.simulation_presented,
+    simulation_company:
+      patch.simulationCompany !== undefined
+        ? patch.simulationCompany?.trim() || null
+        : task.simulation_company,
     issued: patch.issued ?? task.issued,
   };
 
@@ -293,9 +297,9 @@ export const processStages: {
 }[] = [
   {
     key: "TO_SIMULATE",
-    label: "Por simular",
-    hint: "Fazer a simulação e apresentá-la ao cliente",
-    empty: "Nenhum processo à espera de simulação",
+    label: "Fazer simulação",
+    hint: "Simular e enviar a proposta ao cliente",
+    empty: "Nenhuma simulação por fazer",
     dot: "bg-[#8a9099]",
     text: "text-[#59616d]",
     soft: "bg-[#f1f3f5]",
@@ -304,8 +308,8 @@ export const processStages: {
   },
   {
     key: "SIMULATED",
-    label: "Simulação apresentada",
-    hint: "Aguardar a decisão do cliente e emitir",
+    label: "À espera do cliente",
+    hint: "Simulação enviada — quando aceitar, emitir a apólice",
     empty: "Nenhuma simulação à espera de resposta",
     dot: "bg-blue-500",
     text: "text-blue-700",
@@ -315,8 +319,8 @@ export const processStages: {
   },
   {
     key: "ISSUED",
-    label: "Apólice emitida",
-    hint: "Falta o cliente pagar o recibo",
+    label: "À espera do pagamento",
+    hint: "Apólice emitida — falta o recibo pago",
     empty: "Nenhuma apólice à espera de pagamento",
     dot: "bg-violet-500",
     text: "text-violet-700",
@@ -326,9 +330,9 @@ export const processStages: {
   },
   {
     key: "DONE",
-    label: "Concluído",
+    label: "Fechados",
     hint: "Recibo pago — negócio fechado",
-    empty: "Ainda sem processos concluídos",
+    empty: "Ainda sem negócios fechados",
     dot: "bg-green-500",
     text: "text-green-700",
     soft: "bg-green-50",

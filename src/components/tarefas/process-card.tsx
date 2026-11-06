@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   ArrowRight,
+  Building2,
   Calendar,
   Check,
   Clock,
@@ -45,21 +46,25 @@ type Props = {
   onReopen: (process: TaskRow) => void;
   onDelete: (process: TaskRow) => void;
   onMessage: (process: TaskRow) => void;
+  // Passar à fase 2: abre "Que companhia simulou?".
+  onSimulated: (process: TaskRow) => void;
 };
 
-/* O que o botão principal faz neste momento (null = nada a marcar). */
+/*
+ * O que o botão principal faz neste momento (null = nada a marcar).
+ * A fase 1 não está aqui: tem o seu próprio botão (mensagem ao
+ * cliente) e a pergunta da companhia.
+ */
 function nextAction(
   process: TaskRow,
 ): { label: string; patch: ProcessPatch } | null {
-  if (!process.simulation_presented) {
-    return {
-      label: "Simulação apresentada",
-      patch: { simulationPresented: true },
-    };
-  }
+  if (!process.simulation_presented) return null;
 
   if (!process.issued) {
-    return { label: "Apólice emitida", patch: { issued: true } };
+    return {
+      label: "Cliente aceitou · apólice emitida",
+      patch: { issued: true },
+    };
   }
 
   if (!process.receipt_paid && process.receipt_source !== "WEBSERVICE") {
@@ -78,21 +83,29 @@ function undoAction(
   if (process.receipt_paid) {
     return fromCompany
       ? null
-      : { label: "Desmarcar recibo pago", patch: { receiptPaid: false } };
+      : { label: "Desfazer: recibo pago", patch: { receiptPaid: false } };
   }
 
   if (process.issued) {
-    return { label: "Desmarcar apólice emitida", patch: { issued: false } };
+    return { label: "Desfazer: apólice emitida", patch: { issued: false } };
   }
 
   if (process.simulation_presented) {
     return {
-      label: "Desmarcar simulação apresentada",
+      label: "Desfazer: simulação enviada",
       patch: { simulationPresented: false },
     };
   }
 
   return null;
+}
+
+/* Passos feitos (0–3), para a barra de progresso do cartão. */
+function stepsDone(process: TaskRow) {
+  if (process.receipt_paid) return 3;
+  if (process.issued) return 2;
+  if (process.simulation_presented) return 1;
+  return 0;
 }
 
 export function ProcessCard({
@@ -105,6 +118,7 @@ export function ProcessCard({
   onReopen,
   onDelete,
   onMessage,
+  onSimulated,
 }: Props) {
   const notIssued = process.status === "CANCELLED";
   const done = process.receipt_paid && !notIssued;
@@ -175,7 +189,7 @@ export function ProcessCard({
       {notIssued ? (
         <>
           <p className="mt-2 text-xs text-[#40464f]">
-            <span className="font-semibold text-red-700">Não emitida: </span>
+            <span className="font-semibold text-red-700">Não avançou: </span>
             {notIssuedReasonLabel(process.not_issued_reason) ??
               "sem motivo registado"}
             {process.not_issued_at
@@ -200,10 +214,43 @@ export function ProcessCard({
         </>
       ) : (
         <>
-          {/* QUANDO */}
+          {/* PROGRESSO (3 passos) */}
 
-          {(dateLabel || (process.priority === "HIGH" && open)) && (
+          <div
+            className="mt-2.5 flex gap-1"
+            title={`${stepsDone(process)} de 3 passos feitos`}
+          >
+            {[1, 2, 3].map((step) => (
+              <span
+                key={step}
+                className={[
+                  "h-1 flex-1 rounded-full transition-colors duration-300",
+                  stepsDone(process) >= step
+                    ? done
+                      ? "bg-green-500"
+                      : "bg-gradient-to-r from-[#ff6a2b] to-[#ea5b0c]"
+                    : "bg-[#eceef1]",
+                ].join(" ")}
+              />
+            ))}
+          </div>
+
+          {/* QUANDO / COMPANHIA */}
+
+          {(dateLabel ||
+            process.simulation_company ||
+            (process.priority === "HIGH" && open)) && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {process.simulation_company && process.simulation_presented && (
+                <span
+                  className="inline-flex max-w-full items-center gap-1 truncate rounded-md bg-blue-50 px-1.5 py-0.5 text-[11px] font-medium text-blue-700"
+                  title="Companhia que simulou"
+                >
+                  <Building2 className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{process.simulation_company}</span>
+                </span>
+              )}
+
               {dateLabel && (
                 <span
                   className={[
@@ -233,14 +280,25 @@ export function ProcessCard({
           {/* PRÓXIMO PASSO */}
 
           {open && !process.simulation_presented && (
-            <button
-              type="button"
-              onClick={() => onMessage(process)}
-              className="mt-2.5 inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#ffd4c2] bg-[#fff7f3] px-3 text-xs font-medium text-[#c2410c] transition hover:border-[#ff4b0a] hover:bg-[#fff1eb]"
-            >
-              <MessageSquareText className="h-3.5 w-3.5" />
-              Mensagem ao cliente
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => onMessage(process)}
+                className="group/next mt-2.5 inline-flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-[#ff6a2b] to-[#ea5b0c] px-3 text-xs font-semibold text-white shadow-[0_2px_8px_rgba(234,91,12,0.28)] transition hover:shadow-[0_4px_14px_rgba(234,91,12,0.38)] active:scale-[0.98]"
+              >
+                <MessageSquareText className="h-3.5 w-3.5" />
+                Enviar simulação ao cliente
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onSimulated(process)}
+                className="mt-1.5 inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#e4e6e9] bg-white px-3 text-xs font-medium text-[#59616d] transition hover:border-[#ffb899] hover:bg-[#fff7f3] hover:text-[#c2410c]"
+              >
+                <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+                Já enviei a simulação
+              </button>
+            </>
           )}
 
           {action && (

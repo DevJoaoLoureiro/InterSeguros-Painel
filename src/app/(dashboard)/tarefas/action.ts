@@ -88,6 +88,9 @@ export type TaskRow = {
   not_issued_reason: string | null;
   not_issued_note: string | null;
   not_issued_at: string | null;
+
+  // Companhia que fez a simulação (pedida ao passar à fase 2).
+  simulation_company: string | null;
 };
 
 export type ProfileOption = {
@@ -141,6 +144,18 @@ const NOT_ISSUED_SELECT = `,
 function isMissingNotIssuedColumn(error: { message?: string } | null) {
   return Boolean(error?.message?.includes("not_issued"));
 }
+
+// Coluna da migração 20261106130000_process_simulation_company, com o
+// mesmo cuidado: sem a migração a página carrega sem a companhia.
+const SIMULATION_SELECT = `,
+  simulation_company
+`;
+
+function isMissingSimulationColumn(error: { message?: string } | null) {
+  return Boolean(error?.message?.includes("simulation_company"));
+}
+
+const SIMULATION_COMPANY_MAX = 80;
 
 /* Tarefas e processos vivem em páginas separadas: atualiza as duas. */
 function revalidateBoards() {
@@ -282,16 +297,37 @@ export async function getTasksData({
   };
 
   // Utilizadores e ramos vêm da cache de referência.
+  let withNotIssued = true;
+  let withSimulation = true;
+
+  const selectFor = () =>
+    TASK_SELECT +
+    (withNotIssued ? NOT_ISSUED_SELECT : "") +
+    (withSimulation ? SIMULATION_SELECT : "");
+
   const [firstResult, activeProfiles, lines] = await Promise.all([
-    buildQuery(TASK_SELECT + NOT_ISSUED_SELECT),
+    buildQuery(selectFor()),
     getCachedActiveProfiles(),
     getCachedInsuranceLines(),
   ]);
 
-  // Migração dos motivos por correr: repete sem essas colunas.
-  const tasksResult = isMissingNotIssuedColumn(firstResult.error)
-    ? await buildQuery(TASK_SELECT)
-    : firstResult;
+  // Migrações opcionais por correr: repete sem essas colunas (o
+  // Postgres só aponta uma coluna em falta de cada vez).
+  let tasksResult = firstResult;
+
+  for (let attempt = 0; attempt < 2 && tasksResult.error; attempt++) {
+    const missingNotIssued =
+      withNotIssued && isMissingNotIssuedColumn(tasksResult.error);
+    const missingSimulation =
+      withSimulation && isMissingSimulationColumn(tasksResult.error);
+
+    if (!missingNotIssued && !missingSimulation) break;
+
+    if (missingNotIssued) withNotIssued = false;
+    if (missingSimulation) withSimulation = false;
+
+    tasksResult = await buildQuery(selectFor());
+  }
 
   if (tasksResult.error) {
     throw new Error(
@@ -305,6 +341,7 @@ export async function getTasksData({
     not_issued_reason: null,
     not_issued_note: null,
     not_issued_at: null,
+    simulation_company: null,
     ...row,
   })) as Omit<TaskRow, "receipt">[];
 
@@ -714,6 +751,8 @@ export type ProcessPatch = {
   policyStartDate?: string | null;
   isNewPolicy?: boolean;
   simulationPresented?: boolean;
+  // Nome da companhia que simulou (null apaga).
+  simulationCompany?: string | null;
   issued?: boolean;
   receiptPaid?: boolean;
 };
@@ -757,6 +796,12 @@ export async function updateProcess(taskId: string, patch: ProcessPatch) {
     update.simulation_presented = patch.simulationPresented;
   }
 
+  if (patch.simulationCompany !== undefined) {
+    update.simulation_company =
+      patch.simulationCompany?.trim().slice(0, SIMULATION_COMPANY_MAX) ||
+      null;
+  }
+
   if (patch.issued !== undefined) {
     update.issued = patch.issued;
   }
@@ -797,10 +842,19 @@ export async function updateProcess(taskId: string, patch: ProcessPatch) {
   update.completed_at =
     nextStatus === "COMPLETED" ? task.completed_at ?? now : null;
 
-  const { error } = await admin
+  let { error } = await admin
     .from("tasks")
     .update(update)
     .eq("id", taskId);
+
+  // Migração da companhia por correr: grava o resto na mesma e avisa.
+  let companySaved = patch.simulationCompany !== undefined;
+
+  if (error && "simulation_company" in update && isMissingSimulationColumn(error)) {
+    delete update.simulation_company;
+    companySaved = false;
+    ({ error } = await admin.from("tasks").update(update).eq("id", taskId));
+  }
 
   if (error) {
     throw new Error(`Erro ao atualizar processo: ${error.message}`);
@@ -815,7 +869,11 @@ export async function updateProcess(taskId: string, patch: ProcessPatch) {
 
   revalidateBoards();
 
-  return { success: true };
+  return {
+    success: true,
+    // false quando foi pedida uma companhia e não ficou gravada.
+    companySaved: patch.simulationCompany === undefined || companySaved,
+  };
 }
 
 export async function deleteTask(taskId: string) {

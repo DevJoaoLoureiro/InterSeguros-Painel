@@ -258,7 +258,8 @@ export function ClientMessageModal({
             onChange={(e) => setMarkPresented(e.target.checked)}
             className="h-4 w-4 accent-[#ff4b0a]"
           />
-          Ao copiar/enviar, marcar &quot;Simulação apresentada&quot;
+          Ao copiar/enviar, passar para &quot;À espera do cliente&quot; (a
+          seguir pergunta que companhia simulou)
         </label>
       )}
     </ModalShell>
