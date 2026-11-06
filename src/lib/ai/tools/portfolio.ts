@@ -1,4 +1,5 @@
 import type { AiUserContext } from "@/lib/ai/context";
+import type { AiPolicyRow } from "@/lib/ai/tools/policy-row";
 
 const POLICY_SELECT = `
   id,
@@ -23,7 +24,7 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
-function normalizePolicyRow(row: any) {
+function normalizePolicyRow(row: Omit<AiPolicyRow, "payment_frequency">) {
   const company = firstRelation(row.company);
   const line = firstRelation(row.insurance_line);
   const commercialUser = firstRelation(row.commercial_user);

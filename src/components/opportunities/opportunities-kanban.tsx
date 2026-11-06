@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useEffect,
   useState,
   useTransition,
 } from "react";
@@ -90,9 +89,13 @@ export function OpportunitiesKanban({
   const [localOpportunities, setLocalOpportunities] =
     useState<Opportunity[]>(opportunities);
 
-  useEffect(() => {
+  const [syncedOpportunities, setSyncedOpportunities] =
+    useState(opportunities);
+
+  if (opportunities !== syncedOpportunities) {
+    setSyncedOpportunities(opportunities);
     setLocalOpportunities(opportunities);
-  }, [opportunities]);
+  }
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [overColumn, setOverColumn] = useState<OpportunityStatus | null>(null);

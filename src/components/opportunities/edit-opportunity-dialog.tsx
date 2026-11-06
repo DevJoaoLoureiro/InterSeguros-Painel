@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  useEffect,
   useState,
 } from "react";
 
@@ -98,11 +97,17 @@ export function EditOpportunityDialog({
     null,
   );
 
-  useEffect(() => {
-    if (!opportunity) {
-      return;
-    }
+  // Preenche o formulário quando muda a oportunidade (no render, não
+  // num efeito).
+  const [syncedOpportunity, setSyncedOpportunity] = useState<
+    Opportunity | null | undefined
+  >(undefined);
 
+  if (opportunity !== syncedOpportunity) {
+    setSyncedOpportunity(opportunity);
+  }
+
+  if (opportunity && opportunity !== syncedOpportunity) {
     setTitle(
       opportunity.title,
     );
@@ -137,7 +142,7 @@ export function EditOpportunityDialog({
     );
 
     setError(null);
-  }, [opportunity]);
+  }
 
   if (!opportunity) {
     return null;

@@ -121,7 +121,6 @@ function MetricCard({
 
 export function ComissoesBoard({
   stores,
-  canAccessAll: _canAccessAll,
   initialMonth,
 }: Props) {
   const [month, setMonth] = useState(initialMonth);

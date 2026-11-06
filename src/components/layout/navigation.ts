@@ -12,7 +12,6 @@ import {
   Inbox,
   MessageCircle,
   MessagesSquare,
-  ReceiptText,
   Settings,
   Target,
   Users,
@@ -30,7 +29,15 @@ export type MenuItem = {
   icon: ElementType;
   // Palavras extra para a pesquisa rápida encontrar a página.
   keywords?: string;
+  // Outras rotas em que o item também fica ativo no menu.
+  alsoActiveOn?: string[];
 };
+
+export function isMenuItemActive(item: MenuItem, pathname: string) {
+  return [item.href, ...(item.alsoActiveOn ?? [])].some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+}
 
 export type MenuGroup = {
   title?: string;
@@ -69,16 +76,12 @@ export const menuGroups: MenuGroup[] = [
         keywords: "apólices nif ficha",
       },
       {
-        label: "Recibos",
-        href: "/recibos",
-        icon: ReceiptText,
-        keywords: "cobrança pagamentos prémios",
-      },
-      {
-        label: "Vencimentos",
+        label: "Vencimentos e Recibos",
         href: "/vencimentos",
         icon: CalendarDays,
-        keywords: "renovações anuladas recibos a vencer",
+        keywords:
+          "recibos cobrança pagamentos prémios renovações anuladas a vencer histórico",
+        alsoActiveOn: ["/recibos"],
       },
       {
         label: "Carteira por Companhia",

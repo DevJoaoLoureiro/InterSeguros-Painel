@@ -51,7 +51,60 @@ function verifyMetaSignature(rawBody: string, signatureHeader: string | null) {
   }
 }
 
-function extractMessageContent(message: any) {
+/*
+ * Partes do payload da Meta que este webhook lê. Tudo opcional: a Meta
+ * manda formatos diferentes por tipo de evento e o código usa sempre
+ * `?.` para não rebentar com campos em falta.
+ */
+type WaMessage = {
+  id?: string;
+  from?: string;
+  to?: string;
+  recipient?: string;
+  wa_id?: string;
+  timestamp?: string;
+  type?: string;
+  text?: { body?: string };
+  image?: { caption?: string; id?: string };
+  document?: { caption?: string; filename?: string; id?: string };
+  audio?: { id?: string };
+  video?: { caption?: string; id?: string };
+  sticker?: { id?: string };
+  location?: unknown;
+  contacts?: unknown;
+  reaction?: { emoji?: string };
+  button?: { text?: string };
+  interactive?: {
+    button_reply?: { title?: string };
+    list_reply?: { title?: string };
+  };
+  history_context?: { from_me?: boolean };
+};
+
+type WaContact = { wa_id?: string; profile?: { name?: string } };
+
+type WaStatus = { id?: string; timestamp?: string; status?: string };
+
+type WaHistoryChunk = {
+  metadata?: { phase?: unknown; chunk_order?: unknown; progress?: unknown };
+  threads?: {
+    id?: string;
+    context?: { wa_id?: string; username?: string };
+    messages?: WaMessage[];
+  }[];
+};
+
+type WaChangeValue = {
+  metadata?: { phone_number_id?: string };
+  contacts?: WaContact[];
+  messages?: WaMessage[];
+  statuses?: WaStatus[];
+  history?: WaHistoryChunk[];
+  message_echoes?: WaMessage[];
+  smb_message_echoes?: WaMessage[];
+};
+
+function extractMessageContent(message: WaMessage) {
   let body: string | null = null;
   let mediaId: string | null = null;
 
@@ -305,7 +358,7 @@ async function saveMessage(params: {
   };
   customerPhone: string;
   customerName?: string | null;
-  message: any;
+  message: WaMessage;
   direction: "INBOUND" | "OUTBOUND";
   incrementUnread?: boolean;
 }) {
@@ -380,7 +433,7 @@ async function saveMessage(params: {
 }
 
 async function processNormalMessages(
-  value: any,
+  value: WaChangeValue,
   wabaId: string | null
 ) {
   const phoneNumberId = value?.metadata?.phone_number_id ?? null;
@@ -412,7 +465,7 @@ async function processNormalMessages(
     if (!customerPhone) continue;
 
     const contact = contacts.find(
-      (item: any) =>
+      (item) =>
         normalizePhone(item?.wa_id) === customerPhone
     );
 
@@ -477,7 +530,7 @@ async function processNormalMessages(
 }
 
 async function processHistory(
-  value: any,
+  value: WaChangeValue,
   wabaId: string | null
 ) {
   const phoneNumberId = value?.metadata?.phone_number_id ?? null;
@@ -548,7 +601,7 @@ async function processHistory(
 }
 
 async function processSmbMessageEchoes(
-  value: any,
+  value: WaChangeValue,
   wabaId: string | null
 ) {
   const phoneNumberId = value?.metadata?.phone_number_id ?? null;
@@ -604,7 +657,7 @@ async function processSmbMessageEchoes(
 }
 
 async function processSmbAppStateSync(
-  value: any,
+  value: unknown,
   wabaId: string | null
 ) {
   console.log("[WhatsApp] smb_app_state_sync recebido", {

@@ -122,9 +122,12 @@ export default function ClientsList({
 
   const requestIdRef = useRef(0);
 
-  useEffect(() => {
+  const [syncedQ, setSyncedQ] = useState(filters.q);
+
+  if (filters.q !== syncedQ) {
+    setSyncedQ(filters.q);
     setQInput(filters.q);
-  }, [filters.q]);
+  }
 
   useEffect(() => {
     return () => {

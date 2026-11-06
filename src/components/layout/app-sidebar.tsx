@@ -1,12 +1,16 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { canAccessPage, hasFullAccess } from "@/lib/auth/permissions";
 
 import { LogoutButton } from "@/components/auth/logout-button";
-import { menuGroups } from "@/components/layout/navigation";
+import {
+  isMenuItemActive,
+  menuGroups,
+} from "@/components/layout/navigation";
 
 type SidebarProfile = {
   full_name: string;
@@ -82,9 +86,12 @@ export function AppSidebar({
       >
         {/* A imagem tem muita margem em branco: ampliada (scale não
             mexe na altura da faixa) e cortada pelo overflow. */}
-        <img
+        <Image
           src="/interseguroslogo.png"
           alt="Inter Seguros"
+          width={142}
+          height={64}
+          preload
           className="h-[64px] w-auto scale-[1.35] object-contain"
         />
       </Link>
@@ -114,9 +121,7 @@ export function AppSidebar({
 
               <div className="space-y-0.5">
                 {visibleItems.map((item) => {
-                  const isActive =
-                    pathname === item.href ||
-                    pathname.startsWith(`${item.href}/`);
+                  const isActive = isMenuItemActive(item, pathname);
 
                   const Icon = item.icon;
 

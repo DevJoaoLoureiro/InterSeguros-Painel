@@ -2,6 +2,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { hasFullAccess } from "@/lib/auth/permissions";
 import { clientHref } from "@/lib/clients/client-link";
+import { vencimentosHref } from "@/lib/vencimentos/tabs";
 import { getSelectedStoreFilter } from "@/lib/auth/store-selection";
 
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -169,7 +170,9 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
       subtitle: `Renovação da apólice ${renewal.policyNumber} (${renewal.companyName}${renewal.lineName ? ` · ${renewal.lineName}` : ""})`,
       date: renewal.renewalDate,
       daysLeft,
-      href: renewal.clientId ? clientHref(renewal.clientId) : "/vencimentos",
+      href: renewal.clientId
+        ? clientHref(renewal.clientId)
+        : vencimentosHref("renewals"),
     });
   }
 
@@ -184,7 +187,9 @@ export const getExpiryAlerts = cache(async (): Promise<ExpiryAlert[]> => {
       subtitle: `Recibo ${receipt.receiptNumber ?? ""} por cobrar · apólice ${receipt.policyNumber} (${receipt.companyName})`,
       date: receipt.dueDate,
       daysLeft,
-      href: receipt.clientId ? clientHref(receipt.clientId) : "/vencimentos",
+      href: receipt.clientId
+        ? clientHref(receipt.clientId)
+        : vencimentosHref("receipts"),
     });
   }
 

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import type { Metadata } from "next";
 import { Link2Off } from "lucide-react";
 
@@ -71,9 +72,12 @@ function PageShell({ children }: { children: React.ReactNode }) {
     <div className="min-h-dvh bg-[#f6f4f2] px-4 py-6 sm:py-10">
       <div className="mx-auto max-w-2xl">
         <div className="mb-5 flex justify-center">
-          <img
+          <Image
             src="/interseguroslogo.png"
             alt="Inter Seguros"
+            width={124}
+            height={56}
+            preload
             className="h-14 w-auto object-contain"
           />
         </div>

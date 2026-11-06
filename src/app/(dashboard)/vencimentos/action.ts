@@ -4,17 +4,11 @@ import { revalidatePath } from "next/cache";
 
 import { requireProfile, resolveStoreScope } from "@/lib/auth/access";
 import { createAdminClient } from "@/lib/supabase/admin";
-import * as queries from "@/lib/vencimentos/queries";
 import * as likelySwitches from "@/lib/recovery/likely-switches";
 import {
   isRecoveryOutcome,
   type RecoveryOutcome,
 } from "@/lib/recovery/outcomes";
-
-export type {
-  RenewalRow,
-  UpcomingReceiptRow,
-} from "@/lib/vencimentos/queries";
 
 export type LikelySwitchRow = likelySwitches.LikelySwitchRow & {
   // Já existe uma tarefa aberta para tentar renovar esta apólice.
@@ -68,29 +62,9 @@ async function hasOpenRenewalTask(
 }
 
 /*
- * Server actions de vencimentos. O storeId pedido pelo browser não é
- * confiável: resolveStoreScope limita não-admins à sua loja.
+ * Server actions de vencimentos. Renovações e recibos a vencer vêm da
+ * cache partilhada com os alertas (getVencimentosSnapshot).
  */
-
-export async function getUpcomingRenewals({
-  storeId,
-}: {
-  storeId: string | null;
-}) {
-  return queries.getUpcomingRenewals({
-    storeId: await resolveStoreScope(storeId),
-  });
-}
-
-export async function getUpcomingReceipts({
-  storeId,
-}: {
-  storeId: string | null;
-}) {
-  return queries.getUpcomingReceipts({
-    storeId: await resolveStoreScope(storeId),
-  });
-}
 
 export async function getLikelySwitches({
   storeId,

@@ -1,4 +1,5 @@
 import type { AiUserContext } from "@/lib/ai/context";
+import type { AiPolicyRow } from "@/lib/ai/tools/policy-row";
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;
@@ -147,7 +148,9 @@ export async function getClientPolicies(
     throw new Error(`Erro ao carregar apólices do cliente: ${error.message}`);
   }
 
-  const policies = (data ?? []).map((row: any) => {
+  const policies = (
+    (data ?? []) as Omit<AiPolicyRow, "client_id">[]
+  ).map((row) => {
     const company = firstRelation(row.company);
     const line = firstRelation(row.insurance_line);
     const commercialUser = firstRelation(row.commercial_user);

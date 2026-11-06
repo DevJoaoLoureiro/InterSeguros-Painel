@@ -391,17 +391,28 @@ export function LeadDetailsDrawer({
 // SINCRONIZAR QUANDO MUDA A LEAD
 // ========================================
 
-useEffect(() => {
+// Ajustado no render quando a lead muda (padrão do React para estado
+// derivado de props), em vez de num useEffect.
+const [syncedLead, setSyncedLead] = useState<Lead | null | undefined>(
+  undefined,
+);
+
+if (lead !== syncedLead) {
+  setSyncedLead(lead);
+
   if (!lead) {
     setStoreId("");
     setCommercialId("");
-    return;
+  } else {
+    setStoreId(lead.store_id ?? "");
+    setCommercialId(lead.assigned_user_id ?? "");
+    setEditingAssignment(false);
   }
 
-  setStoreId(lead.store_id ?? "");
-  setCommercialId(lead.assigned_user_id ?? "");
-  setEditingAssignment(false);
-}, [lead]);
+  if (!lead || (lead.status !== "ganha" && lead.status !== "convertida")) {
+    setPendingConversion(null);
+  }
+}
  
   // ========================================
   // CARREGAR PEDIDO PENDENTE
@@ -416,8 +427,7 @@ useEffect(() => {
         lead.status !== "convertida"
       )
     ) {
-      setPendingConversion(null);
-
+      // O pedido pendente já foi limpo no render (ver syncedLead).
       return;
     }
 

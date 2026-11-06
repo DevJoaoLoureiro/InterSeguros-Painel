@@ -1,4 +1,5 @@
 import type { AiUserContext } from "@/lib/ai/context";
+import type { AiPolicyRow } from "@/lib/ai/tools/policy-row";
 
 type NormalizedRow = {
   company_name: string | null;
@@ -8,7 +9,7 @@ type NormalizedRow = {
 
 type NormalizedRenewal = {
   id: string;
-  client_id: string;
+  client_id: string | null;
   policy_number: string;
   company_name: string | null;
   product_name: string | null;
@@ -127,7 +128,20 @@ export async function getManagementOverview(context: AiUserContext) {
     );
   }
 
-  function normalize(row: any): NormalizedRow {
+  type ManagementRow = Pick<
+    AiPolicyRow,
+    | "id"
+    | "client_id"
+    | "policy_number"
+    | "product_name"
+    | "annualized_premium"
+    | "issue_date"
+    | "renewal_date"
+    | "company"
+    | "commercial_user"
+  >;
+
+  function normalize(row: ManagementRow): NormalizedRow {
     return {
       company_name: firstRelation(row.company)?.name ?? null,
       responsible_name: firstRelation(row.commercial_user)?.full_name ?? null,
@@ -136,11 +150,17 @@ export async function getManagementOverview(context: AiUserContext) {
     };
   }
 
-  const todayRows = (todayResult.data ?? []).map(normalize);
-  const monthRows = (monthResult.data ?? []).map(normalize);
+  const todayRows = ((todayResult.data ?? []) as ManagementRow[]).map(
+    normalize,
+  );
+  const monthRows = ((monthResult.data ?? []) as ManagementRow[]).map(
+    normalize,
+  );
 
-  const renewalRows: NormalizedRenewal[] = (renewalsResult.data ?? []).map(
-    (row: any) => ({
+  const renewalRows: NormalizedRenewal[] = (
+    (renewalsResult.data ?? []) as ManagementRow[]
+  ).map(
+    (row) => ({
       id: row.id,
       client_id: row.client_id,
       policy_number: row.policy_number,

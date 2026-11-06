@@ -1,4 +1,5 @@
 import type { AiUserContext } from "@/lib/ai/context";
+import type { AiPolicyRow } from "@/lib/ai/tools/policy-row";
 
 const POLICY_SELECT = `
   id,
@@ -19,7 +20,9 @@ const POLICY_SELECT = `
   commercial_user:profiles!policies_commercial_user_id_fkey ( full_name )
 `;
 
-function applyPolicyVisibility(query: any, context: AiUserContext) {
+function applyPolicyVisibility<
+  Q extends { eq(column: string, value: string): Q },
+>(query: Q, context: AiUserContext) {
   if (context.storeId) {
     query = query.eq("issuing_store_id", context.storeId);
   }
@@ -56,7 +59,7 @@ function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   return Array.isArray(value) ? (value[0] ?? null) : value;
 }
 
-function normalizePolicyRow(row: any) {
+function normalizePolicyRow(row: AiPolicyRow) {
   const company = firstRelation(row.company);
   const line = firstRelation(row.insurance_line);
   const commercialUser = firstRelation(row.commercial_user);

@@ -201,10 +201,22 @@ type RawCommissionReceipt = {
   cancellation_date: string | null;
   cancellation_reason: string | number | null;
   provider_metadata: Record<string, unknown> | null;
-  company: any;
-  policy: any;
-  commissions: any;
+  company: Relation<{ name: string | null; code: string | null }>;
+  policy: Relation<{
+    id: string;
+    policy_number: string | null;
+    issuing_store_id: string | null;
+    client: Relation<{ name: string | null }>;
+    insurance_line: Relation<{ plan_type: string | null }>;
+  }>;
+  commissions: Relation<{
+    amount: number | string | null;
+    commission_type: string;
+  }>;
 };
+
+// O Supabase devolve as relações como objeto ou como lista.
+type Relation<T> = T | T[] | null;
 
 type CalculatedCommissionReceipt = {
   receiptId: string;
@@ -230,7 +242,7 @@ type CalculatedCommissionReceipt = {
   excludeUnreplacedReturned: boolean;
 };
 
-function one<T = any>(value: T | T[] | null | undefined): T | null {
+function one<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) {
     return value[0] ?? null;
   }
@@ -335,10 +347,10 @@ async function getRawPrevoirCommissionReceipts(): Promise<RawCommissionReceipt[]
       throw new Error(`Erro ao carregar comissões Prévoir: ${error.message}`);
     }
 
-    const page = (data ?? []) as RawCommissionReceipt[];
+    const page = (data ?? []) as unknown as RawCommissionReceipt[];
 
     for (const row of page) {
-      const company = one<any>(row.company);
+      const company = one(row.company);
 
       if (
         company?.code &&
@@ -363,10 +375,10 @@ async function getCalculatedCommissionReceipts(): Promise<CalculatedCommissionRe
 
   const base = rawRows
     .map((row) => {
-      const company = one<any>(row.company);
-      const policy = one<any>(row.policy);
-      const client = one<any>(policy?.client);
-      const line = one<any>(policy?.insurance_line);
+      const company = one(row.company);
+      const policy = one(row.policy);
+      const client = one(policy?.client);
+      const line = one(policy?.insurance_line);
 
       const commissions = Array.isArray(row.commissions)
         ? row.commissions
@@ -375,10 +387,9 @@ async function getCalculatedCommissionReceipts(): Promise<CalculatedCommissionRe
           : [];
 
       const commissionAmount = commissions
-        .filter((commission: any) => commission.commission_type === "TOTAL")
+        .filter((commission) => commission.commission_type === "TOTAL")
         .reduce(
-          (sum: number, commission: any) =>
-            sum + Number(commission.amount ?? 0),
+          (sum, commission) => sum + Number(commission.amount ?? 0),
           0,
         );
 
@@ -932,7 +943,19 @@ export async function getOfficialCommissionMovements(
     );
   }
 
-  return ((data ?? []) as any[]).map((row) => ({
+  type MovementRow = {
+    id: string;
+    month: string;
+    fecho_date: string | null;
+    agent_code: string;
+    policy_prefix: string;
+    policy_number: string;
+    movement_type: string;
+    gross_amount: number | string;
+    raw_line: string | null;
+  };
+
+  return ((data ?? []) as MovementRow[]).map((row) => ({
     id: row.id,
     month: row.month,
 

@@ -11,6 +11,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const WINDOW_DAYS_AHEAD = 30;
 const WINDOW_DAYS_BEHIND = 30;
+const PAGE_SIZE = 1000;
 
 function getDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
@@ -92,36 +93,42 @@ export async function getUpcomingRenewals({
   // "Associar-me". Sem isto, um gestor de loja nunca as via para
   // as poder reclamar. `.eq()` sozinho excluiria sempre os nulls.
 
-  let policiesQuery = supabase
-    .from("policies")
-    .select(`
-      id,
-      client_id,
-      policy_number,
-      annualized_premium,
-      issuing_store_id,
-      status,
-      company:companies ( id, name ),
-      insurance_line:insurance_lines ( id, name )
-    `)
-    .eq("status", "ACTIVE");
+  // O Supabase devolve no máximo 1000 linhas por pedido: lê-se por
+  // páginas, senão as apólices a partir da 1001.ª nunca apareciam.
+  const policies = [];
 
-  if (storeId && storeId !== "all") {
-    policiesQuery = policiesQuery.or(
-      `issuing_store_id.eq.${storeId},issuing_store_id.is.null`,
-    );
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let policiesQuery = supabase
+      .from("policies")
+      .select(`
+        id,
+        client_id,
+        policy_number,
+        annualized_premium,
+        issuing_store_id,
+        status,
+        company:companies ( id, name ),
+        insurance_line:insurance_lines ( id, name )
+      `)
+      .eq("status", "ACTIVE");
+
+    if (storeId && storeId !== "all") {
+      policiesQuery = policiesQuery.or(
+        `issuing_store_id.eq.${storeId},issuing_store_id.is.null`,
+      );
+    }
+
+    const { data, error } = await policiesQuery
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) {
+      throw new Error(`Erro ao carregar apólices: ${error.message}`);
+    }
+
+    policies.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
   }
-
-  const { data: policiesData, error: policiesError } =
-    await policiesQuery;
-
-  if (policiesError) {
-    throw new Error(
-      `Erro ao carregar apólices: ${policiesError.message}`,
-    );
-  }
-
-  const policies = policiesData ?? [];
 
   if (policies.length === 0) {
     return [];
@@ -145,10 +152,9 @@ export async function getUpcomingRenewals({
   }
 
   const renewalByPolicy = new Map<string, string>(
-    (renewalRows ?? []).map((row: any) => [
-      row.policy_id as string,
-      row.renewal_date as string,
-    ]),
+    ((renewalRows ?? []) as { policy_id: string; renewal_date: string }[]).map(
+      (row) => [row.policy_id, row.renewal_date],
+    ),
   );
 
   // ----------------------------------------

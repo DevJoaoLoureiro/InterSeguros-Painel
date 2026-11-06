@@ -1,4 +1,5 @@
 import type { AiUserContext } from "@/lib/ai/context";
+import type { AiPolicyRow } from "@/lib/ai/tools/policy-row";
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;
@@ -41,7 +42,10 @@ export async function getProductionSummary(
 
   let totalPremium = 0;
 
-  for (const row of rows as any[]) {
+  for (const row of rows as Pick<
+    AiPolicyRow,
+    "id" | "annualized_premium" | "issue_date" | "company" | "commercial_user"
+  >[]) {
     const premium =
       row.annualized_premium === null ? 0 : Number(row.annualized_premium);
 

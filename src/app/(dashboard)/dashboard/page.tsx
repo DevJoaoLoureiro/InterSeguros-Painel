@@ -18,6 +18,7 @@ import { DashboardCharts } from "@/components/dashboard/dashboard-charts";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { getSelectedStoreId } from "@/lib/auth/store-selection";
 import { clientHref } from "@/lib/clients/client-link";
+import { vencimentosHref } from "@/lib/vencimentos/tabs";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getExpiryAlerts,
@@ -724,7 +725,7 @@ for (const policy of policies) {
           </div>
 
           <Link
-            href="/vencimentos"
+            href={vencimentosHref("receipts")}
             className="text-xs font-semibold text-[#ff4b0a] hover:text-[#df3f06]"
           >
             Ver todos
@@ -743,7 +744,7 @@ for (const policy of policies) {
                 href={
                   receipt.clientId
                     ? clientHref(receipt.clientId)
-                    : "/vencimentos"
+                    : vencimentosHref("receipts")
                 }
                 title="Abrir cliente"
                 className="flex items-center justify-between gap-3 px-5 py-3 transition hover:bg-[#fff7f3]"

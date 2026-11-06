@@ -177,7 +177,15 @@ async function handleRequest(req: NextRequest) {
     } finally {
       lock.release();
     }
-  } catch (error: any) {
+  } catch (caught) {
+    // Erros do imapflow trazem code/response/responseStatus além da mensagem.
+    const error = caught as {
+      message?: string;
+      code?: unknown;
+      response?: unknown;
+      responseStatus?: unknown;
+    } | null;
+
     console.error("[Zurich OTP IMAP]", {
       message: error?.message,
       code: error?.code,

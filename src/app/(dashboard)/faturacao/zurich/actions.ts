@@ -77,7 +77,7 @@ export async function getAccessibleStores(): Promise<{
   };
 }
 
-function one<T = any>(value: T | T[] | null | undefined): T | null {
+function one<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) {
     return value[0] ?? null;
   }
@@ -103,10 +103,22 @@ type RawZurichCommissionReceipt = {
   receipt_number: string | null;
   payment_date: string | null;
   issue_date: string | null;
-  company: any;
-  policy: any;
-  commissions: any;
+  company: Relation<{ name: string | null; code: string | null }>;
+  policy: Relation<{
+    id: string;
+    policy_number: string | null;
+    issuing_store_id: string | null;
+    client: Relation<{ name: string | null }>;
+    insurance_line: Relation<{ plan_type: string | null }>;
+  }>;
+  commissions: Relation<{
+    amount: number | string | null;
+    commission_type: string;
+  }>;
 };
+
+// O Supabase devolve as relações como objeto ou como lista.
+type Relation<T> = T | T[] | null;
 
 type CalculatedZurichCommissionReceipt = {
   receiptId: string;
@@ -182,10 +194,10 @@ async function getCalculatedZurichCommissionReceipts(): Promise<
       throw new Error(`Erro ao carregar comissões Zurich: ${error.message}`);
     }
 
-    const page = (data ?? []) as RawZurichCommissionReceipt[];
+    const page = (data ?? []) as unknown as RawZurichCommissionReceipt[];
 
     for (const row of page) {
-      const company = one<any>(row.company);
+      const company = one(row.company);
 
       if (
         company?.code &&
@@ -194,9 +206,9 @@ async function getCalculatedZurichCommissionReceipts(): Promise<
         continue;
       }
 
-      const policy = one<any>(row.policy);
-      const client = one<any>(policy?.client);
-      const line = one<any>(policy?.insurance_line);
+      const policy = one(row.policy);
+      const client = one(policy?.client);
+      const line = one(policy?.insurance_line);
 
       if (!policy?.id) {
         continue;
@@ -209,12 +221,12 @@ async function getCalculatedZurichCommissionReceipts(): Promise<
           : [];
 
       const commissionCobranca = commissions
-        .filter((c: any) => c.commission_type === "COLLECTION")
-        .reduce((sum: number, c: any) => sum + Number(c.amount ?? 0), 0);
+        .filter((c) => c.commission_type === "COLLECTION")
+        .reduce((sum, c) => sum + Number(c.amount ?? 0), 0);
 
       const commissionAngariacao = commissions
-        .filter((c: any) => c.commission_type === "ACQUISITION")
-        .reduce((sum: number, c: any) => sum + Number(c.amount ?? 0), 0);
+        .filter((c) => c.commission_type === "ACQUISITION")
+        .reduce((sum, c) => sum + Number(c.amount ?? 0), 0);
 
       if (commissionCobranca === 0 && commissionAngariacao === 0) {
         continue;

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { ShieldCheck } from "lucide-react";
 import { LoginForm } from "@/components/auth/login-form";
 
@@ -16,9 +17,12 @@ export default function LoginPage() {
           {/* Logótipo em cartão branco: tem partes escuras. */}
           <div className="relative z-10">
             <div className="inline-flex h-[68px] items-center overflow-hidden rounded-2xl bg-white px-6 shadow-[0_12px_30px_rgba(0,0,0,0.3)]">
-              <img
+              <Image
                 src="/interseguroslogo.png"
                 alt="Inter Seguros"
+                width={142}
+                height={64}
+                preload
                 className="h-[64px] w-auto scale-[1.5] object-contain"
               />
             </div>
@@ -64,9 +68,12 @@ export default function LoginPage() {
         <section className="flex items-center justify-center p-6 sm:p-10 lg:p-14">
           <div className="w-full max-w-md">
             <div className="mb-8 lg:hidden">
-              <img
+              <Image
                 src="/interseguroslogo.png"
                 alt="Inter Seguros"
+                width={124}
+                height={56}
+                preload
                 className="h-14 w-auto object-contain"
               />
             </div>

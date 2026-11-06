@@ -1,4 +1,5 @@
 import type { AiUserContext } from "@/lib/ai/context";
+import type { AiPolicyRow } from "@/lib/ai/tools/policy-row";
 
 function firstRelation<T>(value: T | T[] | null | undefined): T | null {
   if (!value) return null;
@@ -92,8 +93,16 @@ export async function getClient360(
     );
   }
 
-  const policies: NormalizedPolicy[] = (policiesData ?? []).map(
-    (row: any) => ({
+  const policies: NormalizedPolicy[] = (
+    (policiesData ?? []) as Omit<
+      AiPolicyRow,
+      | "client_id"
+      | "payment_frequency"
+      | "commercial_user_id"
+      | "issuing_store_id"
+    >[]
+  ).map(
+    (row) => ({
       id: row.id,
       policy_number: row.policy_number,
       company_name: firstRelation(row.company)?.name ?? null,

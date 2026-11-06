@@ -55,20 +55,25 @@ export function EditStoreModal({
   const [error, setError] =
     useState("");
 
-  useEffect(() => {
-    if (!store) {
-      return;
-    }
+  // Preenche o formulário quando muda a loja (no render, não num efeito).
+  const [syncedStore, setSyncedStore] = useState<
+    EditableStore | null | undefined
+  >(undefined);
 
-    setName(store.name);
-    setCode(store.code);
-    setAddress(store.address ?? "");
-    setPostalCode(store.postalCode ?? "");
-    setCity(store.city ?? "");
-    setPhone(store.phone ?? "");
-    setEmail(store.email ?? "");
-    setError("");
-  }, [store]);
+  if (store !== syncedStore) {
+    setSyncedStore(store);
+
+    if (store) {
+      setName(store.name);
+      setCode(store.code);
+      setAddress(store.address ?? "");
+      setPostalCode(store.postalCode ?? "");
+      setCity(store.city ?? "");
+      setPhone(store.phone ?? "");
+      setEmail(store.email ?? "");
+      setError("");
+    }
+  }
 
   useEffect(() => {
     if (!open) {

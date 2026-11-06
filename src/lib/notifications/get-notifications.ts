@@ -6,6 +6,7 @@ import {
   getVencimentosSnapshot,
 } from "@/lib/alerts/expiry-alerts";
 import { describeSyncAge, getSyncProblems } from "@/lib/alerts/sync-health";
+import { vencimentosHref } from "@/lib/vencimentos/tabs";
 
 export type NotificationItem = {
   id: string;
@@ -86,7 +87,7 @@ export async function getNotifications(): Promise<NotificationItem[]> {
       type: "receipt",
       title: receipt.clientName,
       subtitle: `Recibo ${receipt.receiptNumber ?? ""} em atraso`,
-      href: "/vencimentos",
+      href: vencimentosHref("receipts"),
     });
   }
 
@@ -102,7 +103,7 @@ export async function getNotifications(): Promise<NotificationItem[]> {
       type: "renewal",
       title: renewal.clientName,
       subtitle: `Apólice ${renewal.policyNumber} por renovar`,
-      href: "/vencimentos",
+      href: vencimentosHref("renewals"),
     });
   }
 

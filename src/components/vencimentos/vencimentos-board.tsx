@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -28,6 +28,11 @@ import {
   type RecoveryOutcome,
 } from "@/lib/recovery/outcomes";
 import { Toaster, useToasts } from "@/components/tarefas/toasts";
+import {
+  VENCIMENTOS_TAB_PARAM,
+  tabFromParam,
+  type VencimentosTab,
+} from "@/lib/vencimentos/tabs";
 
 type RenewalRow = {
   policyId: string;
@@ -82,7 +87,7 @@ function needsContact(row: LikelySwitchRow) {
   return !recoveryOutcomeInfo(row.outcome)?.final;
 }
 
-type Tab = "renewals" | "receipts" | "switches";
+type Tab = VencimentosTab;
 
 type Props = {
   renewals: RenewalRow[];
@@ -149,12 +154,23 @@ export function VencimentosBoard({
   upcomingReceipts,
   likelySwitches,
 }: Props) {
-  const [tab, setTab] = useState<Tab>("renewals");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tab = tabFromParam(searchParams.get("tab"));
+
   const [page, setPage] = useState(1);
+  const [pageTab, setPageTab] = useState(tab);
+
+  // Mudar de separador (botão, link ou voltar atrás) volta à página 1.
+  if (pageTab !== tab) {
+    setPageTab(tab);
+    setPage(1);
+  }
 
   function changeTab(next: Tab) {
-    setTab(next);
-    setPage(1);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", VENCIMENTOS_TAB_PARAM[next]);
+    router.replace(`/vencimentos?${params.toString()}`, { scroll: false });
   }
 
   // Anuladas: por omissão só as que ainda falta contactar.
@@ -535,7 +551,17 @@ function ReceiptsTable({ items }: { items: UpcomingReceiptRow[] }) {
               </td>
 
               <td className="px-5 py-4 text-sm text-[#555d68]">
-                {row.receiptNumber ?? "—"}
+                {row.receiptNumber ? (
+                  <Link
+                    href={`/recibos?search=${encodeURIComponent(row.receiptNumber)}`}
+                    title="Ver o recibo em Recibos"
+                    className="hover:text-[#ff4b0a] hover:underline"
+                  >
+                    {row.receiptNumber}
+                  </Link>
+                ) : (
+                  "—"
+                )}
               </td>
 
               <td className="px-5 py-4 text-sm text-[#555d68]">

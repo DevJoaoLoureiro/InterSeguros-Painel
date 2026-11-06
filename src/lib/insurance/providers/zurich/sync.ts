@@ -875,7 +875,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
           supabase,
           companyId: company.id,
           externalClientId,
-          policy: normalized as any,
+          policy: normalized,
         });
 
         // ----------------------------------
@@ -887,7 +887,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
           companyId: company.id,
           clientId: clientResult.clientId,
           insuranceLineId,
-          policy: normalized as any,
+          policy: normalized,
           // O enriquecimento nunca faz falhar a apólice: se o patch não
           // se conseguir montar, a apólice grava-se sem ele.
           metadataPatch: patchInput
@@ -1178,7 +1178,7 @@ export async function syncZurichReceipts(options: SyncOptions = {}) {
           continue;
         }
 
-        items.push({ policyId: policy.policy_id, receipt: normalized as any });
+        items.push({ policyId: policy.policy_id, receipt: normalized });
       } catch (error) {
         failed += 1;
 
@@ -1192,7 +1192,7 @@ export async function syncZurichReceipts(options: SyncOptions = {}) {
     const batchResult = await batchUpsertReceipts({
       supabase,
       companyId: company.id,
-      items: items as any,
+      items,
     });
 
     created = batchResult.created;

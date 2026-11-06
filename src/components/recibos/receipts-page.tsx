@@ -23,6 +23,7 @@ import type {
   ReceiptRow,
   ReceiptsPageData,
 } from "./types";
+import { VencimentosRecibosHeader } from "@/components/vencimentos/section-tabs";
 
 type Props = {
   data: ReceiptsPageData;
@@ -104,14 +105,30 @@ function StatCard({
   count,
   value,
   icon: Icon,
+  active = false,
+  onClick,
 }: {
   title: string;
   count: number;
   value: number;
   icon: typeof CheckCircle2;
+  active?: boolean;
+  onClick?: () => void;
 }) {
   return (
-    <div className="rounded-2xl border border-[#e5e8ec] bg-white p-5 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!onClick}
+      aria-pressed={onClick ? active : undefined}
+      title={onClick ? (active ? "Mostrar todos" : `Mostrar só: ${title}`) : undefined}
+      className={[
+        "rounded-2xl border bg-white p-5 text-left shadow-[0_2px_10px_rgba(20,25,35,0.04)] transition disabled:cursor-default",
+        active
+          ? "border-[#ff4b0a] ring-2 ring-[#ff4b0a]/10"
+          : "border-[#e5e8ec] enabled:hover:border-[#ff4b0a]/40 enabled:hover:shadow-[0_6px_18px_rgba(20,25,35,0.08)]",
+      ].join(" ")}
+    >
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-[#737a84]">{title}</p>
 
@@ -127,7 +144,7 @@ function StatCard({
       <p className="mt-1 text-xs text-[#8a9099]">
         {count} {count === 1 ? "recibo" : "recibos"}
       </p>
-    </div>
+    </button>
   );
 }
 
@@ -149,6 +166,13 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
     router.push(`/recibos?${params.toString()}`);
   }
 
+  function toggleStatus(status: string) {
+    updateParams({
+      status: filters.status === status ? null : status,
+      page: "1",
+    });
+  }
+
   const premiumKey = premiumMode === "total" ? "total" : "commercial";
   const hasFilters = Boolean(
     filters.search ||
@@ -164,19 +188,10 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
           HEADER
       ==================================== */}
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm font-medium text-[#ff4b0a]">Carteira</p>
-
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#17191d]">
-            Recibos
-          </h1>
-
-          <p className="mt-1 text-sm text-[#707782]">
-            Cobranças, pendentes, devoluções e estornos.
-          </p>
-        </div>
-
+      <VencimentosRecibosHeader
+        current="history"
+        description="Todos os recibos: cobrados, pendentes, devolvidos e estornos, com pesquisa e filtros."
+        actions={
         <div className="inline-flex w-fit rounded-xl border border-[#e5e8ec] bg-white p-1">
           <button
             type="button"
@@ -206,7 +221,8 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
             Prémio Total
           </button>
         </div>
-      </div>
+        }
+      />
 
       {/* ====================================
           METRICS
@@ -218,6 +234,8 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
           count={data.stats.paid.count}
           value={data.stats.paid[premiumKey]}
           icon={CheckCircle2}
+          active={filters.status === "PAID"}
+          onClick={() => toggleStatus("PAID")}
         />
 
         <StatCard
@@ -225,6 +243,8 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
           count={data.stats.pending.count}
           value={data.stats.pending[premiumKey]}
           icon={Clock3}
+          active={filters.status === "PENDING"}
+          onClick={() => toggleStatus("PENDING")}
         />
 
         <StatCard
@@ -232,6 +252,8 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
           count={data.stats.returned.count}
           value={data.stats.returned[premiumKey]}
           icon={Undo2}
+          active={filters.status === "RETURNED"}
+          onClick={() => toggleStatus("RETURNED")}
         />
 
         <StatCard
@@ -248,6 +270,9 @@ export function ReceiptsPage({ data, filters, premiumMode }: Props) {
 
       <section className="rounded-2xl border border-[#e5e8ec] bg-white p-4 shadow-[0_2px_10px_rgba(20,25,35,0.04)]">
         <form
+          // Os campos usam defaultValue: remontar quando os filtros mudam
+          // por fora (ex.: clique num cartão) para mostrarem o valor certo.
+          key={`${filters.search}|${filters.from}|${filters.to}|${filters.company}|${filters.status}`}
           className="grid gap-3 md:grid-cols-2 xl:grid-cols-6"
           onSubmit={(event) => {
             event.preventDefault();

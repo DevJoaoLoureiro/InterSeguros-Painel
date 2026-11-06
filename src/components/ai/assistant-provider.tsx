@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useState,
@@ -98,43 +99,30 @@ export function AssistantProvider({
     string | null
   >(null);
 
-  function resetConversation() {
+  const resetConversation = useCallback(() => {
     setMessages([]);
+    setPreviousResponseId(null);
+    setPendingMessage(null);
+  }, []);
 
-    setPreviousResponseId(
-      null,
-    );
+  const clearPendingMessage = useCallback(() => {
+    setPendingMessage(null);
+  }, []);
 
-    setPendingMessage(
-      null,
-    );
-  }
+  const openAssistant = useCallback(
+    (options?: OpenAssistantOptions) => {
+      if (options?.resetConversation) {
+        resetConversation();
+      }
 
-  function clearPendingMessage() {
-    setPendingMessage(
-      null,
-    );
-  }
+      if (options?.message) {
+        setPendingMessage(options.message);
+      }
 
-  function openAssistant(
-    options?: OpenAssistantOptions,
-  ) {
-    if (
-      options?.resetConversation
-    ) {
-      resetConversation();
-    }
-
-    if (
-      options?.message
-    ) {
-      setPendingMessage(
-        options.message,
-      );
-    }
-
-    setOpen(true);
-  }
+      setOpen(true);
+    },
+    [resetConversation],
+  );
 
   const value =
     useMemo(
@@ -160,6 +148,9 @@ export function AssistantProvider({
         messages,
         previousResponseId,
         pendingMessage,
+        clearPendingMessage,
+        openAssistant,
+        resetConversation,
       ],
     );
 

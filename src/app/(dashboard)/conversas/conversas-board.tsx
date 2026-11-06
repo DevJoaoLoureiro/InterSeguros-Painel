@@ -161,13 +161,20 @@ export default function ConversasBoard({
     });
   }, [conversations, selectedAccountId, search]);
 
-  useEffect(() => {
-    if (!selectedConversationId) {
-      setMessages([]);
-      return;
-    }
+  // Sem conversa escolhida não há mensagens (limpo no render, não no efeito).
+  const [syncedConversationId, setSyncedConversationId] = useState(
+    selectedConversationId,
+  );
 
-    loadMessages(selectedConversationId);
+  if (selectedConversationId !== syncedConversationId) {
+    setSyncedConversationId(selectedConversationId);
+    if (!selectedConversationId) setMessages([]);
+  }
+
+  useEffect(() => {
+    if (selectedConversationId) {
+      loadMessages(selectedConversationId);
+    }
   }, [selectedConversationId]);
 
   async function loadMessages(conversationId: string) {
