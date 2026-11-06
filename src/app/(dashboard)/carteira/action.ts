@@ -561,10 +561,16 @@ async function fetchActivePolicies(
   return rows.map((row) => {
     const premium = annualPremiums.get(row.id);
 
+    // Financeiros (PPR, investimento) sem entregas no último ano não
+    // são uma falha de dados: não têm prémio periódico, contam 0 sem
+    // aviso. O aviso "sem recibo" fica para os seguros.
+    const isFinancial =
+      firstRelation(row.insurance_line)?.plan_type === "FINANCEIROS";
+
     return {
       ...row,
       portfolio_premium: premium ?? 0,
-      missing_commercial: premium === undefined,
+      missing_commercial: premium === undefined && !isFinancial,
     };
   });
 }

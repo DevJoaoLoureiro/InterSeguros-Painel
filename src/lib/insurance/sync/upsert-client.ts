@@ -4,6 +4,7 @@ import type {
   NormalizedPrevoirPolicy,
 } from "@/lib/insurance/providers/prevoir/mapper";
 import { fillMissingContacts } from "@/lib/insurance/sync/client-contacts";
+import { isPlaceholderClientName } from "@/lib/insurance/sync/client-placeholder";
 
 type UpsertClientResult = {
   clientId: string;
@@ -30,11 +31,18 @@ export async function upsertClient({
   companyId,
   externalClientId,
   policy,
+  keepExisting = false,
 }: {
   supabase: SupabaseClient;
   companyId: string;
   externalClientId: string;
   policy: NormalizedPrevoirPolicy;
+  /*
+   * Não altera clientes que já existem (dados possivelmente mais
+   * antigos, ex.: importação da Carteira Total). Só substitui um nome
+   * provisório e preenche contactos vazios.
+   */
+  keepExisting?: boolean;
 }): Promise<UpsertClientResult> {
   const nif = cleanNif(
     policy.client.nif,
@@ -77,6 +85,42 @@ export async function upsertClient({
     return {
       clientId:
         externalRef.client_id,
+      created: false,
+    };
+  }
+
+  if (externalRef?.client_id && keepExisting) {
+    const { data: current } = await supabase
+      .from("clients")
+      .select("name")
+      .eq("id", externalRef.client_id)
+      .maybeSingle();
+
+    if (
+      current &&
+      isPlaceholderClientName(current.name) &&
+      !isPlaceholderClientName(policy.client.name)
+    ) {
+      await supabase
+        .from("clients")
+        .update({
+          name: policy.client.name,
+          birth_date: policy.client.birthDate,
+          street: policy.client.street,
+          postal_code: policy.client.postalCode,
+          city: policy.client.city,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", externalRef.client_id);
+    }
+
+    await fillMissingContacts(supabase, externalRef.client_id, {
+      phone: policy.client.phone,
+      email: policy.client.email,
+    });
+
+    return {
+      clientId: externalRef.client_id,
       created: false,
     };
   }
@@ -153,7 +197,7 @@ export async function upsertClient({
       error,
     } = await supabase
       .from("clients")
-      .select("id")
+      .select("id, name")
       .eq("nif", nif)
       .limit(1)
       .maybeSingle();
@@ -166,6 +210,35 @@ export async function upsertClient({
 
     existingClientId =
       existingClient?.id ?? null;
+
+    // Cliente criado antes só com o NIF ("Cliente NIF …", ficha em
+    // falta) e agora chega a ficha verdadeira (outra companhia ou
+    // outra apólice): fica com os dados reais. Um nome verdadeiro
+    // nunca é substituído.
+    if (
+      existingClient &&
+      isPlaceholderClientName(existingClient.name) &&
+      !policy.client.dataMissing &&
+      !isPlaceholderClientName(policy.client.name)
+    ) {
+      const { error: fillError } = await supabase
+        .from("clients")
+        .update({
+          name: policy.client.name,
+          birth_date: policy.client.birthDate,
+          street: policy.client.street,
+          postal_code: policy.client.postalCode,
+          city: policy.client.city,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingClient.id);
+
+      if (fillError) {
+        throw new Error(
+          `Erro ao completar cliente sem ficha: ${fillError.message}`,
+        );
+      }
+    }
   }
 
   // ========================================

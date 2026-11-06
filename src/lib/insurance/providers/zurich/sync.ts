@@ -13,7 +13,7 @@ import {
   ZurichAccount,
 } from "./client";
 
-import { mapZurichPolicy } from "./mapper";
+import { fichaFromWebservice, mapZurichPolicy } from "./mapper";
 import { mapZurichReceipt } from "./receipt-mapper";
 import {
   maskIdentifier,
@@ -222,6 +222,36 @@ type SyncOptions = {
    * não mexe no estado incremental.
    */
   sourcePolicies?: ZurichApoliceFicheiro[];
+
+  /**
+   * Clientes, objetos e coberturas que acompanham sourcePolicies (ex.:
+   * ficheiros da Carteira Total), no lugar dos ficheiros diários.
+   */
+  sourceClients?: ZurichClienteFicheiro[];
+  sourceObjects?: ZurichObjetoFicheiro[];
+  sourceCoverages?: ZurichCoberturaFicheiro[];
+
+  /**
+   * Não faz NENHUM pedido à Zurich: sem consulta individual de
+   * clientes nem de objetos/coberturas (usa só o que veio nos
+   * ficheiros). Para importar a Carteira Total sem gastar o token.
+   */
+  offline?: boolean;
+
+  /**
+   * Não altera clientes que já existem no CRM (só substitui nomes
+   * provisórios "Cliente NIF …"). Para importar ficheiros mais antigos
+   * do que o sync diário, como a Carteira Total.
+   */
+  keepExistingClients?: boolean;
+
+  /**
+   * Reler os ficheiros diários a partir deste dia (AAAA-MM-DD) em vez
+   * da janela incremental, e reprocessar mesmo as apólices marcadas
+   * como já sincronizadas. Para repor dados depois de uma importação
+   * de ficheiros antigos. Não mexe no estado incremental.
+   */
+  replayFrom?: string;
 };
 
 function isEnrichmentEnabled(options: SyncOptions): boolean {
@@ -368,7 +398,10 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
   const errors: string[] = [];
 
   const fetchedAt = new Date().toISOString();
-  const budget = createFallbackBudget(options.fallbackLimit);
+  // Offline: teto 0, o enriquecimento nunca consulta a Zurich.
+  const budget = createFallbackBudget(
+    options.offline ? 0 : options.fallbackLimit,
+  );
   const lineInfoCache = new Map<string, LineInfo | null>();
   const preview: Record<string, unknown>[] = [];
 
@@ -396,9 +429,15 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     // Ver RETROACTIVE_LOOKBACK_DAYS: repete sempre a última semana antes do
     // último sync bem-sucedido, não só esse dia — a Zurich já demonstrou
     // inserir apólices em ficheiros de dias passados há vários dias.
-    const fromDate = syncState?.last_successful_sync_at
-      ? addDays(new Date(syncState.last_successful_sync_at), -RETROACTIVE_LOOKBACK_DAYS)
-      : addDays(today, -FIRST_SYNC_BACKFILL_DAYS);
+    const fromDate = options.replayFrom
+      ? new Date(`${options.replayFrom}T00:00:00Z`)
+      : syncState?.last_successful_sync_at
+        ? addDays(new Date(syncState.last_successful_sync_at), -RETROACTIVE_LOOKBACK_DAYS)
+        : addDays(today, -FIRST_SYNC_BACKFILL_DAYS);
+
+    if (Number.isNaN(fromDate.getTime())) {
+      throw new Error(`replayFrom inválido: ${options.replayFrom}`);
+    }
 
     const syncMode: "FULL" | "INCREMENTAL" = syncState?.last_successful_sync_at
       ? "INCREMENTAL"
@@ -433,6 +472,18 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
 
     for (const source of options.sourcePolicies ?? []) {
       sourcePolicies.push({ source, account: accounts[0], day: null });
+    }
+
+    // Ficheiros que acompanham sourcePolicies (Carteira Total).
+    if (options.sourcePolicies) {
+      const accountKey = accounts[0].key;
+
+      for (const cliente of options.sourceClients ?? []) {
+        clientesPorId.set(`${accountKey}:${cliente.IDCliente.trim()}`, cliente);
+      }
+
+      keepLatestDay(objetosPorApolice, accountKey, "carteira", options.sourceObjects ?? []);
+      keepLatestDay(coberturasPorApolice, accountKey, "carteira", options.sourceCoverages ?? []);
     }
 
     for (const account of options.sourcePolicies ? [] : accounts) {
@@ -487,7 +538,9 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     // desse ficheiro já estão no CRM (os ficheiros diários não mudam),
     // por isso salta-se. Assim cada corrida só trata o que é novo e cabe
     // no tempo máximo da Vercel, mesmo com o lookback de 7 dias.
-    if (!dryRun && !options.sourcePolicies) {
+    // replayFrom: reprocessa tudo (a importação marcou-as como
+    // sincronizadas hoje, com dados mais antigos).
+    if (!dryRun && !options.sourcePolicies && !options.replayFrom) {
       const lastSynced = new Map<string, string>();
       const numbers = uniquePolicies.map((item) =>
         item.source.NumeroApolice.trim(),
@@ -546,7 +599,12 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
         let cliente =
           clientesPorId.get(`${account.key}:${idCliente}`) ?? null;
 
-        if (!cliente && !dryRun && (idCliente || source.NIF.trim())) {
+        if (
+          !cliente &&
+          !dryRun &&
+          !options.offline &&
+          (idCliente || source.NIF.trim())
+        ) {
           try {
             const result = await obterClientePorIdNif(
               {
@@ -573,41 +631,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
             }
 
             if (dadosCliente) {
-              cliente = {
-                IDCliente: dadosCliente.IDCliente ?? "",
-                NomeCliente: dadosCliente.NomeCliente ?? "",
-                Morada: dadosCliente.Morada ?? "",
-                Localidade: dadosCliente.Localidade ?? "",
-                CodigoPostal: dadosCliente.CodigoPostal ?? "",
-                OrdemPostal: String(dadosCliente.OrdemPostal ?? ""),
-                LocalidadePostal: String(
-                  dadosCliente.LocalidadePostal ??
-                    dadosCliente.Localidade ??
-                    "",
-                ),
-                Pais: dadosCliente.Pais ?? "",
-                NIF: dadosCliente.NIF ?? "",
-                Telefone: dadosCliente.Telefone ?? "",
-                Telemovel: dadosCliente.Telemovel ?? "",
-                Fax: dadosCliente.Fax ?? "",
-                Email: dadosCliente.Email ?? "",
-                NCartaoIdentificacao:
-                  dadosCliente.NCartaoIdentificacao ?? "",
-                DataNascimento: dadosCliente.DataNascimento ?? "",
-                Tipo: dadosCliente.Tipo ?? "",
-                Sexo: dadosCliente.Sexo ?? "",
-                CodigoAtividade: dadosCliente.CodigoAtividade ?? "",
-                NomeAtividade: dadosCliente.NomeAtividade ?? "",
-                EstadoCivil: dadosCliente.EstadoCivil ?? "",
-                Filhos: dadosCliente.Filhos ?? "",
-                NIB: dadosCliente.NIB ?? "",
-                CodSituacao: dadosCliente.CodSituacao ?? "",
-                Situacao: dadosCliente.Situacao ?? "",
-                DataUltimaAlteracao: dadosCliente.DataUltimaAlteracao ?? "",
-                Zurich4You: "",
-                RecDocPorEmail: "",
-                DataAtualizacaoTipoCliente: "",
-              };
+              cliente = fichaFromWebservice(dadosCliente);
             }
           } catch (clienteError) {
             // Seguimos com cliente=null; o mapper já trata isso
@@ -779,7 +803,7 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
           // consulta individual por nº de apólice (qualquer ramo).
           let policyObjects = fileObjects;
 
-          if (policyObjects.length === 0) {
+          if (policyObjects.length === 0 && !options.offline) {
             try {
               const objectResult = await obterObjetosPorNrApolice(
                 policyNumber,
@@ -876,6 +900,9 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
           companyId: company.id,
           externalClientId,
           policy: normalized,
+          // Importação de ficheiros antigos: não mexe em clientes que
+          // já existem (podem estar mais atualizados).
+          keepExisting: options.keepExistingClients === true,
         });
 
         // ----------------------------------
@@ -945,7 +972,13 @@ export async function syncZurichPolicies(options: SyncOptions = {}) {
     const finalStatus =
       failed === 0 ? "SUCCESS" : created + updated > 0 ? "PARTIAL" : "ERROR";
 
-    if (failed === 0 && !options.limit && !dryRun && !options.sourcePolicies) {
+    if (
+      failed === 0 &&
+      !options.limit &&
+      !dryRun &&
+      !options.sourcePolicies &&
+      !options.replayFrom
+    ) {
       await supabase.from("integration_sync_state").upsert(
         {
           company_id: company.id,

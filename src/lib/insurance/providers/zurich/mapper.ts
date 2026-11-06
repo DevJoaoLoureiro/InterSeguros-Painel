@@ -2,6 +2,7 @@ import type { ZurichApoliceFicheiro, ZurichClienteFicheiro } from "./file-parser
 import { parseZurichFileDecimal } from "./file-parser";
 import { compactMetadata } from "@/lib/insurance/sync/client-metadata";
 import { pickEmail, pickPhone } from "@/lib/insurance/sync/client-contacts";
+import { PLACEHOLDER_CLIENT_PREFIX } from "@/lib/insurance/sync/client-placeholder";
 
 /*
  * Mesma "forma" que NormalizedPrevoirPolicy / NormalizedPolicy
@@ -99,6 +100,9 @@ function normalizeStatus(
     case "em vigor":
     case "revalidada":
     case "normal":
+    // Mesma regra da Prévoir: o cliente levantou parte do capital,
+    // mas a apólice continua em vigor.
+    case "parcialmente resgatada":
       return "ACTIVE";
 
     case "anulada":
@@ -106,6 +110,13 @@ function normalizeStatus(
 
     case "proposta":
       return "PENDING";
+
+    case "caducada":
+    case "expirada":
+      return "EXPIRED";
+
+    case "reduzida":
+      return "REDUCED";
 
     default:
       return "UNKNOWN";
@@ -153,6 +164,94 @@ function mapInsuranceLine(
   }
 
   return null;
+}
+
+/*
+ * Dados do cliente a partir da ficha Zurich (ficheiro diário ou
+ * webservice — ver fichaFromWebservice). Partilhado pelo sync e pela
+ * recuperação de nomes (recover-client-names.ts).
+ */
+export function mapZurichClient(
+  cliente: ZurichClienteFicheiro | null,
+  nif: string | null,
+): NormalizedZurichPolicy["client"] {
+  return {
+    name:
+      cliente?.NomeCliente.trim() ||
+      `${PLACEHOLDER_CLIENT_PREFIX}${nif ?? "desconhecido"}`,
+    nif,
+    birthDate: cliente ? toDateOnly(cliente.DataNascimento) : null,
+    street: cliente?.Morada.trim() || null,
+    postalCode:
+      cliente && cliente.CodigoPostal.trim()
+        ? `${cliente.CodigoPostal.trim()}${
+            cliente.OrdemPostal.trim() ? `-${cliente.OrdemPostal.trim()}` : ""
+          }`
+        : null,
+    city:
+      cliente?.LocalidadePostal.trim() ||
+      cliente?.Localidade.trim() ||
+      null,
+    // Telemóvel primeiro: é o que serve para ligar/WhatsApp.
+    phone: cliente ? pickPhone(cliente.Telemovel, cliente.Telefone) : null,
+    email: cliente ? pickEmail(cliente.Email) : null,
+    // Ficha completa do cliente (sexo, profissão, contactos, CC,
+    // NIB, ...), sem campos vazios.
+    metadata: cliente ? compactMetadata({ ...cliente }) : undefined,
+    // Sem ficha (cliente antigo/anulado que a Zurich já não devolve,
+    // ou consulta falhada): o nome acima é só o provisório.
+    dataMissing: !cliente,
+  };
+}
+
+/*
+ * Ficha devolvida pelo webservice (ObterClientePorIDNIF) no formato
+ * do ficheiro diário. O webservice dá as datas em ISO (AAAA-MM-DD…)
+ * e o ficheiro em DD-MM-AAAA: convertem-se, senão a data de
+ * nascimento perdia-se.
+ */
+export function fichaFromWebservice(
+  dados: Record<string, unknown>,
+): ZurichClienteFicheiro {
+  const text = (key: string) => {
+    const value = dados[key];
+    if (value === null || value === undefined) return "";
+
+    const raw = String(value);
+    const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return iso ? `${iso[3]}-${iso[2]}-${iso[1]}` : raw;
+  };
+
+  return {
+    IDCliente: text("IDCliente"),
+    NomeCliente: text("NomeCliente"),
+    Morada: text("Morada"),
+    Localidade: text("Localidade"),
+    CodigoPostal: text("CodigoPostal"),
+    OrdemPostal: text("OrdemPostal"),
+    LocalidadePostal: text("LocalidadePostal") || text("Localidade"),
+    Pais: text("Pais"),
+    NIF: text("NIF"),
+    Telefone: text("Telefone"),
+    Telemovel: text("Telemovel"),
+    Fax: text("Fax"),
+    Email: text("Email"),
+    NCartaoIdentificacao: text("NCartaoIdentificacao"),
+    DataNascimento: text("DataNascimento"),
+    Tipo: text("Tipo"),
+    Sexo: text("Sexo"),
+    CodigoAtividade: text("CodigoAtividade"),
+    NomeAtividade: text("NomeAtividade"),
+    EstadoCivil: text("EstadoCivil"),
+    Filhos: text("Filhos"),
+    NIB: text("NIB"),
+    CodSituacao: text("CodSituacao"),
+    Situacao: text("Situacao"),
+    DataUltimaAlteracao: text("DataUltimaAlteracao"),
+    Zurich4You: "",
+    RecDocPorEmail: "",
+    DataAtualizacaoTipoCliente: "",
+  };
 }
 
 export function mapZurichPolicy(
@@ -212,31 +311,7 @@ export function mapZurichPolicy(
     // store_external_refs, não aqui.
     storeExternalCode: source.AgenteAngariador.trim() || null,
 
-    client: {
-      name: cliente?.NomeCliente.trim() || `Cliente NIF ${nif ?? "desconhecido"}`,
-      nif,
-      birthDate: cliente ? toDateOnly(cliente.DataNascimento) : null,
-      street: cliente?.Morada.trim() || null,
-      postalCode:
-        cliente && cliente.CodigoPostal.trim()
-          ? `${cliente.CodigoPostal.trim()}${
-              cliente.OrdemPostal.trim() ? `-${cliente.OrdemPostal.trim()}` : ""
-            }`
-          : null,
-      city:
-        cliente?.LocalidadePostal.trim() ||
-        cliente?.Localidade.trim() ||
-        null,
-      // Telemóvel primeiro: é o que serve para ligar/WhatsApp.
-      phone: cliente ? pickPhone(cliente.Telemovel, cliente.Telefone) : null,
-      email: cliente ? pickEmail(cliente.Email) : null,
-      // Ficha completa do cliente (sexo, profissão, contactos, CC,
-      // NIB, ...), sem campos vazios.
-      metadata: cliente ? compactMetadata({ ...cliente }) : undefined,
-      // Sem ficha (cliente antigo/anulado que a Zurich já não devolve,
-      // ou consulta falhada): o nome acima é só o provisório.
-      dataMissing: !cliente,
-    },
+    client: mapZurichClient(cliente, nif),
 
     providerMetadata: {
       ramo: source.Ramo,

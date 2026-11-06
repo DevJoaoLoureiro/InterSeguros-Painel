@@ -141,6 +141,7 @@ supabase/migrations/ migrações recentes (o esquema anterior a 2026-09-30 não 
 | `/api/dev/zurich-token` | Estado do token Zurich; **emergência:** `POST {"token": "..."}` grava um token gerado no MyZurich |
 | `/api/dev/zurichtest` | Testar a ligação à Zurich (só leitura) |
 | `/api/dev/zurich-cliente?nif=…` | Ver um cliente na Zurich e no CRM (só leitura, dados pessoais) |
+| `/api/dev/zurich-recuperar-nomes[?limit=…&after=…&apply=1]` | Clientes "Cliente NIF …": volta a pedir a ficha à Zurich (sem `apply=1` só simula). `POST` com o ficheiro de Clientes da Carteira Total faz o mesmo **sem chamar a Zurich** — é o que usa o ecrã Configurações → Clientes sem nome |
 | `/api/dev/zurich-refresh-policy?apolice=…[&apply=1]` | Atualizar objetos/coberturas de uma apólice |
 | `/api/dev/zurich-backfill-enrichment`, `/api/dev/zurich-backfill-matriculas`, `/api/dev/zurich-backfill-retroactive-observations` | Backfills por lotes; sem `apply=1` só pré-visualizam |
 | `/api/zurich/zurich-async` | Sync Zurich manual com opções de enriquecimento |
