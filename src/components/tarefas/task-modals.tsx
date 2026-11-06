@@ -43,7 +43,7 @@ export type TaskEditInput = {
 const inputClass =
   "mt-1.5 h-10 w-full rounded-lg border border-[#e4e6e9] bg-white px-3 text-sm outline-none transition focus:border-[#ff4b0a] disabled:bg-[#f7f8f9] disabled:text-[#8a9099]";
 
-function Label({ children }: { children: React.ReactNode }) {
+export function Label({ children }: { children: React.ReactNode }) {
   return (
     <label className="text-xs font-medium text-[#7d848e]">{children}</label>
   );
@@ -111,7 +111,7 @@ function YesNo({
   );
 }
 
-function ModalShell({
+export function ModalShell({
   title,
   subtitle,
   onClose,
@@ -164,7 +164,7 @@ function ModalShell({
   );
 }
 
-function SecondaryButton({
+export function SecondaryButton({
   onClick,
   children,
 }: {

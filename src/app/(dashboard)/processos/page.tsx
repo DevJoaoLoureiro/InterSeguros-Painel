@@ -4,6 +4,7 @@ import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { getSelectedStoreId } from "@/lib/auth/store-selection";
 
 import { getTasksData } from "@/app/(dashboard)/tarefas/action";
+import { loadMessageTemplates } from "@/lib/tasks/message-templates";
 
 import { ProcessesBoard } from "./processes-board";
 
@@ -17,8 +18,13 @@ export default async function ProcessosPage() {
   // Loja = filtro do seletor do topo, igual para todos.
   const selectedStoreId = await getSelectedStoreId();
 
-  const { tasks, profiles, insuranceLines, privileged, currentProfileId } =
-    await getTasksData({ selectedStoreId, kind: "PROCESS" });
+  const [
+    { tasks, profiles, insuranceLines, privileged, currentProfileId },
+    messageTemplates,
+  ] = await Promise.all([
+    getTasksData({ selectedStoreId, kind: "PROCESS" }),
+    loadMessageTemplates(),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -41,6 +47,7 @@ export default async function ProcessosPage() {
         insuranceLines={insuranceLines}
         privileged={privileged}
         currentProfileId={currentProfileId}
+        messageTemplates={messageTemplates}
       />
     </div>
   );

@@ -58,9 +58,9 @@ export default async function Page({
     );
 
   const premiumMode =
-    params.premium === "total"
-      ? "total"
-      : "commercial";
+    params.premium === "commercial"
+      ? "commercial"
+      : "total";
 
   return (
     <ReceiptsPage

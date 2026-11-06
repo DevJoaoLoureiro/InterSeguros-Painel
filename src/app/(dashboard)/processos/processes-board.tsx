@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { Plus, Search, TrendingUp } from "lucide-react";
 
+import { ClientMessageModal } from "@/components/tarefas/client-message-modal";
 import { ProcessCard } from "@/components/tarefas/process-card";
 import {
   CreateTaskModal,
@@ -21,6 +22,10 @@ import {
   processStatusFor,
   type ProcessStage,
 } from "@/components/tarefas/utils";
+import type {
+  MessageLineKind,
+  MessageTemplate,
+} from "@/lib/tasks/client-message";
 import {
   NOT_ISSUED_REASONS,
   type NotIssuedReason,
@@ -44,6 +49,7 @@ type Props = {
   insuranceLines: InsuranceLineOption[];
   privileged: boolean;
   currentProfileId: string;
+  messageTemplates: Record<MessageLineKind, MessageTemplate>;
 };
 
 type View = "ACTIVE" | "NOT_ISSUED";
@@ -71,6 +77,7 @@ export function ProcessesBoard({
   insuranceLines,
   privileged,
   currentProfileId,
+  messageTemplates,
 }: Props) {
   const [processes, setProcesses] = useState(initialProcesses);
   const [synced, setSynced] = useState(initialProcesses);
@@ -93,6 +100,7 @@ export function ProcessesBoard({
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [notIssuedId, setNotIssuedId] = useState<string | null>(null);
+  const [messageId, setMessageId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<
     Partial<Record<ProcessStage, boolean>>
   >({});
@@ -112,6 +120,7 @@ export function ProcessesBoard({
 
   const openProcess = processes.find((p) => p.id === openId) ?? null;
   const notIssuedProcess = processes.find((p) => p.id === notIssuedId) ?? null;
+  const messageProcess = processes.find((p) => p.id === messageId) ?? null;
 
   // ----------------------------------------
   // FILTROS / CONTADORES
@@ -331,6 +340,7 @@ export function ProcessesBoard({
         onNotIssued={(p) => setNotIssuedId(p.id)}
         onReopen={handleReopen}
         onDelete={handleDelete}
+        onMessage={(p) => setMessageId(p.id)}
       />
     );
   }
@@ -635,6 +645,31 @@ export function ProcessesBoard({
             handleNotIssued(notIssuedProcess, reason, note)
           }
           onClose={() => setNotIssuedId(null)}
+        />
+      )}
+
+      {messageProcess && (
+        <ClientMessageModal
+          key={messageProcess.id}
+          process={messageProcess}
+          lineName={
+            messageProcess.insurance_line_id
+              ? lineMap.get(messageProcess.insurance_line_id) ?? null
+              : null
+          }
+          senderName={
+            profileMap.get(
+              messageProcess.assigned_user_id ?? currentProfileId,
+            ) ??
+            profileMap.get(currentProfileId) ??
+            ""
+          }
+          templates={messageTemplates}
+          onPresented={() =>
+            handlePatch(messageProcess, { simulationPresented: true })
+          }
+          onNotify={push}
+          onClose={() => setMessageId(null)}
         />
       )}
 

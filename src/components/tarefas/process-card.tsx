@@ -6,6 +6,7 @@ import {
   Calendar,
   Check,
   Clock,
+  MessageSquareText,
   MoreHorizontal,
   Pencil,
   RotateCcw,
@@ -43,6 +44,7 @@ type Props = {
   onNotIssued: (process: TaskRow) => void;
   onReopen: (process: TaskRow) => void;
   onDelete: (process: TaskRow) => void;
+  onMessage: (process: TaskRow) => void;
 };
 
 /* O que o botão principal faz neste momento (null = nada a marcar). */
@@ -102,6 +104,7 @@ export function ProcessCard({
   onNotIssued,
   onReopen,
   onDelete,
+  onMessage,
 }: Props) {
   const notIssued = process.status === "CANCELLED";
   const done = process.receipt_paid && !notIssued;
@@ -162,6 +165,7 @@ export function ProcessCard({
         <CardMenu
           process={process}
           undo={open || done ? undoAction(process) : null}
+          onMessage={open ? onMessage : null}
           onOpen={onOpen}
           onPatch={onPatch}
           onDelete={onDelete}
@@ -228,6 +232,17 @@ export function ProcessCard({
 
           {/* PRÓXIMO PASSO */}
 
+          {open && !process.simulation_presented && (
+            <button
+              type="button"
+              onClick={() => onMessage(process)}
+              className="mt-2.5 inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-[#ffd4c2] bg-[#fff7f3] px-3 text-xs font-medium text-[#c2410c] transition hover:border-[#ff4b0a] hover:bg-[#fff1eb]"
+            >
+              <MessageSquareText className="h-3.5 w-3.5" />
+              Mensagem ao cliente
+            </button>
+          )}
+
           {action && (
             <button
               type="button"
@@ -279,12 +294,14 @@ export function ProcessCard({
 function CardMenu({
   process,
   undo,
+  onMessage,
   onOpen,
   onPatch,
   onDelete,
 }: {
   process: TaskRow;
   undo: { label: string; patch: ProcessPatch } | null;
+  onMessage: ((process: TaskRow) => void) | null;
   onOpen: (process: TaskRow) => void;
   onPatch: (process: TaskRow, patch: ProcessPatch) => void;
   onDelete: (process: TaskRow) => void;
@@ -327,6 +344,20 @@ function CardMenu({
               <Pencil className="h-3.5 w-3.5" />
               Ver / editar detalhes
             </button>
+
+            {onMessage && (
+              <button
+                type="button"
+                onClick={() => {
+                  close();
+                  onMessage(process);
+                }}
+                className={itemClass}
+              >
+                <MessageSquareText className="h-3.5 w-3.5" />
+                Mensagem ao cliente
+              </button>
+            )}
 
             {undo && (
               <button
