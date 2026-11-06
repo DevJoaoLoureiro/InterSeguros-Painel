@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# scripts temporários de importação/reparação (correm à mão, não vão para o repo)
+.tmp-*.ts
