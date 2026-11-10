@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { sendWhatsAppText } from "@/lib/whatsapp/client";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Criado só no 1.º pedido: no build (Cloudflare) os segredos não existem.
+let supabaseClient: ReturnType<typeof createAdminClient> | null = null;
+function getSupabase() {
+  return (supabaseClient ??= createAdminClient());
+}
 
 export async function POST(request: NextRequest) {
   // O proxy já exige sessão de uma conta ativa; repetido aqui porque
@@ -29,7 +30,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: conversation, error } = await supabase
+    const { data: conversation, error } = await getSupabase()
       .from("whatsapp_conversations")
       .select(`
         id,
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
       result?.messages?.[0]?.id ?? null;
 
     const { data: message, error: messageError } =
-      await supabase
+      await getSupabase()
         .from("whatsapp_messages")
         .insert({
           conversation_id: conversation.id,
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await supabase
+    await getSupabase()
       .from("whatsapp_conversations")
       .update({
         last_message_at: new Date().toISOString(),

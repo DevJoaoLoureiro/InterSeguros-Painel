@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createAdminClient } from "@/lib/supabase/admin";
 import crypto from "crypto";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Criado só no 1.º pedido: no build (Cloudflare) os segredos não existem.
+let supabaseClient: ReturnType<typeof createAdminClient> | null = null;
+function getSupabase() {
+  return (supabaseClient ??= createAdminClient());
+}
 
 function normalizePhone(phone?: string | null) {
   if (!phone) return null;
@@ -182,7 +183,7 @@ async function findWhatsappAccount(params: {
   const { phoneNumberId, wabaId } = params;
 
   if (phoneNumberId) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("whatsapp_accounts")
       .select("id, store_id, phone_number_id, waba_id")
       .eq("phone_number_id", phoneNumberId)
@@ -202,7 +203,7 @@ async function findWhatsappAccount(params: {
   }
 
   if (wabaId) {
-    const { data, error } = await supabase
+    const { data, error } = await getSupabase()
       .from("whatsapp_accounts")
       .select("id, store_id, phone_number_id, waba_id")
       .eq("waba_id", wabaId)
@@ -234,7 +235,7 @@ async function findWhatsappAccount(params: {
 async function findClientId(customerPhone: string) {
   const phoneSuffix = customerPhone.slice(-9);
 
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from("clients")
     .select("id, phone")
     .ilike("phone", `%${phoneSuffix}%`)
@@ -271,7 +272,7 @@ async function getOrCreateConversation(params: {
   } = params;
 
   const { data: existingConversation, error: existingError } =
-    await supabase
+    await getSupabase()
       .from("whatsapp_conversations")
       .select("id, unread_count, client_id, customer_name, last_message_at")
       .eq("whatsapp_account_id", whatsappAccount.id)
@@ -314,7 +315,7 @@ async function getOrCreateConversation(params: {
         (existingConversation.unread_count ?? 0) + 1;
     }
 
-    await supabase
+    await getSupabase()
       .from("whatsapp_conversations")
       .update(update)
       .eq("id", existingConversation.id);
@@ -324,7 +325,7 @@ async function getOrCreateConversation(params: {
 
   const clientId = await findClientId(customerPhone);
 
-  const { data: newConversation, error } = await supabase
+  const { data: newConversation, error } = await getSupabase()
     .from("whatsapp_conversations")
     .insert({
       whatsapp_account_id: whatsappAccount.id,
@@ -394,7 +395,7 @@ async function saveMessage(params: {
   // ON CONFLICT specification") e NENHUMA mensagem recebida era
   // guardada.
   if (externalMessageId) {
-    const { data: existing, error: existingError } = await supabase
+    const { data: existing, error: existingError } = await getSupabase()
       .from("whatsapp_messages")
       .select("id")
       .eq("external_message_id", externalMessageId)
@@ -410,7 +411,7 @@ async function saveMessage(params: {
     if ((existing ?? []).length > 0) return;
   }
 
-  const { error } = await supabase
+  const { error } = await getSupabase()
     .from("whatsapp_messages")
     .insert({
       conversation_id: conversationId,
@@ -515,7 +516,7 @@ async function processNormalMessages(
         continue;
     }
 
-    const { error } = await supabase
+    const { error } = await getSupabase()
       .from("whatsapp_messages")
       .update(update)
       .eq("external_message_id", externalMessageId);
