@@ -5,6 +5,10 @@
   // >= 2025-04-01: sem isto as vars não aparecem em process.env.
   "compatibility_date": "2025-11-01",
   "compatibility_flags": ["nodejs_compat"],
+  // Correr junto do Supabase (AWS Frankfurt). Sem isto o Worker corre
+  // perto do utilizador (Lisboa) e cada consulta à BD faz LIS↔FRA: as
+  // páginas com várias consultas (e o login) ficavam com segundos.
+  "placement": { "mode": "targeted", "region": "aws:eu-central-1" },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
