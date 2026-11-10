@@ -1,7 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "interseguros-painel",
-  "main": ".open-next/worker.js",
+  // A app (OpenNext) + os crons: ver custom-worker.ts.
+  "main": "custom-worker.ts",
+  // Crons em UTC. As chaves têm de bater certo com CRON_JOBS em
+  // custom-worker.ts. Desligar os jobs equivalentes no cron-job.org.
+  "triggers": {
+    "crons": ["0 6,18 * * *", "30 6 * * *", "0 7 * * *"]
+  },
+  // Os syncs fazem muitas consultas; o limite de CPU por omissão (30 s)
+  // é curto. Tempo de espera pela rede/BD não conta como CPU.
+  "limits": { "cpu_ms": 300000 },
   // >= 2025-04-01: sem isto as vars não aparecem em process.env.
   "compatibility_date": "2025-11-01",
   "compatibility_flags": ["nodejs_compat"],

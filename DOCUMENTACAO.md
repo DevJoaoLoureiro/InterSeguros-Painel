@@ -22,8 +22,8 @@ Painel interno (CRM) da mediação de seguros do grupo Fisacar. Atualizado a
 | UI | React 19, Tailwind 4, `@base-ui/react`, `lucide-react` |
 | Dados | Supabase (Auth + Postgres + funções SQL) |
 | IA | OpenAI (`gpt-5-mini`) |
-| Deploy | Vercel (região `fra1`, `vercel.json`) |
-| Crons | cron-job.org a chamar `/api/cron/*` |
+| Deploy | Cloudflare Workers via OpenNext (`wrangler.jsonc`, `open-next.config.ts`); build automático a cada push para `main`. O Worker corre em Frankfurt (`placement`), junto do Supabase |
+| Crons | Cron Triggers da Cloudflare (`custom-worker.ts` + `triggers` no `wrangler.jsonc`, horas em UTC) a chamar `/api/cron/*` por dentro do Worker |
 
 ## 3. Correr localmente
 
@@ -46,7 +46,7 @@ Nunca commitar valores (`.env*` está no `.gitignore`).
 | App | `NEXT_PUBLIC_APP_URL` (links do formulário de parceiros) |
 | Crons | `CRON_SECRET` (cabeçalho `Authorization: Bearer …`) |
 | Prévoir | `PREVOIR_API_URL`, `PREVOIR_USERNAME`, `PREVOIR_PASSWORD`, `PREVOIR_MEDIATOR_NUMBER` |
-| Zurich | `ZURICH_ENV` (`uat`/`prod`), `ZURICH_USERNAME`, `ZURICH_PASSWORD`, `ZURICH_AGENTE_NR`, `ZURICH_ACCOUNTS` (várias contas/lojas), `ZURICH_TOKEN` (só para arrancar), `ZURICH_ALLOW_TOKEN_ISSUE` (`1` **só na Vercel**), `ZURICH_ENRICHMENT` |
+| Zurich | `ZURICH_ENV` (`uat`/`prod`), `ZURICH_USERNAME`, `ZURICH_PASSWORD`, `ZURICH_AGENTE_NR`, `ZURICH_ACCOUNTS` (várias contas/lojas), `ZURICH_TOKEN` (só para arrancar), `ZURICH_ALLOW_TOKEN_ISSUE` (`0`: o CRM não emite tokens enquanto o SegPlus partilhar o utilizador Zurich), `ZURICH_ENRICHMENT` |
 | Zurich OTP (email) | `ZURICH_OTP_EMAIL`, `ZURICH_OTP_EMAIL_PASSWORD`, `ZURICH_OTP_IMAP_HOST`, `ZURICH_OTP_IMAP_PORT`, `ZURICH_OTP_INTERNAL_SECRET` |
 | WhatsApp / Meta | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_API_VERSION`, `WHATSAPP_VERIFY_TOKEN`, `META_APP_SECRET`, `NEXT_PUBLIC_META_APP_ID`, `NEXT_PUBLIC_META_ES_CONFIG_ID` |
 | Parceiros (aviso WhatsApp) | `PARTNER_NOTIFY_TEMPLATE`, `PARTNER_NOTIFY_TEMPLATE_LANG`, `PARTNER_NOTIFY_PHONE_NUMBER_ID` |
@@ -130,9 +130,9 @@ supabase/migrations/ migrações recentes (o esquema anterior a 2026-09-30 não 
 | `GET/POST /api/whatsapp/webhook` | Meta (verifica `META_APP_SECRET`) |
 | `POST /api/public/leads` | Site / chatbot (`CHATBOT_CRM_SECRET`) |
 | `GET/POST /api/zurich/login-code` | Leitura do código OTP da Zurich no email (IMAP) |
-| `GET /api/cron/zurich-sync` | cron-job.org — apólices + recibos Zurich, renova o token 1×/dia. Responde 202 e corre em `after()`; `?wait=1` espera pelo fim |
-| `GET /api/cron/prevoir-sync` | cron-job.org (job "Libax Import") — apólices + recibos Prévoir; `?missing=N` importa apólices em falta |
-| `GET /api/cron/zurich-retroactive-backfill` | cron-job.org — observações retroativas para as métricas do simulador |
+| `GET /api/cron/zurich-sync` | Cron Trigger 06:00 e 18:00 UTC (`?wait=1`) — apólices + recibos Zurich (+ token, se a renovação estiver ligada). Sem `?wait=1` responde 202 e corre em `after()`, que na Cloudflare é cortado ao fim de ~30 s |
+| `GET /api/cron/prevoir-sync` | Cron Trigger 06:30 UTC (POST) — apólices + recibos Prévoir; `?missing=N` importa apólices em falta |
+| `GET /api/cron/zurich-retroactive-backfill` | Cron Trigger 07:00 UTC — observações retroativas para as métricas do simulador |
 
 ### Ferramentas manuais (só OWNER/ADMIN)
 
@@ -152,7 +152,7 @@ supabase/migrations/ migrações recentes (o esquema anterior a 2026-09-30 não 
 
 ### Zurich
 - Código em `lib/insurance/providers/zurich/`. O sync lê o ficheiro diário de apólices/recibos, consulta cada apólice e grava pelo `sync/` comum.
-- **Token partilhado (cuidado):** vive na tabela `integration_tokens`. Cada token novo **invalida o anterior**, e o mesmo utilizador Zurich é usado por outro sistema. Só o cron de produção renova (`ZURICH_ALLOW_TOKEN_ISSUE=1` só na Vercel). **Nunca emitir tokens localmente nem em scripts.** Se o sync falhar com "Código 5" ou HTTP 500 repetidos, perguntar primeiro se alguém pediu credenciais no portal MyZurich. Solução definitiva: um utilizador Zurich próprio para este CRM.
+- **Token partilhado (cuidado):** vive na tabela `integration_tokens`. Cada token novo **invalida o anterior**, e o mesmo utilizador Zurich é usado por outro sistema. A renovação automática está desligada (`ZURICH_ALLOW_TOKEN_ISSUE=0` no `wrangler.jsonc`). **Nunca emitir tokens localmente nem em scripts.** Se o sync falhar com "Código 5" ou HTTP 500 repetidos, perguntar primeiro se alguém pediu credenciais no portal MyZurich. Solução definitiva: um utilizador Zurich próprio para este CRM.
 - O ficheiro diário **não traz Vida**: as apólices Vida em falta importam-se com `ObterApolicePorNr` (scripts `.tmp-importar-*.ts` na raiz).
 
 ### Prévoir
@@ -212,6 +212,6 @@ Funções SQL (RPC): `get_receipts_page`, `get_latest_renewal_dates`, `search_cl
 
 
 - Importar as apólices Zurich Vida que faltam (ficheiro da carteira completa).
-- `/api/cron/prevoir-sync` ainda corre de forma síncrona (`maxDuration` 60) e pode dar timeout no cron-job.org; aplicar o mesmo padrão do cron da Zurich (202 + `after()`).
+- Segredos do Worker: sempre como **Secret** (`npx wrangler secret put NOME`). Variáveis de texto criadas no dashboard são apagadas no deploy seguinte (só ficam as do `wrangler.jsonc`).
 - Confirmar que `ZURICH_ALLOW_TOKEN_ISSUE` não está a `1` no `.env.local`.
 - O esquema anterior a 2026-09-30 não está em `supabase/migrations/`: exportá-lo para o repositório.

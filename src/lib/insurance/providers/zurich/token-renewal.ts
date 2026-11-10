@@ -26,7 +26,7 @@ import {
  * NUNCA devolver nem registar o token: só o que aconteceu.
  */
 
-/** Idade a partir da qual o cron renova (o cron corre de 30 em 30 min). */
+/** Idade a partir da qual o cron renova (o cron corre de 12 em 12 h). */
 export const TOKEN_RENEW_AFTER_HOURS = 20;
 
 /** Tentativas de gravar o token novo na BD antes de desistir. */
