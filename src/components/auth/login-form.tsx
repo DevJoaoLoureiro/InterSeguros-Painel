@@ -23,15 +23,24 @@ export function LoginForm() {
     setError("");
     setLoading(true);
 
-    const supabase = createClient();
+    try {
+      const supabase = createClient();
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
-      setError("Email ou palavra-passe incorretos.");
+      if (error) {
+        setError("Email ou palavra-passe incorretos.");
+        setLoading(false);
+        return;
+      }
+    } catch (unexpected) {
+      // Ex.: configuração em falta no build. Sem isto o botão ficava
+      // preso em "A entrar..." sem mensagem nenhuma.
+      console.error("[login] Erro inesperado", unexpected);
+      setError("Não foi possível entrar. Tenta novamente ou contacta o suporte.");
       setLoading(false);
       return;
     }
