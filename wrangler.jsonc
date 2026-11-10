@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "interseguros-painel",
+  "main": ".open-next/worker.js",
+  // >= 2025-04-01: sem isto as vars não aparecem em process.env.
+  "compatibility_date": "2025-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  // Só variáveis NÃO secretas (este ficheiro vai para o Git).
+  // Segredos: `npx wrangler secret put NOME` ou no dashboard como Secret.
+  // NEXT_PUBLIC_*: também em Settings → Builds → Variables (são
+  // embutidas no código do browser durante o build).
+  "vars": {
+    "LIBAX_AGENT_ID": "1721",
+    "NEXT_PUBLIC_APP_URL": "https://app.interseguros.pt",
+    "NEXT_PUBLIC_META_APP_ID": "2139724523336789",
+    "NEXT_PUBLIC_META_ES_CONFIG_ID": "2908840059488722",
+    "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_zSmC51GczdVrHQYkvbp5dQ_8BC2_ReQ",
+    "NEXT_PUBLIC_SUPABASE_URL": "https://gzywzslbdjcstgpjeybh.supabase.co",
+    "PARTNER_NOTIFY_PHONE_NUMBER_ID": "938579829344108",
+    "PARTNER_NOTIFY_TEMPLATE": "nova_apolice_parceiro",
+    "PARTNER_NOTIFY_TEMPLATE_LANG": "pt_PT",
+    "PREVOIR_API_URL": "https://portal.prevoirparceiros.com/api",
+    "PREVOIR_MEDIATOR_NUMBER": "115039",
+    "PREVOIR_PORTAL_URL": "https://portal.prevoirparceiros.com",
+    "WHATSAPP_API_VERSION": "v25.0",
+    "ZURICH_AGENTE_NR": "12603",
+    // 0 = o CRM nunca emite tokens Zurich (o token é partilhado com o SegPlus).
+    "ZURICH_ALLOW_TOKEN_ISSUE": "0",
+    "ZURICH_CONSUMIDOR_ID": "InterSeguros",
+    "ZURICH_ENRICHMENT": "1",
+    "ZURICH_ENV": "prod",
+    "ZURICH_OTP_IMAP_HOST": "mail.interseguros.pt",
+    "ZURICH_OTP_IMAP_PORT": "993"
+  }
+}

@@ -1,4 +1,8 @@
 import type { NextConfig } from "next";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+
+// `next dev` passa a ver as bindings/vars do Cloudflare (wrangler.jsonc).
+initOpenNextCloudflareForDev();
 
 /*
  * Cabeçalhos de segurança em todas as respostas.
