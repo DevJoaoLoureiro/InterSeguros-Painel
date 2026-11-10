@@ -8,9 +8,9 @@
   "triggers": {
     "crons": ["0 6,18 * * *", "30 6 * * *", "0 7 * * *"]
   },
-  // Os syncs fazem muitas consultas; o limite de CPU por omissão (30 s)
-  // é curto. Tempo de espera pela rede/BD não conta como CPU.
-  "limits": { "cpu_ms": 300000 },
+  // Plano Workers Free: não aceita "limits" (o deploy falha com o erro
+  // 100328). Com o plano pago, acrescentar para os syncs:
+  //   "limits": { "cpu_ms": 300000 },
   // >= 2025-04-01: sem isto as vars não aparecem em process.env.
   "compatibility_date": "2025-11-01",
   "compatibility_flags": ["nodejs_compat"],
