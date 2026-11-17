@@ -8,7 +8,7 @@ Painel interno (CRM) da mediação de seguros do grupo Fisacar. Atualizado a
 ## 1. O que faz
 
 - **Carteira:** clientes, apólices, recibos, vencimentos e carteira por companhia.
-- **Integrações com seguradoras:** Prévoir (API), Zurich (webservices + ficheiros diários), Generali (ficheiros `.dat`, só pré-visualização).
+- **Integrações com seguradoras:** Prévoir (API), Zurich (webservices + ficheiros diários), Generali (API Digitização V2, OAuth; credenciais de produção a funcionar, falta o 1.º sync).
 - **Faturação:** comissões Prévoir (com fecho oficial em PDF) e Zurich, mapa mensal para a contabilidade.
 - **Atividades:** tarefas, processos (simulação → emissão → recibo pago), oportunidades, simulador Zurich Auto, conversas WhatsApp, apólices enviadas por parceiros.
 - **Leads:** leads do site/chatbot e prospeção (Google Places).
@@ -50,6 +50,7 @@ Nunca commitar valores (`.env*` está no `.gitignore`).
 | Zurich OTP (email) | `ZURICH_OTP_EMAIL`, `ZURICH_OTP_EMAIL_PASSWORD`, `ZURICH_OTP_IMAP_HOST`, `ZURICH_OTP_IMAP_PORT`, `ZURICH_OTP_INTERNAL_SECRET` |
 | WhatsApp / Meta | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_API_VERSION`, `WHATSAPP_VERIFY_TOKEN`, `META_APP_SECRET`, `NEXT_PUBLIC_META_APP_ID`, `NEXT_PUBLIC_META_ES_CONFIG_ID` |
 | Parceiros (aviso WhatsApp) | `PARTNER_NOTIFY_TEMPLATE`, `PARTNER_NOTIFY_TEMPLATE_LANG`, `PARTNER_NOTIFY_PHONE_NUMBER_ID` |
+| Generali | `GENERALI_ENV` (`ta`/`prod`), `GENERALI_USERNAME`, `GENERALI_PASSWORD` (utilizador **aplicacional**), `GENERALI_CLIENT_ID`, `GENERALI_CLIENT_SECRET`, `GENERALI_CONTAS` (opcional: contas de mediador de 7 caracteres, separadas por vírgulas, para o carregamento inicial) |
 | Leads públicas | `CHATBOT_CRM_SECRET` |
 | IA / prospeção | `OPENAI_API_KEY`, `GOOGLE_PLACES_API_KEY` |
 
@@ -133,6 +134,7 @@ supabase/migrations/ migrações recentes (o esquema anterior a 2026-09-30 não 
 | `GET /api/cron/zurich-sync` | Cron Trigger 06:00 e 18:00 UTC (`?wait=1`) — apólices + recibos Zurich (+ token, se a renovação estiver ligada). Sem `?wait=1` responde 202 e corre em `after()`, que na Cloudflare é cortado ao fim de ~30 s |
 | `GET /api/cron/prevoir-sync` | Cron Trigger 06:30 UTC (POST) — apólices + recibos Prévoir; `?missing=N` importa apólices em falta |
 | `GET /api/cron/zurich-retroactive-backfill` | Cron Trigger 07:00 UTC — observações retroativas para as métricas do simulador |
+| `GET /api/cron/generali-sync` | Apólices → recibos → clientes Generali (`?maxPages=N`). **Ainda sem Cron Trigger**: acrescentar em `wrangler.jsonc` + `custom-worker.ts` quando as credenciais estiverem a funcionar |
 
 ### Ferramentas manuais (só OWNER/ADMIN)
 
@@ -146,7 +148,8 @@ supabase/migrations/ migrações recentes (o esquema anterior a 2026-09-30 não 
 | `/api/dev/zurich-backfill-enrichment`, `/api/dev/zurich-backfill-matriculas`, `/api/dev/zurich-backfill-retroactive-observations` | Backfills por lotes; sem `apply=1` só pré-visualizam |
 | `/api/zurich/zurich-async` | Sync Zurich manual com opções de enriquecimento |
 | `/api/dev/prevoir-policy-raw?modalidade=…&apolice=…` | Ver uma apólice Prévoir em bruto (dados pessoais mascarados) |
-| `POST /api/generali/import` | Pré-visualização (dry-run) de ficheiros `.dat` da Generali |
+| `GET /api/generali?op=login\|listas\|apolice\|detalhe\|recibo\|cliente\|preview` | Generali só leitura: testar credenciais, tabela de códigos, um registo em bruto (`&nr=…`, dados pessoais), 1.ª página do sync convertida sem gravar |
+| `POST /api/generali` | Sync Generali manual (grava). Corpo opcional `{"resources":["Apolices"],"maxPages":5,"skipInitialLoad":false}` |
 
 ## 9. Integrações
 
@@ -159,8 +162,18 @@ supabase/migrations/ migrações recentes (o esquema anterior a 2026-09-30 não 
 - API oficial (`lib/insurance/providers/prevoir/`). Sync incremental por data, estado em `integration_sync_state`.
 - Faturação: comissões dos recibos + fecho oficial lido de PDF (`pdf-parse`).
 
-### Generali
-- Só parser e pré-visualização (`lib/insurance/providers/generali/`); ainda não grava.
+### Generali (ex-Tranquilidade)
+- API REST "Digitização V2" (`lib/insurance/providers/generali/`). Documentação: [Swagger](https://ws.tranquilidade.pt/invoke/Digitizacao.V2/Documentacao) e [documento técnico](https://wsta.tranquilidade.pt/invoke/Digitizacao.V2.Doc/DocumentoTecnico) (autenticação).
+- **Autenticação:** OAuth 2.0 "Password Grant" com utilizador **aplicacional** + `client_id`/`client_secret`. Token de 12 h, sem refresh: pede-se outro. O token vai no cabeçalho `access_token` (não em `Authorization`). Pedir token novo **não** invalida o anterior (ao contrário da Zurich).
+- **Ambientes:** `GENERALI_ENV=ta` → `wsta.tranquilidade.pt` (testes); `prod` → `ws.tranquilidade.pt`. Credenciais diferentes em cada um.
+- **Sync por SyncToken:** 1.º o carregamento inicial (`/carregamentoinicial`, todo o histórico), depois `/apolices`, `/recibos`, `/clientes` com o último SyncToken (só o que mudou). Estado em `integration_sync_state.cursor` (JSON `{phase, token}`), uma linha por recurso (`POLICIES`, `RECEIPTS`, `CLIENTS`), gravado **a cada página**: se o Worker for cortado, a execução seguinte continua daí. Cada execução lê no máximo `maxPages` páginas por recurso (omissão 5). Carteira (2026-11-17): 4961 apólices em 10 páginas do carregamento inicial, 15–34 s por página (por isso o timeout do carregamento inicial é 180 s; os outros pedidos 30 s).
+- Registos que falham contam em `records_failed` mas não travam o cursor. Recibo de apólice que o CRM não tem: pede-se a apólice (até 10 por execução).
+- Clientes: os dados do tomador vêm na apólice; `/clientes` só **atualiza** clientes que já existem (nascimento, contactos), não cria.
+- Estados, fracionamentos, estados de recibo e formas de pagamento mapeados pelos **códigos** da operação `/listas` (lidos a 2026-11-17); códigos novos caem na descrição. Ramo pelo produto/linha de negócio (validado com dados reais).
+- Regras confirmadas com dados reais: **fracionamento vazio = anual**; `PremioTotal` da apólice é anual; o `PremioComercial` de cada objeto seguro é o prémio comercial **da apólice inteira** repetido (não se soma). `Matricula` só é matrícula quando `TipoMatricula` é de veículo (pode ser carta de condução, cavalo, nº de motor).
+- Loja (`storeRefKey` em `generali/sync.ts`), por esta ordem: (1) `CodigoMediacao` do 1.º objeto seguro em `store_external_refs` (as variantes `1…` contam como `0…`); (2) o utilizador que emitiu a apólice, registado como `USER:<utilizador>` (ex.: `USER:T26980`): serve para o `0092674` (master), partilhado por Braga e Ribeira do Neiva e por isso **não** registado como código; (3) a loja mais frequente nas outras apólices do cliente (renovações automáticas por utilizadores de sistema: `MIGACOR`, `PCCSEP`, `MIGLY`, `PPRRPA…`); (4) a loja que a apólice já tinha. Segundo o gestor (2026-11-17): `0026504` Balazar, `0026845` Ponte de Lima, `0023287` "NOPI", `0092674` master. Utilizadores do `0092674`: `T26980` → Braga (conta partilhada por 2 pessoas), `T26979` → Ribeira do Neiva, `T26981` → Balazar (Bruno, por decisão de 2026-11-17), `T10328` → Ribeira do Neiva (master). Registados em `store_external_refs` em 2026-11-17, com `0026504`/`1026504` → Balazar e `0026845`/`1026845` → Ponte de Lima. Códigos na carteira (2026-11-17, apólices ativas): `0092674` (1841) + `1092674` (120), `0026504` (834) + `1026504` (52), `0026845` (755) + `1026845` (23), `0024452` (25) + `1024452` (8), `0023287` (9) + `1023287` (2). O `0050608` só aparece em recibos (cobrança?), nunca como mediação de apólice. Ainda não estão associados às lojas.
+- Só utilizador de agente (fluxo Authorization Code, não implementado): `/extratos` (comissões mensais), `/documentos/recibo`, `/recibos/{nr}/cobrar`.
+- Migração `20261117120000_generali_company.sql` cria a companhia `GENERALI`.
 
 ### WhatsApp (Meta Cloud API)
 - Webhook guarda mensagens/estados; envio pela página Conversas; ligação dos números em Configurações → WhatsApp.
@@ -212,6 +225,7 @@ Funções SQL (RPC): `get_receipts_page`, `get_latest_renewal_dates`, `search_cl
 
 
 - Importar as apólices Zurich Vida que faltam (ficheiro da carteira completa).
+- Generali: aplicar a migração da companhia; registar os códigos de mediação em `store_external_refs`; validar o mapeamento com `?op=preview`; acrescentar o Cron Trigger.
 - Segredos do Worker: sempre como **Secret** (`npx wrangler secret put NOME`). Variáveis de texto criadas no dashboard são apagadas no deploy seguinte (só ficam as do `wrangler.jsonc`).
 - Confirmar que `ZURICH_ALLOW_TOKEN_ISSUE` não está a `1` no `.env.local`.
 - O esquema anterior a 2026-09-30 não está em `supabase/migrations/`: exportá-lo para o repositório.

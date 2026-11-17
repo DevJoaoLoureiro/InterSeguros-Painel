@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CreditCard,
   FileText,
+  Hash,
   IdCard,
   Loader2,
   ReceiptText,
@@ -675,6 +676,11 @@ function PoliciesTab({
                 <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
                   <Detail label="Companhia" icon={Building2}>
                     {policy.company?.name ?? "—"}
+                  </Detail>
+                  <Detail label="Nº apólice" icon={Hash}>
+                    <span className="select-all tracking-wide">
+                      {policy.policy_number}
+                    </span>
                   </Detail>
                   <Detail label="Produto">{policy.product_name ?? "—"}</Detail>
                   {policy.vehicle_registration && (

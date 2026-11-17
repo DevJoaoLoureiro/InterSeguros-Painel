@@ -1,238 +1,213 @@
-export type GeneraliMappedReceipt = {
-  externalId: string;
+import type { NormalizedPrevoirReceipt } from "@/lib/insurance/providers/prevoir/receipt-mapper";
+import { compactMetadata } from "@/lib/insurance/sync/client-metadata";
 
-  policyKey: string | null;
+import { date, decimal, text } from "./mapper";
+import type { GeneraliRecibo } from "./types";
 
-  periodStart: string | null;
-  periodEnd: string | null;
-  issueDate: string | null;
+/*
+ * Recibo da Generali -> formato comum (o de batchUpsertReceipts).
+ *
+ * Comissões como na Zurich, por partes (sem linha TOTAL):
+ *   ComissaoMediacao -> ACQUISITION
+ *   ComissaoCobranca -> COLLECTION
+ * (ver lib/insurance/commissions.ts: sem TOTAL, somam-se as partes).
+ *
+ * Estado e forma de pagamento reconhecidos pela descrição; o código e
+ * a descrição originais ficam em provider_metadata.
+ */
 
-  candidateTotalAmount: number | null;
-  candidateNetAmount: number | null;
-  candidateTaxAmount: number | null;
+export type NormalizedGeneraliReceipt = NormalizedPrevoirReceipt;
 
-  rawMovementCode: string | null;
-  rawStatusCode: string | null;
-  rawCollectionCode: string | null;
+function normalize(value: string | null | undefined): string {
+  return (value ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .trim()
+    .toLowerCase();
+}
 
-  raw: string;
+/*
+ * Recibo.EstadoRecibo, códigos da operação /listas (2026-11-17).
+ * "No mediador" = o cliente pagou ao mediador: para o CRM está pago.
+ * Os que ficam de fora (ex.: CH "Carta Cheque Emitida") caem na
+ * descrição e, no fim, na data de pagamento.
+ */
+const RECEIPT_STATUS: Record<string, NormalizedGeneraliReceipt["status"]> = {
+  RC: "PAID", // Reconciliado ou pago
+  PL: "PAID", // Pré-Liquidado
+  PM: "PAID", // Pagamento no Mediador
+  CM: "PAID", // Cobrança no Mediador
+  CC: "PAID", // Crédito em conta bancária
+  OK: "PENDING", // Em Existência
+  CR: "PENDING", // Recibo Criado
+  PI: "PENDING", // Preparado para Impressão
+  IM: "PENDING", // Recibo Impresso
+  PP: "PENDING", // Em Gestão de Recebimentos
+  PD: "PENDING", // Pagamento em Diferido
+  CD: "PENDING", // Cobrança em diferido
+  AN: "CANCELLED", // Anulado
+  AD: "CANCELLED", // Anulação em Diferido
+  DA: "CANCELLED", // Anulado Tecnicamente
+  CT: "CANCELLED", // Cancelado Tecnicamente
+  CA: "CANCELLED", // Recibo Cancelado
+  CI: "CANCELLED", // Cancel. p/ inclusão no próx.
+  DV: "RETURNED", // Devolvido por Falta Pagamento
+  DM: "RETURNED", // Devolvido p/ Tratamento Manual
+  DE: "RETURNED", // Devolvido para Esclarecimento
+  CO: "OVERDUE", // Contencioso
+  DC: "OVERDUE", // Dívida em Contencioso
 };
 
-function parseDate(
-  value: string,
-): string | null {
-  const clean = value.trim();
+function mapStatus(recibo: GeneraliRecibo): NormalizedGeneraliReceipt["status"] {
+  const code = text(recibo.EstadoRecibo)?.toUpperCase();
+  if (code && RECEIPT_STATUS[code]) return RECEIPT_STATUS[code];
 
-  if (!/^\d{8}$/.test(clean)) {
-    return null;
-  }
+  const desc = normalize(recibo.EstadoReciboDesc);
 
-  const year = Number(
-    clean.slice(0, 4),
-  );
-
-  const month = Number(
-    clean.slice(4, 6),
-  );
-
-  const day = Number(
-    clean.slice(6, 8),
-  );
-
+  if (desc.includes("estorn") || desc.includes("devolv")) return "RETURNED";
+  if (desc.includes("anulad") || desc.includes("cancelad")) return "CANCELLED";
+  if (desc.includes("contencios")) return "OVERDUE";
+  if (desc.includes("cobrad") || desc.includes("pago") || desc.includes("liquidad"))
+    return "PAID";
   if (
-    year < 1900 ||
-    year > 2100 ||
-    month < 1 ||
-    month > 12 ||
-    day < 1 ||
-    day > 31
-  ) {
-    return null;
-  }
+    desc.includes("pendente") ||
+    desc.includes("por cobrar") ||
+    desc.includes("emitid") ||
+    desc.includes("em cobranca") ||
+    desc.includes("aviso")
+  )
+    return "PENDING";
 
-  return [
-    String(year).padStart(4, "0"),
-    String(month).padStart(2, "0"),
-    String(day).padStart(2, "0"),
-  ].join("-");
+  // Sem descrição reconhecida mas com data de pagamento: está pago.
+  if (date(recibo.DtPagamento)) return "PAID";
+
+  return "UNKNOWN";
 }
 
-function parseMoney(
-  value: string,
-): number | null {
-  const clean =
-    value.trim();
+/* Recibo.TipoRecebimento (/listas). Multibanco não tem tipo no CRM: OTHER. */
+const PAYMENT_METHOD: Record<string, NonNullable<NormalizedGeneraliReceipt["paymentMethod"]>> = {
+  "01": "CASH",
+  "02": "CHEQUE",
+  "03": "CARD",
+  "15": "CARD",
+  "04": "DIRECT_DEBIT",
+  "05": "DIRECT_DEBIT",
+  "12": "MBWAY",
+};
 
-  if (!clean) {
-    return null;
-  }
+function mapPaymentMethod(
+  recibo: GeneraliRecibo,
+): NormalizedGeneraliReceipt["paymentMethod"] {
+  const code = text(recibo.TipoRecebimento);
+  if (code && PAYMENT_METHOD[code]) return PAYMENT_METHOD[code];
 
-  /*
-   * Os campos monetários parecem vir
-   * em cêntimos, sem separador decimal.
-   *
-   * Exemplos:
-   *
-   * 00000013669 => 136.69
-   * 00000012218 => 122.18
-   * -00000004423 => -44.23
-   *
-   * Ainda tratamos os nomes dos campos
-   * como "candidate" até confirmar
-   * o layout oficial da Generali.
-   */
+  const desc = normalize(recibo.TipoRecebimentoDesc ?? recibo.TipoRecebimento);
 
-  const normalized =
-    clean.replace(/\s/g, "");
+  if (!desc) return null;
+  if (desc.includes("debito") || desc.includes("sepa")) return "DIRECT_DEBIT";
+  if (desc.includes("mb way") || desc.includes("mbway")) return "MBWAY";
+  if (desc.includes("transfer")) return "BANK_TRANSFER";
+  if (desc.includes("cheque")) return "CHEQUE";
+  if (desc.includes("cartao")) return "CARD";
+  if (desc.includes("numerario") || desc.includes("dinheiro")) return "CASH";
 
-  if (
-    !/^-?\d+$/.test(normalized)
-  ) {
-    return null;
-  }
-
-  const numeric =
-    Number(normalized);
-
-  if (
-    !Number.isFinite(numeric)
-  ) {
-    return null;
-  }
-
-  return numeric / 100;
+  return "OTHER";
 }
 
-function cleanText(
-  value: string,
-): string | null {
-  const clean =
-    value.trim();
-
-  return clean || null;
+function negate(value: number | null): number | null {
+  return value === null || value === 0 ? value : -value;
 }
 
-export function mapGeneraliReceipt(
-  raw: string,
-): GeneraliMappedReceipt {
-  /*
-   * Layout observado nos ficheiros
-   * IRECIBOS com registos de 221 chars.
-   *
-   * IMPORTANTE:
-   * As posições estão a ser extraídas
-   * estruturalmente a partir dos ficheiros
-   * reais.
-   *
-   * O significado funcional de alguns
-   * campos ainda deve ser confirmado
-   * com o layout oficial da Generali.
-   */
+export function mapGeneraliReceipt(recibo: GeneraliRecibo): NormalizedGeneraliReceipt {
+  const receiptNumber = text(recibo.NrRecibo);
+  const policyNumber = text(recibo.NrApolice);
 
-  const externalId =
-    raw.slice(47, 61).trim();
+  if (!receiptNumber || !policyNumber) {
+    throw new Error("Recibo Generali sem NrRecibo ou NrApolice.");
+  }
 
-  const policyKey =
-    cleanText(
-      raw.slice(24, 47),
-    );
+  // A Generali escreve as comissões do lado dela: negativas num recibo
+  // normal (ex.: prémio 58,53 / ComissaoMediacao -9,30) e positivas num
+  // estorno. Para o CRM (lado do mediador) troca-se o sinal.
+  const acquisition = negate(decimal(recibo.ComissaoMediacao));
+  const collection = negate(decimal(recibo.ComissaoCobranca));
 
-  /*
-   * Exemplo observado:
-   *
-   * 20230804
-   * 20240803
-   * 20230804
-   *
-   * Mantemos a nomenclatura abaixo
-   * como candidata até confirmação.
-   */
-  const periodStart =
-    parseDate(
-      raw.slice(61, 69),
-    );
+  const commissions: NormalizedGeneraliReceipt["commissions"] = [];
 
-  const periodEnd =
-    parseDate(
-      raw.slice(69, 77),
-    );
+  if (acquisition !== null && acquisition !== 0) {
+    commissions.push({
+      type: "ACQUISITION",
+      amount: acquisition,
+      externalType: text(recibo.TipoRecibo),
+    });
+  }
 
-  const issueDate =
-    parseDate(
-      raw.slice(77, 85),
-    );
-
-  /*
-   * Existe normalmente um código de
-   * movimento logo após as datas.
-   */
-  const rawMovementCode =
-    cleanText(
-      raw.slice(85, 86),
-    );
-
-  /*
-   * Os blocos monetários aparecem
-   * separados por campos de zeros.
-   *
-   * Exemplo real:
-   *
-   * 00000013669
-   * 00000012218
-   * 00000001433
-   */
-
-  const candidateTotalAmount =
-    parseMoney(
-      raw.slice(98, 109),
-    );
-
-  const candidateNetAmount =
-    parseMoney(
-      raw.slice(122, 133),
-    );
-
-  const candidateTaxAmount =
-    parseMoney(
-      raw.slice(146, 157),
-    );
-
-  /*
-   * Estes campos finais parecem ser
-   * códigos de estado / movimento /
-   * cobrança.
-   *
-   * Ainda não lhes damos significado
-   * definitivo sem documentação.
-   */
-
-  const rawStatusCode =
-    cleanText(
-      raw.slice(181, 182),
-    );
-
-  const rawCollectionCode =
-    cleanText(
-      raw.slice(190, 193),
-    );
+  if (collection !== null && collection !== 0) {
+    commissions.push({
+      type: "COLLECTION",
+      amount: collection,
+      externalType: text(recibo.TipoRecibo),
+    });
+  }
 
   return {
-    externalId,
+    externalId: receiptNumber,
+    receiptNumber,
+    policyExternalId: policyNumber,
 
-    policyKey,
+    commissionTotal: null,
+    commissionAcquisition: acquisition,
+    commissionCollection: collection,
+    commissionBrokerage: null,
+    commissionOther: null,
+    commissionType: text(recibo.TipoRecibo),
 
-    periodStart,
-    periodEnd,
-    issueDate,
+    receiptType: text(recibo.TipoReciboDesc) ?? text(recibo.TipoRecibo),
 
-    candidateTotalAmount,
-    candidateNetAmount,
-    candidateTaxAmount,
+    periodStart: date(recibo.DtInicio),
+    periodEnd: date(recibo.DtFim),
 
-    rawMovementCode,
-    rawStatusCode,
-    rawCollectionCode,
+    issueDate: date(recibo.DtEmissao),
+    // Como na Zurich: o pagamento espera-se no início do período. A
+    // data-limite de cobrança fica em provider_metadata.
+    dueDate: date(recibo.DtInicio),
 
-    raw,
+    commercialPremium: decimal(recibo.PremioComercial),
+    totalPremium: decimal(recibo.PremioTotal),
+
+    status: mapStatus(recibo),
+    paymentDate: date(recibo.DtPagamento),
+    paymentMethod: mapPaymentMethod(recibo),
+
+    situationDate: date(recibo.DtAlteracaoEstado),
+    cancellationDate: date(recibo.DtAnulacao),
+    cancellationReason: text(recibo.MotivoAnulacao),
+
+    externalVersion: null,
+    externalNature: text(recibo.TipoRecibo),
+    externalPaymentMethod: text(recibo.TipoRecebimentoDesc) ?? text(recibo.TipoRecebimento),
+
+    commissions,
+
+    providerMetadata: compactMetadata({
+      source: "GENERALI_API_V2",
+      estadoCod: recibo.EstadoRecibo,
+      estadoDesc: recibo.EstadoReciboDesc,
+      tipoReciboCod: recibo.TipoRecibo,
+      dataLimiteCobranca: date(recibo.DtLimiteCobranca),
+      premioLiquido: decimal(recibo.PremioLiquido),
+      custoApolice: decimal(recibo.CustoApolice),
+      codMediador: recibo.CodMediador,
+      codCobrador: recibo.CodCobrador,
+      irsRetidoMediacao: decimal(recibo.IrsRetidoMediacao),
+      irsRetidoCobranca: decimal(recibo.IrsRetidoCobranca),
+      nrExtrato: recibo.NrExtrato,
+      nrTomador: recibo.NrTomador,
+      tipoRecebimentoCod: recibo.TipoRecebimento,
+      atmEntidade: recibo.ATM?.Entidade,
+      atmReferencia: recibo.ATM?.Referencia,
+      documento: recibo.Documento,
+      autorizado: recibo.Autorizado,
+    }),
   };
 }

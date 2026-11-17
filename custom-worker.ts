@@ -29,6 +29,9 @@ const CRON_JOBS: Record<string, CronJob> = {
   "30 6 * * *": { path: "/api/cron/prevoir-sync", method: "POST" },
   // Observações retroativas para as métricas do simulador (depois do sync).
   "0 7 * * *": { path: "/api/cron/zurich-retroactive-backfill", method: "GET" },
+  // Generali: apólices -> recibos -> clientes (só o que mudou, por
+  // SyncToken), de 12 em 12 horas, 15 min depois da Zurich.
+  "15 6,18 * * *": { path: "/api/cron/generali-sync", method: "GET" },
 };
 
 type Env = { CRON_SECRET?: string } & Record<string, unknown>;
