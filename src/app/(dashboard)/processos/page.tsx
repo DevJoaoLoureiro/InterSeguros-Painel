@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
@@ -22,19 +23,6 @@ export default async function ProcessosPage({
     redirect("/login");
   }
 
-  // Loja = filtro do seletor do topo, igual para todos.
-  const selectedStoreId = await getSelectedStoreId();
-
-  const [
-    { tasks, profiles, insuranceLines, privileged, currentProfileId },
-    messageTemplates,
-    companies,
-  ] = await Promise.all([
-    getTasksData({ selectedStoreId, kind: "PROCESS" }),
-    loadMessageTemplates(),
-    getCachedCompanies(),
-  ]);
-
   return (
     <div className="space-y-6">
       <div>
@@ -50,16 +38,63 @@ export default async function ProcessosPage({
         </p>
       </div>
 
-      <ProcessesBoard
-        initialProcesses={tasks}
-        profiles={profiles}
-        insuranceLines={insuranceLines}
-        privileged={privileged}
-        currentProfileId={currentProfileId}
-        messageTemplates={messageTemplates}
-        companyNames={companies.map((company) => company.name)}
-        initialOpenId={typeof abrir === "string" ? abrir : null}
-      />
+      {/* O título aparece logo; o quadro entra quando os dados chegam
+          (sem isto a 1.ª visita ficava em branco ~1,5 s). */}
+      <Suspense fallback={<BoardSkeleton />}>
+        <ProcessesData initialOpenId={typeof abrir === "string" ? abrir : null} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function ProcessesData({
+  initialOpenId,
+}: {
+  initialOpenId: string | null;
+}) {
+  // Loja = filtro do seletor do topo, igual para todos.
+  const selectedStoreId = await getSelectedStoreId();
+
+  const [
+    { tasks, profiles, insuranceLines, privileged, currentProfileId },
+    messageTemplates,
+    companies,
+  ] = await Promise.all([
+    getTasksData({ selectedStoreId, kind: "PROCESS" }),
+    loadMessageTemplates(),
+    getCachedCompanies(),
+  ]);
+
+  return (
+    <ProcessesBoard
+      initialProcesses={tasks}
+      profiles={profiles}
+      insuranceLines={insuranceLines}
+      privileged={privileged}
+      currentProfileId={currentProfileId}
+      messageTemplates={messageTemplates}
+      companyNames={companies.map((company) => company.name)}
+      initialOpenId={initialOpenId}
+    />
+  );
+}
+
+function BoardSkeleton() {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-label="A carregar">
+      <div className="skeleton h-10 w-full max-w-xl rounded-xl" />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[0, 1, 2, 3].map((column) => (
+          <div
+            key={column}
+            className="space-y-3 rounded-2xl border border-[#e5e8ec] bg-white p-4"
+          >
+            <div className="skeleton h-5 w-32 rounded-md" />
+            <div className="skeleton h-24 w-full rounded-xl" />
+            <div className="skeleton h-24 w-full rounded-xl" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
