@@ -28,6 +28,7 @@ import type { PolicyRolesData } from "@/app/(dashboard)/clientes/policy-roles-ac
 import type { PolicyRow } from "@/components/clientes/types";
 import { ReceiptDetailsPanel } from "@/components/clientes/receipt-details-panel";
 import { ClientDataTab } from "@/components/clientes/client-data-tab";
+import { PolicyDocuments } from "@/components/clientes/policy-documents";
 import { PolicyRolesCard } from "@/components/clientes/policy-roles-card";
 import {
   PolicyTransferBox,
@@ -710,6 +711,8 @@ function PoliciesTab({
                     {policy.issuing_store?.name ?? "Por associar"}
                   </Detail>
                 </dl>
+
+                <PolicyDocuments policyId={policy.id} />
 
                 <button
                   type="button"
