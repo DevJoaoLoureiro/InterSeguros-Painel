@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getMonthlyCommissionsFromDb } from "@/lib/billing/monthly-commissions";
 import { assertStoreAccess, requireAdmin } from "@/lib/auth/access";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
@@ -406,73 +407,21 @@ export async function getZurichCommissionsDetail(
 /*
  * Mapa anual para a contabilidade: cobrança + angariação da agência
  * inteira (todas as lojas e as apólices sem loja), por mês de
- * pagamento. Só recibos PAGOS: a página da Zurich usa a data de
- * emissão quando não há pagamento e acaba por somar recibos
- * pendentes e anulados — comissões que nunca foram recebidas.
+ * pagamento. Só recibos PAGOS (com data de pagamento): a página da
+ * Zurich usa a data de emissão quando não há pagamento e acaba por
+ * somar recibos pendentes e anulados — comissões que nunca foram
+ * recebidas. Somado na BD (get_monthly_commissions): antes trazia
+ * todos os recibos de sempre e passava o limite de CPU do Worker.
+ *
+ * A Zurich não envia o imposto de selo da comissão: estimativa de 2%
+ * sobre o Não Vida (verba 17.3.4 da TGIS).
  */
-export async function getZurichMonthlyCommissions(
-  year: number,
-): Promise<
-  {
-    month: string;
-    // Vida inclui os Financeiros (ramo Vida), como na Prévoir.
-    vida: { amount: number; receipts: number };
-    naoVida: { amount: number; receipts: number };
-    // A Zurich não envia o imposto de selo da comissão: estimativa de
-    // 2% sobre o Não Vida (verba 17.3.4 da TGIS).
-    stampDuty: { amount: number; official: boolean };
-  }[]
-> {
+export async function getZurichMonthlyCommissions(year: number) {
   await requireAdmin();
-
-  const receipts = await getCalculatedZurichCommissionReceipts();
-  const totals = new Map<
-    string,
-    {
-      vida: { amount: number; receipts: number };
-      naoVida: { amount: number; receipts: number };
-    }
-  >();
-
-  for (const receipt of receipts) {
-    const month = receipt.commissionDate?.slice(0, 7);
-
-    if (!receipt.paid || !month?.startsWith(`${year}-`)) {
-      continue;
-    }
-
-    const current = totals.get(month) ?? {
-      vida: { amount: 0, receipts: 0 },
-      naoVida: { amount: 0, receipts: 0 },
-    };
-    const bucket =
-      receipt.planType === "NAO_VIDA" ? current.naoVida : current.vida;
-    bucket.amount +=
-      receipt.commissionCobranca + receipt.commissionAngariacao;
-    bucket.receipts += 1;
-    totals.set(month, current);
-  }
-
-  const round = (value: number) => Math.round(value * 100) / 100;
-
-  return Array.from({ length: 12 }, (_, index) => {
-    const month = `${year}-${String(index + 1).padStart(2, "0")}`;
-    const current = totals.get(month);
-
-    return {
-      month,
-      vida: {
-        amount: round(current?.vida.amount ?? 0),
-        receipts: current?.vida.receipts ?? 0,
-      },
-      naoVida: {
-        amount: round(current?.naoVida.amount ?? 0),
-        receipts: current?.naoVida.receipts ?? 0,
-      },
-      stampDuty: {
-        amount: round((current?.naoVida.amount ?? 0) * ZURICH_STAMP_DUTY_RATE),
-        official: false,
-      },
-    };
+  return getMonthlyCommissionsFromDb({
+    companyCode: COMPANY_CODE,
+    year,
+    paidStatusOnly: false,
+    estimateRate: ZURICH_STAMP_DUTY_RATE,
   });
 }

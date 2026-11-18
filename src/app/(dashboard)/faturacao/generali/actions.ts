@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getMonthlyCommissionsFromDb } from "@/lib/billing/monthly-commissions";
 import { assertStoreAccess, requireAdmin } from "@/lib/auth/access";
 import { getAccessibleStores } from "@/app/(dashboard)/faturacao/zurich/actions";
 import type {
@@ -261,74 +262,15 @@ export async function getGeneraliCommissionsDetail(
 /*
  * Mapa anual para a contabilidade: agência inteira (todas as lojas e
  * apólices sem loja), por mês de pagamento. Mesmo formato que
- * getZurichMonthlyCommissions.
+ * getZurichMonthlyCommissions. Somado na BD (get_monthly_commissions).
  */
-export async function getGeneraliMonthlyCommissions(year: number): Promise<
-  {
-    month: string;
-    // Vida inclui os Financeiros (ramo Vida), como nas outras.
-    vida: { amount: number; receipts: number };
-    naoVida: { amount: number; receipts: number };
-    stampDuty: { amount: number; official: boolean };
-  }[]
-> {
+export async function getGeneraliMonthlyCommissions(year: number) {
   await requireAdmin();
-
-  const receipts = await loadPaidCommissionReceipts(`${year}-01-01`, `${year + 1}-01-01`);
-
-  type MonthTotals = {
-    vida: { amount: number; receipts: number };
-    naoVida: { amount: number; receipts: number };
-    stamp: number;
-    estimated: boolean;
-  };
-  const totals = new Map<string, MonthTotals>();
-
-  for (const receipt of receipts) {
-    const month = receipt.paymentDate.slice(0, 7);
-    const current = totals.get(month) ?? {
-      vida: { amount: 0, receipts: 0 },
-      naoVida: { amount: 0, receipts: 0 },
-      stamp: 0,
-      estimated: false,
-    };
-
-    const amount = receipt.commissionCobranca + receipt.commissionAngariacao;
-    const nonLife = receipt.planType === "NAO_VIDA";
-    const bucket = nonLife ? current.naoVida : current.vida;
-    bucket.amount += amount;
-    bucket.receipts += 1;
-
-    if (receipt.stampDuty !== null) {
-      current.stamp += receipt.stampDuty;
-    } else {
-      current.estimated = true;
-      if (nonLife) current.stamp += amount * STAMP_DUTY_ESTIMATE_RATE;
-    }
-
-    totals.set(month, current);
-  }
-
-  const round = (value: number) => Math.round(value * 100) / 100;
-
-  return Array.from({ length: 12 }, (_, index) => {
-    const month = `${year}-${String(index + 1).padStart(2, "0")}`;
-    const current = totals.get(month);
-
-    return {
-      month,
-      vida: {
-        amount: round(current?.vida.amount ?? 0),
-        receipts: current?.vida.receipts ?? 0,
-      },
-      naoVida: {
-        amount: round(current?.naoVida.amount ?? 0),
-        receipts: current?.naoVida.receipts ?? 0,
-      },
-      stampDuty: {
-        amount: round(current?.stamp ?? 0),
-        official: current ? !current.estimated : false,
-      },
-    };
+  return getMonthlyCommissionsFromDb({
+    companyCode: COMPANY_CODE,
+    year,
+    paidStatusOnly: true,
+    // Selo oficial por recibo; nos que não o têm, estimativa de 2%.
+    estimateRate: STAMP_DUTY_ESTIMATE_RATE,
   });
 }
