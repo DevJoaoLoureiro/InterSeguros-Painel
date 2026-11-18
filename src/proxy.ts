@@ -163,11 +163,11 @@ if (pathname === "/api/zurich/login-code") {
   // o perfil nas páginas e nas APIs, não nos ficheiros estáticos.
 
   const isApi = pathname.startsWith("/api/");
-  const isAdminApi =
-    pathname.startsWith("/api/dev/") ||
-    pathname.startsWith("/api/zurich/") ||
-    pathname.startsWith("/api/prevoir/") ||
-    pathname.startsWith("/api/generali/");
+  // A raiz conta também: /api/generali (sem barra) é a ferramenta de
+  // administração da Generali e escapava a um startsWith("/api/generali/").
+  const isAdminApi = ["/api/dev", "/api/zurich", "/api/prevoir", "/api/generali"].some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
   const isPage = request.method === "GET" && !isApi;
 
   if (user && (isApi || isPage)) {
