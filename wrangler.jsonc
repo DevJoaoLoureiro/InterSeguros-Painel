@@ -22,6 +22,17 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // Cache do Next (ver open-next.config.ts).
+  "kv_namespaces": [
+    { "binding": "NEXT_INC_CACHE_KV", "id": "3e2cc602dd6d498a90e19035f6de49a7" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "NEXT_TAG_CACHE_D1",
+      "database_name": "interseguros-next-tags",
+      "database_id": "5e6e4dfc-fc98-4d37-beb5-cc9dcfd90d16"
+    }
+  ],
   // Só variáveis NÃO secretas (este ficheiro vai para o Git).
   // Segredos: `npx wrangler secret put NOME` ou no dashboard como Secret.
   // NEXT_PUBLIC_*: também em Settings → Builds → Variables (são
