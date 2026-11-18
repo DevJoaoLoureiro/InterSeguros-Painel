@@ -201,6 +201,10 @@ export function mapGeneraliReceipt(recibo: GeneraliRecibo): NormalizedGeneraliRe
       codCobrador: recibo.CodCobrador,
       irsRetidoMediacao: decimal(recibo.IrsRetidoMediacao),
       irsRetidoCobranca: decimal(recibo.IrsRetidoCobranca),
+      // Imposto de selo sobre a comissão (oficial; ~2% no Não Vida,
+      // 0 no Vida). Usado no Mapa de comissões (faturacao/generali).
+      seloMediador: decimal(recibo.SeloMediador),
+      seloCobrador: decimal(recibo.SeloCobrador),
       nrExtrato: recibo.NrExtrato,
       nrTomador: recibo.NrTomador,
       tipoRecebimentoCod: recibo.TipoRecebimento,

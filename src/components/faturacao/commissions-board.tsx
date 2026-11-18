@@ -3,18 +3,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { Building2, CircleAlert, Loader2 } from "lucide-react";
 
-import {
-  getZurichCommissionsDetail,
-  getZurichCommissionsSummaryByStore,
-  type CommissionReceiptRow,
-  type StoreCommissionSummary,
-  type StoreOption,
-} from "./actions";
+import type {
+  CommissionReceiptRow,
+  StoreCommissionSummary,
+  StoreOption,
+} from "@/components/faturacao/commission-types";
 
+/*
+ * Quadro de comissões por loja e por mês (Zurich, Generali). As
+ * funções de leitura são server actions da companhia, passadas pela
+ * página.
+ */
 type Props = {
   stores: StoreOption[];
-  canAccessAll: boolean;
   initialMonth: string;
+  loadSummary: (month: string) => Promise<StoreCommissionSummary[]>;
+  loadDetail: (storeId: string, month: string) => Promise<CommissionReceiptRow[]>;
+  footnote: React.ReactNode;
 };
 
 function formatCurrency(value: number) {
@@ -82,7 +87,13 @@ function MetricCard({
   );
 }
 
-export function ComissoesBoardZurich({ stores, initialMonth }: Props) {
+export function CommissionsBoard({
+  stores,
+  initialMonth,
+  loadSummary,
+  loadDetail,
+  footnote,
+}: Props) {
   const [month, setMonth] = useState(initialMonth);
 
   const [summary, setSummary] = useState<StoreCommissionSummary[]>([]);
@@ -104,7 +115,7 @@ export function ComissoesBoardZurich({ stores, initialMonth }: Props) {
       setDetail([]);
 
       try {
-        const result = await getZurichCommissionsSummaryByStore(month);
+        const result = await loadSummary(month);
         if (cancelled) return;
 
         setSummary(result);
@@ -132,7 +143,7 @@ export function ComissoesBoardZurich({ stores, initialMonth }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [month]);
+  }, [loadSummary, month]);
 
   useEffect(() => {
     if (!selectedStoreId) return;
@@ -142,14 +153,11 @@ export function ComissoesBoardZurich({ stores, initialMonth }: Props) {
 
     let cancelled = false;
 
-    async function loadDetail() {
+    async function fetchDetail() {
       setLoadingDetail(true);
 
       try {
-        const result = await getZurichCommissionsDetail(
-          selectedStoreId!,
-          month,
-        );
+        const result = await loadDetail(selectedStoreId!, month);
         if (cancelled) return;
 
         setDetail(result);
@@ -159,12 +167,12 @@ export function ComissoesBoardZurich({ stores, initialMonth }: Props) {
       }
     }
 
-    void loadDetail();
+    void fetchDetail();
 
     return () => {
       cancelled = true;
     };
-  }, [loadedDetailKey, month, selectedStoreId]);
+  }, [loadDetail, loadedDetailKey, month, selectedStoreId]);
 
   const totalMonth = useMemo(
     () => summary.reduce((sum, store) => sum + store.totalGeral, 0),
@@ -318,9 +326,7 @@ export function ComissoesBoardZurich({ stores, initialMonth }: Props) {
       </section>
 
       <div className="flex items-start gap-2 rounded-xl bg-[#f7f8f9] px-4 py-3 text-xs leading-5 text-[#7d848e]">
-        A Zurich não envia um fecho oficial em PDF como a Prévoir — estes
-        valores vêm diretamente dos campos de comissão de cada recibo
-        (Comissão de Cobrança + Comissão de Angariação).
+        {footnote}
       </div>
     </div>
   );

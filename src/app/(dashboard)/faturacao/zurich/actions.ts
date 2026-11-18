@@ -4,33 +4,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { assertStoreAccess, requireAdmin } from "@/lib/auth/access";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 
-export type StoreOption = {
-  id: string;
-  name: string;
-};
+import type {
+  CommissionReceiptRow,
+  StoreCommissionSummary,
+  StoreOption,
+} from "@/components/faturacao/commission-types";
 
-export type CommissionReceiptRow = {
-  receiptId: string;
-  receiptNumber: string | null;
-  policyNumber: string;
-  clientName: string;
-  companyName: string;
-  commissionDate: string | null;
-  planType: string | null;
-  commissionCobranca: number;
-  commissionAngariacao: number;
-  commissionTotal: number;
-};
-
-export type StoreCommissionSummary = {
-  storeId: string;
-  storeName: string;
-  vidaTotal: number;
-  naoVidaTotal: number;
-  financeirosTotal: number;
-  totalGeral: number;
-  receiptCount: number;
-};
+export type { CommissionReceiptRow, StoreCommissionSummary, StoreOption };
 
 const PAGE_SIZE = 1000;
 const COMPANY_CODE = "ZURICH";

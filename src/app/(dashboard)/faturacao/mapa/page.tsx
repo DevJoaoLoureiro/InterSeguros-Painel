@@ -4,6 +4,7 @@ import { getCurrentProfile } from "@/lib/auth/get-current-profile";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPrevoirMonthlyCommissions } from "@/app/(dashboard)/faturacao/prevoir/actions";
 import { getZurichMonthlyCommissions } from "@/app/(dashboard)/faturacao/zurich/actions";
+import { getGeneraliMonthlyCommissions } from "@/app/(dashboard)/faturacao/generali/actions";
 import {
   MapaComissoesBoard,
   type CommissionFilter,
@@ -80,10 +81,11 @@ export default async function MapaComissoesPage({
       ? requested
       : currentYear;
 
-  const [prevoir, zurich, zurichSync] = await Promise.all([
+  const [prevoir, zurich, zurichSync, generali] = await Promise.all([
     getPrevoirMonthlyCommissions(year),
     getZurichMonthlyCommissions(year),
     getZurichSyncState(),
+    getGeneraliMonthlyCommissions(year),
   ]);
 
   const { lastSync: lastZurichSync, stale: zurichStale } = zurichSync;
@@ -170,6 +172,13 @@ export default async function MapaComissoesPage({
     return "actual";
   });
 
+  // Generali: recibos pagos (como a Zurich); o mês em curso é parcial.
+  const generaliKinds = generali.map<MonthCell["kind"]>((item) => {
+    if (item.month > currentMonth) return "future";
+    if (item.month === currentMonth) return "partial";
+    return "actual";
+  });
+
   const rows: CompanyRow[] = [
     {
       company: "Zurich",
@@ -180,6 +189,11 @@ export default async function MapaComissoesPage({
       company: "Prévoir",
       color: "#4a6fd1",
       months: cellsFor(prevoirKinds, prevoir),
+    },
+    {
+      company: "Generali",
+      color: "#c8102e",
+      months: cellsFor(generaliKinds, generali),
     },
   ];
 

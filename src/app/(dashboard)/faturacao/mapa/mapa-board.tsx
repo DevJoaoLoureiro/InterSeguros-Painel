@@ -223,6 +223,7 @@ function downloadCsv(year: number, rows: CompanyRow[]) {
     ...section("TOTAL", "todos"),
     ["Comissões por mês, em euros."],
     ["Zurich: comissão de cobrança + angariação dos recibos pagos, pelo mês de pagamento."],
+    ["Generali: comissão de cobrança + mediação dos recibos pagos, pelo mês de pagamento. Imposto de selo oficial (enviado em cada recibo)."],
     ["Prévoir: Vida líquido; Não Vida = AP bruto (Total bruto calculado AP, antes do imposto de selo) + Saúde. Fecho oficial quando registado; nos restantes meses, estimativa a partir dos recibos."],
   ];
 
@@ -566,7 +567,7 @@ export function MapaComissoesBoard({
                 <span className="block">
                   {stampAllOfficial
                     ? "Valores oficiais"
-                    : "Oficial nos fechos Prévoir · restante estimado a 2%"}
+                    : "Oficial nos fechos Prévoir e na Generali · restante estimado a 2%"}
                 </span>
               </>
             }
@@ -1048,6 +1049,10 @@ export function MapaComissoesBoard({
           <span>
             Zurich: cobrança + angariação dos recibos pagos, pelo mês de
             pagamento
+          </span>
+          <span>
+            Generali: cobrança + mediação dos recibos pagos, pelo mês de
+            pagamento; selo oficial
           </span>
         </div>
       </section>

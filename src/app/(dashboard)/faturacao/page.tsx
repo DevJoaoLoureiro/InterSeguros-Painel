@@ -101,7 +101,10 @@ export default async function ComissoesPage() {
           </p>
         </Link>
 
-        <div className="rounded-2xl border border-[#e6e8eb] bg-white p-5 opacity-70">
+        <Link
+          href="/faturacao/generali"
+          className="group rounded-2xl border border-[#e6e8eb] bg-white p-5 transition hover:border-[#ff4b0a] hover:shadow-sm"
+        >
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-lg font-semibold text-[#17191d]">
@@ -109,15 +112,19 @@ export default async function ComissoesPage() {
               </p>
 
               <p className="mt-1 text-sm text-[#737a84]">
-                Comissões e reconciliação da Generali.
+                Comissões de cobrança e mediação por loja.
               </p>
             </div>
 
-            <span className="shrink-0 whitespace-nowrap rounded-full bg-[#f3f4f6] px-3 py-1 text-xs font-medium text-[#737a84]">
-              Em breve
+            <span className="shrink-0 whitespace-nowrap rounded-full bg-[#fff1eb] px-3 py-1 text-xs font-medium text-[#ff4b0a]">
+              Disponível
             </span>
           </div>
-        </div>
+
+          <p className="mt-6 text-sm font-medium text-[#ff4b0a]">
+            Abrir comissões →
+          </p>
+        </Link>
       </div>
     </div>
   );

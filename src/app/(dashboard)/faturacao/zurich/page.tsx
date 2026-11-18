@@ -1,8 +1,12 @@
 import { redirect } from "next/navigation";
 
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
-import { getAccessibleStores } from "@/app/(dashboard)/faturacao/zurich/actions";
-import { ComissoesBoardZurich } from "@/app/(dashboard)/faturacao/zurich/comissoes-board";
+import {
+  getAccessibleStores,
+  getZurichCommissionsDetail,
+  getZurichCommissionsSummaryByStore,
+} from "@/app/(dashboard)/faturacao/zurich/actions";
+import { CommissionsBoard } from "@/components/faturacao/commissions-board";
 
 function getCurrentMonth(): string {
   const now = new Date();
@@ -18,7 +22,7 @@ export default async function ComissoesZurichPage() {
     redirect("/login");
   }
 
-  const { stores, canAccessAll } = await getAccessibleStores();
+  const { stores } = await getAccessibleStores();
 
   return (
     <div className="space-y-6">
@@ -36,10 +40,18 @@ export default async function ComissoesZurichPage() {
         </p>
       </div>
 
-      <ComissoesBoardZurich
+      <CommissionsBoard
         stores={stores}
-        canAccessAll={canAccessAll}
         initialMonth={getCurrentMonth()}
+        loadSummary={getZurichCommissionsSummaryByStore}
+        loadDetail={getZurichCommissionsDetail}
+        footnote={
+          <>
+            A Zurich não envia um fecho oficial em PDF como a Prévoir — estes
+            valores vêm diretamente dos campos de comissão de cada recibo
+            (Comissão de Cobrança + Comissão de Angariação).
+          </>
+        }
       />
     </div>
   );
