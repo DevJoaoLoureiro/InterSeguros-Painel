@@ -2,6 +2,7 @@ import { revalidateTag } from "next/cache";
 
 import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
 import { syncGenerali } from "@/lib/insurance/providers/generali/sync";
+import { detectGeneraliPremiumIncreases } from "@/lib/assistant/premium-increase";
 import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -26,6 +27,14 @@ export async function GET(request: Request) {
     });
 
     revalidateTag(VENCIMENTOS_TAG, "max");
+
+    // Mensagens do assistente: renovações com subida de prémio.
+    const premiumAlerts = await detectGeneraliPremiumIncreases(createAdminClient()).catch(
+      (error: unknown) => {
+        console.error("[cron generali] subidas de prémio", error);
+        return null;
+      },
+    );
 
     const processes = await reconcileProcessReceipts(createAdminClient()).catch(
       (error: unknown) => {
@@ -57,6 +66,7 @@ export async function GET(request: Request) {
           ? { ...result.missingClients, errors: result.missingClients.errors.length }
           : null,
         processes,
+        premiumAlerts,
       },
       { status: result.ok ? 200 : 500 },
     );

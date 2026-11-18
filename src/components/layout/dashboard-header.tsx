@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { AssistantInbox } from "@/components/assistant/assistant-inbox";
 import { MobileSidebar } from "@/components/layout/mobile-sidebar";
 import { openCommandPalette } from "@/components/layout/navigation";
 
@@ -184,6 +185,10 @@ export function DashboardHeader({
 
             <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7a818b]" />
           </div>
+
+          {/* MENSAGENS DO ASSISTENTE */}
+
+          <AssistantInbox />
 
           {/* NOTIFICAÇÕES */}
 
