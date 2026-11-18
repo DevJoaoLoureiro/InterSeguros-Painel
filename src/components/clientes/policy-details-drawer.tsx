@@ -7,6 +7,7 @@ import {
   Car,
   ChevronDown,
   ChevronRight,
+  ClipboardList,
   CreditCard,
   FileText,
   Hash,
@@ -21,6 +22,7 @@ import {
 import {
   getClientPanel,
   type ClientPanelData,
+  type ClientProcessRow,
   type PolicyReceiptRow,
 } from "@/app/(dashboard)/clientes/receipts-action";
 import type { PolicyRolesData } from "@/app/(dashboard)/clientes/policy-roles-action";
@@ -226,7 +228,7 @@ function getReceiptStatusClasses(status: string, isReversal: boolean) {
 }
 
 
-type Tab = "client" | "policies" | "receipts";
+type Tab = "client" | "policies" | "receipts" | "processes";
 
 function isOverdueReceipt(receipt: PolicyReceiptRow) {
   if (receipt.isReversal || receipt.status !== "PENDING" || !receipt.due_date) {
@@ -388,6 +390,11 @@ export function PolicyDetailsDrawer({
       label: panel ? `Recibos (${allReceipts.length})` : "Recibos",
       icon: ReceiptText,
     },
+    {
+      value: "processes",
+      label: panel ? `Processos (${panel.processes.length})` : "Processos",
+      icon: ClipboardList,
+    },
   ];
 
   return (
@@ -525,6 +532,13 @@ export function PolicyDetailsDrawer({
               onOpenPolicy={openPolicy}
               onShowReceipts={showPolicyReceipts}
               onRolesChange={updateRoles}
+            />
+          )}
+
+          {tab === "processes" && (
+            <ProcessesTab
+              processes={panel?.processes ?? []}
+              loading={loading}
             />
           )}
 
@@ -973,5 +987,83 @@ function ReceiptsTab({
         </div>
       )}
     </div>
+  );
+}
+
+// ============================================================
+// PROCESSOS
+// ============================================================
+
+function processStageLabel(process: ClientProcessRow) {
+  if (process.status === "CANCELLED") return "Cancelado";
+  if (process.receiptPaid) return "Fechado";
+  if (process.issued) return "À espera do pagamento";
+  if (process.simulationPresented) return "À espera do cliente";
+  return "Fazer simulação";
+}
+
+function ProcessesTab({
+  processes,
+  loading,
+}: {
+  processes: ClientProcessRow[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-[#7d848e]">
+        <Loader2 className="h-4 w-4 animate-spin" />A carregar processos…
+      </div>
+    );
+  }
+
+  if (processes.length === 0) {
+    return (
+      <p className="rounded-xl border border-dashed border-[#d9dde2] bg-white px-4 py-6 text-center text-sm text-[#7d848e]">
+        Este cliente não tem processos.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="space-y-2">
+      {processes.map((process) => {
+        const closed =
+          process.status === "CANCELLED" || process.receiptPaid;
+
+        return (
+          <li key={process.id}>
+            <a
+              href={`/processos?abrir=${process.id}`}
+              className="block rounded-xl border border-[#e5e8ec] bg-white px-4 py-3 transition hover:border-[#ff4b0a]/40"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-semibold text-[#17191d]">
+                  {process.title}
+                </p>
+                <span
+                  className={[
+                    "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                    closed
+                      ? "bg-[#f1f2f4] text-[#6f7680]"
+                      : "bg-orange-50 text-[#ff4b0a]",
+                  ].join(" ")}
+                >
+                  {processStageLabel(process)}
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-[#7d848e]">
+                {process.isNewPolicy === false ? "Renegociação" : "Apólice nova"}
+                {process.lineName ? ` · ${process.lineName}` : ""}
+                {process.policyStartDate
+                  ? ` · início ${formatDate(process.policyStartDate)}`
+                  : ""}
+                {` · criado ${formatDate(process.createdAt)}`}
+              </p>
+            </a>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

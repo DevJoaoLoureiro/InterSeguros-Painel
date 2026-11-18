@@ -371,6 +371,8 @@ export type ProcessInput = {
   insuranceLineId: string | null;
   policyStartDate: string | null;
   isNewPolicy: boolean;
+  // Cliente já existente escolhido na pesquisa (opcional).
+  clientId?: string | null;
 };
 
 export async function createTask(input: {
@@ -440,11 +442,24 @@ export async function createTask(input: {
     throw new Error("Este utilizador está desativado.");
   }
 
-  const nif = process ? cleanNif(process.clientNif) : null;
+  let nif = process ? cleanNif(process.clientNif) : null;
 
   let clientId: string | null = null;
 
-  if (nif) {
+  if (process?.clientId) {
+    const { data: picked } = await admin
+      .from("clients")
+      .select("id, nif")
+      .eq("id", process.clientId)
+      .maybeSingle();
+
+    if (!picked) {
+      throw new Error("Cliente não encontrado.");
+    }
+
+    clientId = picked.id;
+    nif = nif ?? cleanNif(picked.nif);
+  } else if (nif) {
     const { data: client } = await admin
       .from("clients")
       .select("id")

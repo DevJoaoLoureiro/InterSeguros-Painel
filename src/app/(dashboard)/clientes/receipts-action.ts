@@ -563,6 +563,21 @@ export type ClientPanelData = {
   profile: ClientProfile | null;
   // Conselhos da lâmpada (já sem os dispensados).
   advice: ClientAdvice[];
+  // Processos do cliente (ligados ao cliente ou com o mesmo NIF).
+  processes: ClientProcessRow[];
+};
+
+export type ClientProcessRow = {
+  id: string;
+  title: string;
+  status: string;
+  simulationPresented: boolean;
+  issued: boolean;
+  receiptPaid: boolean;
+  isNewPolicy: boolean | null;
+  lineName: string | null;
+  policyStartDate: string | null;
+  createdAt: string;
 };
 
 const CLIENT_POLICY_SELECT = `
@@ -675,6 +690,7 @@ export async function getClientPanel(
     linesResult,
     openProcessesResult,
     dismissalsResult,
+    processesResult,
   ] = await Promise.all([
     Promise.all(policyIds.map((id) => loadPolicyReceipts(id))),
     loadReceiptDetails({ policyIds }),
@@ -705,7 +721,26 @@ export async function getClientPanel(
       .select("advice_key")
       .in("client_id", clientIds)
       .gte("dismissed_until", today),
+    supabase
+      .from("tasks")
+      .select(
+        "id, title, status, simulation_presented, issued, receipt_paid, is_new_policy, insurance_line_id, policy_start_date, created_at",
+      )
+      .eq("kind", "PROCESS")
+      .or(
+        [
+          `client_id.in.(${clientIds.join(",")})`,
+          client.nif ? `client_nif.eq.${client.nif.replace(/\D/g, "")}` : null,
+        ]
+          .filter(Boolean)
+          .join(","),
+      )
+      .order("created_at", { ascending: false }),
   ]);
+
+  if (processesResult.error) {
+    console.error("[clientes] processos", processesResult.error.message);
+  }
 
   const receiptsByPolicy: Record<string, PolicyReceiptRow[]> = {};
 
@@ -868,5 +903,19 @@ export async function getClientPanel(
     transfers,
     profile,
     advice,
+    processes: (processesResult.data ?? []).map((t) => ({
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      simulationPresented: Boolean(t.simulation_presented),
+      issued: Boolean(t.issued),
+      receiptPaid: Boolean(t.receipt_paid),
+      isNewPolicy: t.is_new_policy,
+      lineName:
+        linesResult.find((line) => line.id === t.insurance_line_id)?.name ??
+        null,
+      policyStartDate: t.policy_start_date,
+      createdAt: t.created_at,
+    })),
   };
 }

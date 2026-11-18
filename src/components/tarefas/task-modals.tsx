@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useTransition } from "react";
+import { Fragment, useEffect, useState, useTransition } from "react";
 import {
   ArrowRight,
   Building2,
@@ -20,6 +20,10 @@ import {
   type TaskPriority,
   type TaskRow,
 } from "@/app/(dashboard)/tarefas/action";
+import {
+  searchClientsQuick,
+  type QuickClient,
+} from "@/app/(dashboard)/clientes/quick-search-action";
 
 import {
   NOT_ISSUED_REASONS,
@@ -311,6 +315,114 @@ function LineField({
 // CRIAR
 // ============================================================
 
+/*
+ * Nome do cliente com pesquisa dos clientes que já existem (nome, NIF
+ * ou nº de apólice). Escolher um liga o processo a esse cliente; um
+ * cliente pode ter vários processos.
+ */
+function ClientNameField({
+  name,
+  clientId,
+  onType,
+  onPick,
+}: {
+  name: string;
+  clientId: string | null;
+  onType: (value: string) => void;
+  onPick: (client: QuickClient) => void;
+}) {
+  const [results, setResults] = useState<QuickClient[]>([]);
+  const [open, setOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    const text = name.trim();
+
+    if (clientId || text.length < 2) return;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const found = await searchClientsQuick(text);
+        if (!cancelled) setResults(found);
+      } catch {
+        if (!cancelled) setResults([]);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [name, clientId]);
+
+  // Resultados só valem enquanto se está a escrever um nome.
+  const visible = clientId || name.trim().length < 2 ? [] : results;
+
+  return (
+    <div className="relative">
+      <Label>Nome do cliente</Label>
+      <input
+        type="text"
+        value={name}
+        onChange={(e) => {
+          onType(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        autoFocus
+        className={inputClass}
+        placeholder="Nome, NIF ou nº de apólice"
+      />
+
+      {clientId ? (
+        <p className="mt-1 text-[11px] font-medium text-emerald-700">
+          Cliente existente — o processo fica na ficha dele.
+        </p>
+      ) : name.trim().length >= 2 && !searching && visible.length === 0 ? (
+        <p className="mt-1 text-[11px] text-[#8a9099]">
+          Cliente novo (não existe no CRM com este nome).
+        </p>
+      ) : null}
+
+      {open && visible.length > 0 && (
+        <ul className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-[#e4e6e9] bg-white py-1 shadow-lg">
+          {visible.map((client) => (
+            <li key={client.id}>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onPick(client);
+                  setOpen(false);
+                }}
+                className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-[#fff4ee]"
+              >
+                <span className="text-sm font-medium text-[#17191d]">
+                  {client.name}
+                </span>
+                <span className="text-[11px] text-[#8a9099]">
+                  {[
+                    client.nif ? `NIF ${client.nif}` : null,
+                    client.city,
+                    client.policyNumber ? `Apólice ${client.policyNumber}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "Sem NIF"}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export function CreateTaskModal({
   profiles,
   insuranceLines,
@@ -342,6 +454,8 @@ export function CreateTaskModal({
 
   const [clientName, setClientName] = useState("");
   const [clientNif, setClientNif] = useState("");
+  // Cliente já existente escolhido na pesquisa (null = cliente novo).
+  const [clientId, setClientId] = useState<string | null>(null);
   const [insuranceLineId, setInsuranceLineId] = useState("");
   const [policyStartDate, setPolicyStartDate] = useState("");
   const [isNewPolicy, setIsNewPolicy] = useState(true);
@@ -382,6 +496,7 @@ export function CreateTaskModal({
           assignedUserId: privileged ? assignedUserId || null : null,
           process: isProcess
             ? {
+                clientId,
                 clientName,
                 clientNif: clientNif || null,
                 insuranceLineId: insuranceLineId || null,
@@ -419,16 +534,23 @@ export function CreateTaskModal({
     >
       {isProcess && (
         <>
-          <div>
-            <Label>Nome do cliente</Label>
-            <input
-              type="text"
-              value={clientName}
-              onChange={(e) => setClientName(e.target.value)}
-              autoFocus
-              className={inputClass}
-            />
-          </div>
+          <ClientNameField
+            name={clientName}
+            clientId={clientId}
+            onType={(value) => {
+              setClientName(value);
+              // Escrever outra vez = deixa de ser o cliente escolhido.
+              if (clientId) {
+                setClientId(null);
+                setClientNif("");
+              }
+            }}
+            onPick={(client) => {
+              setClientId(client.id);
+              setClientName(client.name);
+              setClientNif(client.nif ?? "");
+            }}
+          />
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -438,6 +560,7 @@ export function CreateTaskModal({
                 inputMode="numeric"
                 value={clientNif}
                 onChange={(e) => setClientNif(e.target.value)}
+                disabled={Boolean(clientId)}
                 className={inputClass}
                 placeholder="9 dígitos"
               />
@@ -468,8 +591,9 @@ export function CreateTaskModal({
 
           <p className="rounded-lg bg-[#fafbfc] px-3 py-2 text-[11px] text-[#8a9099]">
             A data de início fica como lembrete e entra nos alertas de 5
-            dias. Com o NIF, o recibo da companhia liga-se sozinho quando
-            chegar.
+            dias. Numa apólice nova, com o NIF, o recibo liga-se sozinho
+            quando a apólice NOVA chegar da companhia (as apólices que o
+            cliente já tem não contam). Numa renegociação marca-se à mão.
           </p>
         </>
       )}
