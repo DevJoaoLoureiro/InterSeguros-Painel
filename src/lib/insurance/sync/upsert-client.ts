@@ -5,6 +5,7 @@ import type {
 } from "@/lib/insurance/providers/prevoir/mapper";
 import { fillMissingContacts } from "@/lib/insurance/sync/client-contacts";
 import { isPlaceholderClientName } from "@/lib/insurance/sync/client-placeholder";
+import { mergeClientText } from "@/lib/insurance/sync/client-text";
 
 type UpsertClientResult = {
   clientId: string;
@@ -126,17 +127,41 @@ export async function upsertClient({
   }
 
   if (externalRef?.client_id) {
+    // O mesmo cliente pode vir de várias companhias: não trocar
+    // "Oscar Luís" por "OSCAR LUIS" nem apagar o que já existe (ver
+    // client-text.ts).
+    const { data: current, error: currentError } = await supabase
+      .from("clients")
+      .select("name, nif, birth_date, street, postal_code, city")
+      .eq("id", externalRef.client_id)
+      .maybeSingle();
+
+    if (currentError) {
+      throw new Error(
+        `Erro ao ler cliente: ${currentError.message}`,
+      );
+    }
+
+    const keepName =
+      current?.name &&
+      !isPlaceholderClientName(current.name) &&
+      isPlaceholderClientName(policy.client.name);
+
     const { error } = await supabase
       .from("clients")
       .update({
-        name: policy.client.name,
-        nif,
+        name: keepName
+          ? current.name
+          : mergeClientText(current?.name, policy.client.name),
+        nif: nif ?? current?.nif ?? null,
         birth_date:
-          policy.client.birthDate,
-        street: policy.client.street,
-        postal_code:
+          policy.client.birthDate ?? current?.birth_date ?? null,
+        street: mergeClientText(current?.street, policy.client.street),
+        postal_code: mergeClientText(
+          current?.postal_code,
           policy.client.postalCode,
-        city: policy.client.city,
+        ),
+        city: mergeClientText(current?.city, policy.client.city),
         updated_at:
           new Date().toISOString(),
       })
