@@ -46,6 +46,7 @@ type ProcessRow = {
   issued: boolean;
   is_new_policy: boolean | null;
   simulation_company: string | null;
+  client_id: string | null;
   policy_id: string | null;
   client_nif: string | null;
   insurance_line_id: string | null;
@@ -126,6 +127,7 @@ export async function reconcileProcessReceipts(
       issued,
       is_new_policy,
       simulation_company,
+      client_id,
       policy_id,
       client_nif,
       insurance_line_id,
@@ -156,6 +158,46 @@ export async function reconcileProcessReceipts(
   const all = (processData ?? []) as ProcessRow[];
   const nowIso = new Date().toISOString();
   let updated = 0;
+
+  // Processos sem cliente cujo NIF já existe nos clientes (ex.: o
+  // cliente chegou depois pelo sync): ligar ao cliente, seja apólice
+  // nova ou renegociação.
+  const withoutClient = all.filter((p) => !p.client_id && cleanNif(p.client_nif));
+
+  if (withoutClient.length > 0) {
+    const { data: known, error: knownError } = await admin
+      .from("clients")
+      .select("id, nif")
+      .in(
+        "nif",
+        Array.from(new Set(withoutClient.map((p) => cleanNif(p.client_nif)))),
+      );
+
+    if (knownError) {
+      throw new Error(`Erro ao procurar clientes: ${knownError.message}`);
+    }
+
+    const clientByNif = new Map(
+      (known ?? []).map((c) => [cleanNif(c.nif), c.id as string]),
+    );
+
+    for (const p of withoutClient) {
+      const id = clientByNif.get(cleanNif(p.client_nif));
+      if (!id) continue;
+
+      const { error } = await admin
+        .from("tasks")
+        .update({ client_id: id, updated_at: nowIso })
+        .eq("id", p.id);
+
+      if (error) {
+        throw new Error(`Erro ao ligar processo ao cliente: ${error.message}`);
+      }
+
+      p.client_id = id;
+      updated++;
+    }
+  }
 
   // Ligações do webservice que as regras já não permitem: desfazer.
   const unlink = async (process: ProcessRow) => {

@@ -456,6 +456,30 @@ export function CreateTaskModal({
   const [clientNif, setClientNif] = useState("");
   // Cliente já existente escolhido na pesquisa (null = cliente novo).
   const [clientId, setClientId] = useState<string | null>(null);
+
+  // NIF escrito à mão (sem escolher na pesquisa): se for de um cliente
+  // que já existe, o processo fica logo ligado a ele (o servidor
+  // também liga pelo NIF; isto só mostra quem é).
+  useEffect(() => {
+    const digits = clientNif.replace(/\D/g, "");
+    if (clientId || digits.length !== 9) return;
+
+    let cancelled = false;
+
+    searchClientsQuick(digits)
+      .then((found) => {
+        const match = found.find((c) => c.nif?.replace(/\D/g, "") === digits);
+        if (cancelled || !match) return;
+        setClientId(match.id);
+        setClientName((current) => current.trim() || match.name);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [clientNif, clientId]);
+
   const [insuranceLineId, setInsuranceLineId] = useState("");
   const [policyStartDate, setPolicyStartDate] = useState("");
   const [isNewPolicy, setIsNewPolicy] = useState(true);

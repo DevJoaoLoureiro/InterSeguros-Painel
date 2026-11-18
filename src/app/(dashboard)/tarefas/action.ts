@@ -788,7 +788,21 @@ export async function updateProcess(taskId: string, patch: ProcessPatch) {
   }
 
   if (patch.clientNif !== undefined) {
-    update.client_nif = cleanNif(patch.clientNif);
+    const nif = cleanNif(patch.clientNif);
+    update.client_nif = nif;
+
+    // NIF de um cliente que já existe: o processo fica na ficha dele
+    // (apólice nova ou renegociação).
+    if (nif) {
+      const { data: client } = await admin
+        .from("clients")
+        .select("id")
+        .eq("nif", nif)
+        .limit(1)
+        .maybeSingle();
+
+      if (client) update.client_id = client.id;
+    }
   }
 
   if (patch.insuranceLineId !== undefined) {
