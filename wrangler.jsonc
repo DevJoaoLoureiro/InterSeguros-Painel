@@ -8,9 +8,9 @@
   "triggers": {
     "crons": ["0 6,18 * * *", "30 6 * * *", "0 7 * * *", "15 6,18 * * *"]
   },
-  // Plano Workers Free: não aceita "limits" (o deploy falha com o erro
-  // 100328). Com o plano pago, acrescentar para os syncs:
-  //   "limits": { "cpu_ms": 300000 },
+  // Workers Paid: até 5 min de CPU por pedido/cron (o padrão são 30 s),
+  // para os syncs das companhias. No plano Free isto falha (erro 100328).
+  "limits": { "cpu_ms": 300000 },
   // >= 2025-04-01: sem isto as vars não aparecem em process.env.
   "compatibility_date": "2025-11-01",
   "compatibility_flags": ["nodejs_compat"],
