@@ -1,6 +1,7 @@
 import { revalidateTag } from "next/cache";
 
 import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
+import { refreshPolicyRenewals } from "@/lib/vencimentos/queries";
 import { syncGenerali } from "@/lib/insurance/providers/generali/sync";
 import { detectGeneraliPremiumIncreases } from "@/lib/assistant/premium-increase";
 import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
@@ -25,6 +26,9 @@ export async function GET(request: Request) {
     const result = await syncGenerali({
       maxPages: Number.isInteger(maxPages) && maxPages > 0 ? maxPages : undefined,
     });
+
+    // Próxima renovação de cada apólice (policy_renewals) com os dados novos.
+    await refreshPolicyRenewals();
 
     revalidateTag(VENCIMENTOS_TAG, "max");
 

@@ -4,6 +4,7 @@ import {
 import { revalidateTag } from "next/cache";
 
 import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
+import { refreshPolicyRenewals } from "@/lib/vencimentos/queries";
 import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -109,6 +110,8 @@ export async function POST(request: Request) {
 
   // Alertas/sino/vencimentos em cache passam a refletir o sync
   // (mesmo parcial: o que entrou já está na BD).
+  // Próxima renovação de cada apólice (policy_renewals) com os dados novos.
+  await refreshPolicyRenewals();
   revalidateTag(VENCIMENTOS_TAG, "max");
 
   // Processos de simulação: ligar aos recibos que acabaram de chegar.

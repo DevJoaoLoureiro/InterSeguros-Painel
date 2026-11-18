@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -29,11 +30,12 @@ export default async function VencimentosPage() {
 
   // Renovações e recibos: a mesma cache que o layout já usa nos alertas
   // (no mesmo pedido não se calcula duas vezes; os crons invalidam-na).
-  const [{ renewals, receipts: upcomingReceipts }, likelySwitches] =
-    await Promise.all([
-      getVencimentosSnapshot(storeId),
-      getLikelySwitches({ storeId }),
-    ]);
+  // As anuladas percorrem todas as apólices e recibos: não se espera
+  // por elas. Renovações e recibos aparecem logo; as anuladas entram
+  // quando estiverem prontas (Suspense abaixo).
+  const switchesPromise = getLikelySwitches({ storeId });
+  const { renewals, receipts: upcomingReceipts } =
+    await getVencimentosSnapshot(storeId);
 
   const overdueRenewals = renewals.filter((r) => r.overdue).length;
   const overdueReceipts = upcomingReceipts.filter((r) => r.overdue).length;
@@ -78,21 +80,72 @@ export default async function VencimentosPage() {
           href={vencimentosHref("receipts")}
         />
 
-        <SummaryCard
-          label="Anuladas"
-          value={likelySwitches.length}
-          icon={<UserX className="h-5 w-5" />}
-          alert={likelySwitches.length > 0}
-          href={vencimentosHref("switches")}
-        />
+        <Suspense
+          fallback={
+            <SummaryCard
+              label="Anuladas"
+              value={null}
+              icon={<UserX className="h-5 w-5" />}
+              href={vencimentosHref("switches")}
+            />
+          }
+        >
+          <SwitchesCard switches={switchesPromise} />
+        </Suspense>
       </section>
 
-      <VencimentosBoard
-        renewals={renewals}
-        upcomingReceipts={upcomingReceipts}
-        likelySwitches={likelySwitches}
-      />
+      <Suspense
+        fallback={
+          <VencimentosBoard
+            renewals={renewals}
+            upcomingReceipts={upcomingReceipts}
+            likelySwitches={null}
+          />
+        }
+      >
+        <BoardWithSwitches
+          renewals={renewals}
+          upcomingReceipts={upcomingReceipts}
+          switches={switchesPromise}
+        />
+      </Suspense>
     </div>
+  );
+}
+
+type Switches = Awaited<ReturnType<typeof getLikelySwitches>>;
+
+async function SwitchesCard({ switches }: { switches: Promise<Switches> }) {
+  const rows = await switches;
+
+  return (
+    <SummaryCard
+      label="Anuladas"
+      value={rows.length}
+      icon={<UserX className="h-5 w-5" />}
+      alert={rows.length > 0}
+      href={vencimentosHref("switches")}
+    />
+  );
+}
+
+async function BoardWithSwitches({
+  renewals,
+  upcomingReceipts,
+  switches,
+}: {
+  renewals: React.ComponentProps<typeof VencimentosBoard>["renewals"];
+  upcomingReceipts: React.ComponentProps<
+    typeof VencimentosBoard
+  >["upcomingReceipts"];
+  switches: Promise<Switches>;
+}) {
+  return (
+    <VencimentosBoard
+      renewals={renewals}
+      upcomingReceipts={upcomingReceipts}
+      likelySwitches={await switches}
+    />
   );
 }
 
@@ -108,7 +161,8 @@ function SummaryCard({
   href,
 }: {
   label: string;
-  value: number;
+  // null = ainda a carregar.
+  value: number | null;
   icon: React.ReactNode;
   alert?: boolean;
   href: string;
@@ -125,7 +179,7 @@ function SummaryCard({
         <div
           className={[
             "flex h-10 w-10 items-center justify-center rounded-xl",
-            alert && value > 0
+            alert && value !== null && value > 0
               ? "bg-red-50 text-red-600"
               : "bg-orange-50 text-[#ff4b0a]",
           ].join(" ")}
@@ -137,10 +191,12 @@ function SummaryCard({
       <p
         className={[
           "mt-4 text-3xl font-semibold tracking-tight",
-          alert && value > 0 ? "text-red-600" : "text-[#17191d]",
+          alert && value !== null && value > 0
+            ? "text-red-600"
+            : "text-[#17191d]",
         ].join(" ")}
       >
-        {value}
+        {value ?? "…"}
       </p>
     </Link>
   );

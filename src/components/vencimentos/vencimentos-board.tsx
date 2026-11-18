@@ -92,7 +92,8 @@ type Tab = VencimentosTab;
 type Props = {
   renewals: RenewalRow[];
   upcomingReceipts: UpcomingReceiptRow[];
-  likelySwitches: LikelySwitchRow[];
+  // null = ainda a carregar (as anuladas vêm à parte, são lentas).
+  likelySwitches: LikelySwitchRow[] | null;
 };
 
 const EXIT_LABEL: Record<LikelySwitchRow["exitReason"], string> = {
@@ -176,8 +177,10 @@ export function VencimentosBoard({
   // Anuladas: por omissão só as que ainda falta contactar.
   const [switchFilter, setSwitchFilter] = useState<"TODO" | "DONE">("TODO");
 
-  const pendingSwitches = likelySwitches.filter(needsContact);
-  const closedSwitches = likelySwitches.filter((row) => !needsContact(row));
+  const switchesLoading = likelySwitches === null;
+  const allSwitches = likelySwitches ?? [];
+  const pendingSwitches = allSwitches.filter(needsContact);
+  const closedSwitches = allSwitches.filter((row) => !needsContact(row));
 
   const activeItems =
     tab === "renewals"
@@ -274,7 +277,7 @@ export function VencimentosBoard({
                   : "bg-[#eceef0] text-[#7d848e]",
               ].join(" ")}
             >
-              {likelySwitches.length}
+              {switchesLoading ? "…" : allSwitches.length}
             </span>
           </button>
         </div>
@@ -340,7 +343,12 @@ export function VencimentosBoard({
 
       {/* CONTEÚDO */}
 
-      {activeItems.length === 0 ? (
+      {tab === "switches" && switchesLoading ? (
+        <div className="flex items-center justify-center gap-2 px-6 py-14 text-sm text-[#7a818c]">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#ffb899] border-t-[#ff4b0a]" />
+          A carregar as anuladas…
+        </div>
+      ) : activeItems.length === 0 ? (
         <EmptyState tab={tab} />
       ) : tab === "renewals" ? (
         <RenewalsTable items={pageItems as RenewalRow[]} />

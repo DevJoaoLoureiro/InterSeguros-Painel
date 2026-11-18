@@ -56,6 +56,42 @@ async function rpcAllPages<T>(
   return rows;
 }
 
+/*
+ * Tudo num só pedido: a função <fn>_all devolve um JSON com todas as
+ * linhas (migração 20261118160000). Se ainda não existir, volta às
+ * páginas de 1000 linhas.
+ */
+async function rpcAll<T>(
+  fn: string,
+  args: Record<string, unknown>,
+): Promise<T[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.rpc(`${fn}_all`, args);
+
+  if (!error) {
+    return (Array.isArray(data) ? data : []) as T[];
+  }
+
+  if (error.code === "PGRST202" || /could not find the function/i.test(error.message)) {
+    return rpcAllPages<T>(fn, args);
+  }
+
+  throw new Error(`Erro em ${fn}_all: ${error.message}`);
+}
+
+/*
+ * Recalcula a próxima renovação de cada apólice (tabela
+ * policy_renewals). Chamado no fim de cada sync, antes de limpar a
+ * cache dos vencimentos. Nunca falha o sync.
+ */
+export async function refreshPolicyRenewals() {
+  const { error } = await createAdminClient().rpc("refresh_policy_renewals");
+
+  if (error) {
+    console.error("[vencimentos] refresh_policy_renewals", error.message);
+  }
+}
+
 function getDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -138,7 +174,7 @@ export async function getUpcomingRenewals({
     store_name: string | null;
   };
 
-  const rows = await rpcAllPages<Row>("get_upcoming_renewals", {
+  const rows = await rpcAll<Row>("get_upcoming_renewals", {
     p_store_id: storeParam(storeId),
     p_from: fromKey,
     p_to: toKey,
@@ -185,7 +221,7 @@ export async function getUpcomingReceipts({
     store_name: string | null;
   };
 
-  const rows = await rpcAllPages<Row>("get_upcoming_receipts", {
+  const rows = await rpcAll<Row>("get_upcoming_receipts", {
     p_store_id: storeParam(storeId),
     p_from: fromKey,
     p_to: toKey,

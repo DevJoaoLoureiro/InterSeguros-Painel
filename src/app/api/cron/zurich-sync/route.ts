@@ -7,6 +7,7 @@ import {
 } from "@/lib/insurance/providers/zurich/sync";
 import { renewZurichTokenIfDue } from "@/lib/insurance/providers/zurich/token-renewal";
 import { VENCIMENTOS_TAG } from "@/lib/alerts/expiry-alerts";
+import { refreshPolicyRenewals } from "@/lib/vencimentos/queries";
 import { reconcileProcessReceipts } from "@/lib/tasks/process-receipts";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -23,6 +24,8 @@ async function runZurichSync() {
   const receiptsResult = await syncZurichReceipts();
 
   // Alertas/sino/vencimentos em cache passam a refletir o sync.
+  // Próxima renovação de cada apólice (policy_renewals) com os dados novos.
+  await refreshPolicyRenewals();
   revalidateTag(VENCIMENTOS_TAG, "max");
 
   // Processos de simulação: ligar aos recibos que acabaram de chegar
