@@ -14,6 +14,10 @@ import {
  * - Só processos de APÓLICE NOVA. Numa renegociação a apólice já
  *   existe e os recibos normais dela não provam nada (ligavam-se
  *   sozinhos e o processo saltava para "à espera do pagamento").
+ * - Só depois do passo 2 (simulação apresentada, com a companhia
+ *   escolhida) e só apólices DESSA companhia: um NIF tem apólices de
+ *   várias companhias, e antes da simulação nenhum recibo pode ser
+ *   deste processo (o processo saltava logo para a penúltima fase).
  * - O match é feito pelo NIF do cliente → apólices NOVAS (emitidas
  *   pela companhia no máximo NEW_POLICY_GRACE_DAYS antes de o
  *   processo ser criado) → recibos com period_start perto da data de
@@ -41,6 +45,7 @@ type ProcessRow = {
   simulation_presented: boolean;
   issued: boolean;
   is_new_policy: boolean | null;
+  simulation_company: string | null;
   policy_id: string | null;
   client_nif: string | null;
   insurance_line_id: string | null;
@@ -80,6 +85,14 @@ function isReversal(receipt: CandidateReceipt) {
   );
 }
 
+function normalizeName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
 function daysBetween(a: string, b: string) {
   return Math.abs(
     (new Date(a).getTime() - new Date(b).getTime()) / 86400000,
@@ -112,6 +125,7 @@ export async function reconcileProcessReceipts(
       simulation_presented,
       issued,
       is_new_policy,
+      simulation_company,
       policy_id,
       client_nif,
       insurance_line_id,
@@ -174,12 +188,36 @@ export async function reconcileProcessReceipts(
     updated++;
   };
 
-  // Só apólices novas (ver regras no topo). Datas inválidas ficam à
-  // espera de ser corrigidas.
+  // Companhia da simulação (texto) → companhia do CRM.
+  const { data: companiesData, error: companiesError } = await admin
+    .from("companies")
+    .select("id, name");
+
+  if (companiesError) {
+    throw new Error(`Erro ao carregar companhias: ${companiesError.message}`);
+  }
+
+  const companyIdByName = new Map(
+    (companiesData ?? []).map((c) => [normalizeName(c.name), c.id as string]),
+  );
+
+  const companyIdOf = (process: ProcessRow) =>
+    process.simulation_company
+      ? companyIdByName.get(normalizeName(process.simulation_company)) ?? null
+      : null;
+
+  // Só apólices novas, depois da simulação, de uma companhia que o CRM
+  // recebe (ver regras no topo). Datas inválidas ficam à espera de ser
+  // corrigidas.
   const processes: ProcessRow[] = [];
 
   for (const p of all) {
-    if (p.is_new_policy === false || !isValidDateKey(referenceDate(p))) {
+    if (
+      p.is_new_policy === false ||
+      !p.simulation_presented ||
+      !companyIdOf(p) ||
+      !isValidDateKey(referenceDate(p))
+    ) {
       if (p.receipt_source === "WEBSERVICE") await unlink(p);
       continue;
     }
@@ -224,7 +262,9 @@ export async function reconcileProcessReceipts(
   const { data: policiesData, error: policiesError } = clientIds.length
     ? await admin
         .from("policies")
-        .select("id, client_id, insurance_line_id, issue_date, start_date")
+        .select(
+          "id, client_id, company_id, insurance_line_id, issue_date, start_date",
+        )
         .in("client_id", clientIds)
     : { data: [], error: null };
 
@@ -235,6 +275,7 @@ export async function reconcileProcessReceipts(
   const policies = (policiesData ?? []) as {
     id: string;
     client_id: string;
+    company_id: string | null;
     insurance_line_id: string | null;
     issue_date: string | null;
     start_date: string | null;
@@ -326,6 +367,7 @@ export async function reconcileProcessReceipts(
     const processClientIds = new Set(nif ? clientIdsByNif.get(nif) ?? [] : []);
 
     const ref = referenceDate(process);
+    const companyId = companyIdOf(process);
 
     const candidates = receipts
       .filter((r) => {
@@ -333,6 +375,7 @@ export async function reconcileProcessReceipts(
         return (
           policy &&
           processClientIds.has(policy.client_id) &&
+          policy.company_id === companyId &&
           isNewForProcess(policy, process) &&
           usableBy(policy.id, process) &&
           daysBetween(r.period_start as string, ref) <= MATCH_WINDOW_DAYS
