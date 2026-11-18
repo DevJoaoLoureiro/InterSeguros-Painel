@@ -30,7 +30,8 @@ export const dynamic = "force-dynamic";
  *                             1.ª página do sync, já convertida, sem gravar
  *
  * POST (grava na BD — o .env.local aponta para PRODUÇÃO):
- *   corpo JSON opcional: {"resources":["Apolices"],"maxPages":5,"skipInitialLoad":false}
+ *   corpo JSON opcional: {"resources":["Apolices"],"maxPages":5,"skipInitialLoad":false,
+ *   "missingClientLookups":30}
  */
 
 const RECURSOS: GeneraliRecurso[] = ["Apolices", "Recibos", "Clientes"];
@@ -114,6 +115,9 @@ export async function POST(request: Request) {
     resources: parseRecursos(body.resources),
     maxPages: Number.isInteger(body.maxPages) ? Number(body.maxPages) : undefined,
     skipInitialLoad: body.skipInitialLoad === true,
+    missingClientLookups: Number.isInteger(body.missingClientLookups)
+      ? Number(body.missingClientLookups)
+      : undefined,
   };
 
   try {

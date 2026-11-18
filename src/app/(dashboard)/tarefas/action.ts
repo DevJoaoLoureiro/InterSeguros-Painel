@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { after } from "next/server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentProfile } from "@/lib/auth/get-current-profile";
@@ -262,17 +261,12 @@ export async function getTasksData({
 
   const admin = createAdminClient();
 
-  // Liga processos abertos aos recibos que chegaram pelo webservice.
-  // O momento certo é o fim de cada sync (crons); aqui corre só como
-  // reforço, DEPOIS de a página ser enviada, para não a bloquear
-  // (eram 4 consultas em série antes de mostrar qualquer coisa).
-  after(async () => {
-    try {
-      await reconcileProcessReceipts(createAdminClient());
-    } catch (error) {
-      console.error("[tarefas] reconcileProcessReceipts", error);
-    }
-  });
+  // A ligação dos processos abertos aos recibos do webservice
+  // (reconcileProcessReceipts) corre no fim de cada sync (crons da
+  // Zurich, Prévoir e Generali) e quando se cria/altera um processo.
+  // Já não corre aqui: no Worker, o after() conta para os limites do
+  // MESMO pedido (subpedidos e CPU) e fazia falhar a página Hoje e a
+  // de Processos ("Too many subrequests").
 
   const storeFilter =
     selectedStoreId && selectedStoreId !== "all"

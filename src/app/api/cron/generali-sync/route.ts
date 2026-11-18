@@ -53,6 +53,9 @@ export async function GET(request: Request) {
           failed,
           message,
         })),
+        missingClients: result.missingClients
+          ? { ...result.missingClients, errors: result.missingClients.errors.length }
+          : null,
         processes,
       },
       { status: result.ok ? 200 : 500 },

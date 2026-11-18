@@ -8,6 +8,7 @@ import { batchUpsertReceipts } from "@/lib/insurance/sync/batch-upsert-receipts"
 import {
   getGeneraliContas,
   obterApolicePorNr,
+  obterClientePorNr,
   obterPaginaCarregamentoInicial,
   obterPaginaRecurso,
   temMaisRegistos,
@@ -68,6 +69,12 @@ const DEFAULT_MAX_PAGES = 5;
 /** Apólices em falta (recibo sem apólice) pedidas uma a uma por execução. */
 const DEFAULT_MISSING_POLICY_LOOKUPS = 10;
 
+/** Fichas de clientes em falta pedidas uma a uma por execução. */
+const DEFAULT_MISSING_CLIENT_LOOKUPS = 30;
+
+/** Ficha que a Generali não devolveu: volta a tentar-se passados estes dias. */
+const MISSING_CLIENT_RETRY_DAYS = 30;
+
 type Phase = "INITIAL" | "INCREMENTAL";
 type Cursor = { phase: Phase; token: string | null };
 
@@ -85,6 +92,8 @@ export type GeneraliSyncOptions = {
    */
   skipInitialLoad?: boolean;
   missingPolicyLookups?: number;
+  /** Fichas de clientes em falta pedidas uma a uma por execução. */
+  missingClientLookups?: number;
 };
 
 type Counters = {
@@ -590,6 +599,125 @@ async function processClients(
 }
 
 // -----------------------------------------------------
+// FICHAS EM FALTA (pedidas uma a uma)
+// -----------------------------------------------------
+//
+// O /carregamentoinicial?Tipo=Clientes não traz todos os tomadores:
+// em 2026-11-18 faltavam 490 (389 com apólice ativa), e o
+// /clientes?NrCliente=… devolvia-os quase todos, com telefone e email.
+// O incremental pode também não trazer um cliente novo. Por isso, em
+// cada execução, os clientes Generali cuja referência só tem o
+// nrCliente da apólice (nunca receberam a ficha) pedem-se um a um.
+// Os que a Generali não devolve ficam marcados (fichaNaoEncontrada) e
+// só se tentam outra vez passados MISSING_CLIENT_RETRY_DAYS dias.
+
+type ClientRef = {
+  id: string;
+  external_id: string;
+  provider_metadata: Record<string, unknown> | null;
+};
+
+function needsFicha(ref: ClientRef, today: string): boolean {
+  const meta = ref.provider_metadata ?? {};
+  const keys = Object.keys(meta).filter(
+    (key) => key !== "nrCliente" && key !== "fichaNaoEncontrada",
+  );
+
+  if (keys.length > 0 || !text(meta.nrCliente as string | undefined)) return false;
+
+  const lastMiss = typeof meta.fichaNaoEncontrada === "string" ? meta.fichaNaoEncontrada : null;
+  if (!lastMiss) return true;
+
+  const retryFrom = new Date(`${lastMiss}T00:00:00Z`);
+  retryFrom.setUTCDate(retryFrom.getUTCDate() + MISSING_CLIENT_RETRY_DAYS);
+  return retryFrom.toISOString().slice(0, 10) <= today;
+}
+
+export type MissingClientsResult = {
+  pending: number;
+  requested: number;
+  updated: number;
+  notFound: number;
+  failed: number;
+  errors: string[];
+};
+
+export async function fillMissingGeneraliClients(
+  supabase: Admin,
+  companyId: string,
+  limit: number,
+): Promise<MissingClientsResult> {
+  const today = new Date().toISOString().slice(0, 10);
+  const refs: ClientRef[] = [];
+
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("client_external_refs")
+      .select("id, external_id, provider_metadata")
+      .eq("company_id", companyId)
+      .order("id")
+      .range(from, from + 999);
+
+    if (error) throw new Error(`Erro ao ler clientes Generali: ${error.message}`);
+
+    refs.push(...((data ?? []) as ClientRef[]));
+    if (!data || data.length < 1000) break;
+  }
+
+  const missing = refs.filter((ref) => needsFicha(ref, today));
+  const result: MissingClientsResult = {
+    pending: missing.length,
+    requested: 0,
+    updated: 0,
+    notFound: 0,
+    failed: 0,
+    errors: [],
+  };
+
+  for (const ref of missing.slice(0, Math.max(0, limit))) {
+    const nrCliente = text(ref.provider_metadata?.nrCliente as string | undefined)!;
+    result.requested += 1;
+
+    try {
+      const cliente = await obterClientePorNr(nrCliente);
+
+      if (!cliente) {
+        result.notFound += 1;
+
+        const { error } = await supabase
+          .from("client_external_refs")
+          .update({
+            provider_metadata: { ...(ref.provider_metadata ?? {}), fichaNaoEncontrada: today },
+          })
+          .eq("id", ref.id);
+
+        if (error) throw new Error(error.message);
+        continue;
+      }
+
+      await upsertClient({
+        supabase,
+        companyId,
+        externalClientId: ref.external_id,
+        policy: { client: mapGeneraliClient(cliente, null) } as Parameters<
+          typeof upsertClient
+        >[0]["policy"],
+      });
+
+      result.updated += 1;
+    } catch (error) {
+      result.failed += 1;
+      if (result.errors.length < 10) {
+        result.errors.push(`Cliente ${nrCliente}: ${errorMessage(error)}`);
+      }
+    }
+  }
+
+  result.pending -= result.updated + result.notFound;
+  return result;
+}
+
+// -----------------------------------------------------
 // UM RECURSO
 // -----------------------------------------------------
 
@@ -929,9 +1057,26 @@ export async function syncGenerali(options: GeneraliSyncOptions = {}) {
     }
   }
 
+  // Fichas que o feed de clientes não trouxe: uma a uma, com limite.
+  let missingClients: MissingClientsResult | null = null;
+
+  if (!options.dryRun && resources.includes("Clientes")) {
+    missingClients = await fillMissingGeneraliClients(
+      supabase,
+      company.id,
+      options.missingClientLookups ?? DEFAULT_MISSING_CLIENT_LOOKUPS,
+    ).catch((missingError: unknown) => {
+      console.error("[Generali] Fichas em falta", errorMessage(missingError));
+      return null;
+    });
+
+    if (missingClients) console.log("[Generali] Fichas em falta", { ...missingClients, errors: missingClients.errors.length });
+  }
+
   return {
     ok: results.every((result) => result.status !== "ERROR"),
     dryRun: options.dryRun === true,
     results,
+    missingClients,
   };
 }

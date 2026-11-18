@@ -5,50 +5,45 @@
  * servidor (resolveStoreScope / getAlertScope). Não é "use server",
  * por isso não é chamável a partir do browser — os pontos de entrada
  * públicos estão em app/(dashboard)/vencimentos/action.ts.
+ *
+ * Tudo é calculado na BD (supabase/migrations/*_vencimentos_rpcs.sql):
+ * um pedido por página de 1000 linhas, em vez de ler todas as apólices
+ * ativas e os clientes/lojas aos blocos. Isto corre no layout (todas
+ * as páginas), e no Worker da Cloudflare a versão antiga passava o
+ * limite de subpedidos.
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const WINDOW_DAYS_AHEAD = 30;
 const WINDOW_DAYS_BEHIND = 30;
+
+// O PostgREST devolve no máximo 1000 linhas por pedido (também nas
+// funções): lê-se por páginas.
 const PAGE_SIZE = 1000;
 
-// IDs por pedido em .in(): centenas de UUIDs num só pedido passam o
-// limite do URL e o pedido falha (os nomes apareciam como "Cliente").
-const IN_CHUNK = 150;
+function storeParam(storeId: string | null) {
+  return storeId && storeId !== "all" ? storeId : null;
+}
 
-/*
- * SELECT ... WHERE id IN (...) em blocos. Erros não são silenciosos:
- * registam-se, e as linhas desse bloco ficam de fora (o resto da
- * página continua a funcionar).
- */
-async function selectByIds<T>(
-  table: string,
-  columns: string,
-  ids: string[],
+async function rpcAllPages<T>(
+  fn: string,
+  args: Record<string, unknown>,
 ): Promise<T[]> {
   const supabase = createAdminClient();
-  const unique = Array.from(new Set(ids.filter(Boolean)));
-  const chunks: string[][] = [];
-
-  for (let i = 0; i < unique.length; i += IN_CHUNK) {
-    chunks.push(unique.slice(i, i + IN_CHUNK));
-  }
-
-  const results = await Promise.all(
-    chunks.map((chunk) =>
-      supabase.from(table).select(columns).in("id", chunk),
-    ),
-  );
-
   const rows: T[] = [];
 
-  for (const { data, error } of results) {
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .rpc(fn, args)
+      .range(from, from + PAGE_SIZE - 1);
+
     if (error) {
-      console.error(`[vencimentos] ${table}: ${error.message}`);
-      continue;
+      throw new Error(`Erro em ${fn}: ${error.message}`);
     }
-    rows.push(...((data ?? []) as unknown as T[]));
+
+    rows.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGE_SIZE) break;
   }
 
   return rows;
@@ -106,344 +101,102 @@ export type UpcomingReceiptRow = {
 };
 
 /*
- * Apólices a renovar: calculado a partir do
- * period_end do último recibo não-estorno de
- * cada apólice ativa.
- *
- * O cálculo do "último recibo por apólice" é
- * feito dentro da base de dados (função SQL
- * get_latest_renewal_dates), em vez de trazer
- * milhares de linhas de recibos para o Node.js
- * só para reduzir aqui.
+ * Apólices a renovar: period_end do último recibo não-estorno de cada
+ * apólice ativa, dentro da janela (função get_upcoming_renewals).
  */
 export async function getUpcomingRenewals({
   storeId,
 }: {
   storeId: string | null;
 }): Promise<RenewalRow[]> {
-  const supabase = createAdminClient();
   const { todayKey, fromKey, toKey } = getWindow();
 
-  // ----------------------------------------
-  // 1. Apólices ativas no âmbito (loja)
-  // ----------------------------------------
-  //
-  // IMPORTANTE: quando filtramos por loja específica, incluímos
-  // também apólices SEM loja atribuída ainda (issuing_store_id
-  // null) — caso típico das apólices Zurich antes de alguém se
-  // "Associar-me". Sem isto, um gestor de loja nunca as via para
-  // as poder reclamar. `.eq()` sozinho excluiria sempre os nulls.
+  type Row = {
+    policy_id: string;
+    policy_number: string;
+    client_id: string | null;
+    client_name: string | null;
+    company_name: string | null;
+    line_name: string | null;
+    renewal_date: string;
+    annualized_premium: number | string | null;
+    store_id: string | null;
+    store_name: string | null;
+  };
 
-  // O Supabase devolve no máximo 1000 linhas por pedido: lê-se por
-  // páginas, senão as apólices a partir da 1001.ª nunca apareciam.
-  const policies = [];
-
-  for (let from = 0; ; from += PAGE_SIZE) {
-    let policiesQuery = supabase
-      .from("policies")
-      .select(`
-        id,
-        client_id,
-        policy_number,
-        annualized_premium,
-        issuing_store_id,
-        status,
-        company:companies ( id, name ),
-        insurance_line:insurance_lines ( id, name )
-      `)
-      .eq("status", "ACTIVE");
-
-    if (storeId && storeId !== "all") {
-      policiesQuery = policiesQuery.or(
-        `issuing_store_id.eq.${storeId},issuing_store_id.is.null`,
-      );
-    }
-
-    const { data, error } = await policiesQuery
-      .order("id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-
-    if (error) {
-      throw new Error(`Erro ao carregar apólices: ${error.message}`);
-    }
-
-    policies.push(...(data ?? []));
-    if (!data || data.length < PAGE_SIZE) break;
-  }
-
-  if (policies.length === 0) {
-    return [];
-  }
-
-  const policyIds = policies.map((p) => p.id);
-
-  // ----------------------------------------
-  // 2. Renovação calculada na BD (RPC)
-  // ----------------------------------------
-
-  const { data: renewalRows, error: renewalError } = await supabase.rpc(
-    "get_latest_renewal_dates",
-    { p_policy_ids: policyIds },
-  );
-
-  if (renewalError) {
-    throw new Error(
-      `Erro ao calcular renovações: ${renewalError.message}`,
-    );
-  }
-
-  const renewalByPolicy = new Map<string, string>(
-    ((renewalRows ?? []) as { policy_id: string; renewal_date: string }[]).map(
-      (row) => [row.policy_id, row.renewal_date],
-    ),
-  );
-
-  // ----------------------------------------
-  // 3. Filtrar para a janela de vencimentos
-  // ----------------------------------------
-
-  const policiesInWindow = policies.filter((policy) => {
-    const renewalDate = renewalByPolicy.get(policy.id);
-
-    return (
-      renewalDate !== undefined &&
-      renewalDate >= fromKey &&
-      renewalDate <= toKey
-    );
+  const rows = await rpcAllPages<Row>("get_upcoming_renewals", {
+    p_store_id: storeParam(storeId),
+    p_from: fromKey,
+    p_to: toKey,
   });
 
-  if (policiesInWindow.length === 0) {
-    return [];
-  }
-
-  // ----------------------------------------
-  // Clientes e lojas relacionadas
-  // ----------------------------------------
-
-  const clientIds = Array.from(
-    new Set(
-      policiesInWindow.map((p) => p.client_id).filter(Boolean),
-    ),
-  );
-
-  const storeIds = Array.from(
-    new Set(
-      policiesInWindow
-        .map((p) => p.issuing_store_id)
-        .filter(Boolean),
-    ),
-  );
-
-  const [clients, stores] = await Promise.all([
-    selectByIds<{ id: string; name: string }>("clients", "id, name", clientIds),
-    selectByIds<{ id: string; name: string }>("stores", "id, name", storeIds),
-  ]);
-
-  const clientMap = new Map(clients.map((c) => [c.id, c.name]));
-  const storeMap = new Map(stores.map((s) => [s.id, s.name]));
-
-  const rows = policiesInWindow
-    .map((policy) => {
-      const company = Array.isArray(policy.company)
-        ? policy.company[0]
-        : policy.company;
-
-      const line = Array.isArray(policy.insurance_line)
-        ? policy.insurance_line[0]
-        : policy.insurance_line;
-
-      const renewalDate = renewalByPolicy.get(policy.id) as string;
-
-      return {
-        policyId: policy.id,
-        policyNumber: policy.policy_number,
-        clientId: policy.client_id ?? null,
-        clientName: clientMap.get(policy.client_id) ?? "Cliente",
-        companyName: company?.name ?? "—",
-        lineName: line?.name ?? null,
-        renewalDate,
-        annualizedPremium:
-          policy.annualized_premium === null
-            ? null
-            : Number(policy.annualized_premium),
-        storeId: policy.issuing_store_id,
-        storeName: policy.issuing_store_id
-          ? storeMap.get(policy.issuing_store_id) ?? null
-          : null,
-        overdue: renewalDate < todayKey,
-      };
-    })
-    .sort((a, b) => a.renewalDate.localeCompare(b.renewalDate));
-
-  return rows;
+  return rows.map((row) => ({
+    policyId: row.policy_id,
+    policyNumber: row.policy_number,
+    clientId: row.client_id,
+    clientName: row.client_name ?? "Cliente",
+    companyName: row.company_name ?? "—",
+    lineName: row.line_name,
+    renewalDate: row.renewal_date,
+    annualizedPremium:
+      row.annualized_premium === null ? null : Number(row.annualized_premium),
+    storeId: row.store_id,
+    storeName: row.store_name,
+    overdue: row.renewal_date < todayKey,
+  }));
 }
 
 /*
- * Recibos a vencer: due_date dentro da janela,
- * status PENDING (ainda não cobrado), excluindo estornos.
+ * Recibos a vencer: due_date dentro da janela, status PENDING (ainda
+ * não cobrado), sem estornos (função get_upcoming_receipts).
  */
 export async function getUpcomingReceipts({
   storeId,
 }: {
   storeId: string | null;
 }): Promise<UpcomingReceiptRow[]> {
-  const supabase = createAdminClient();
   const { todayKey, fromKey, toKey } = getWindow();
 
-  // Por páginas: o Supabase devolve no máximo 1000 linhas por pedido.
-  const receiptsData = [];
-
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase
-      .from("receipts")
-      .select(`
-        id,
-        policy_id,
-        company_id,
-        receipt_number,
-        due_date,
-        commercial_premium,
-        total_premium,
-        status,
-        external_nature,
-        receipt_type
-      `)
-      .eq("status", "PENDING")
-      .not("due_date", "is", null)
-      .gte("due_date", fromKey)
-      .lte("due_date", toKey)
-      .order("due_date", { ascending: true })
-      .order("id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-
-    if (error) {
-      throw new Error(`Erro ao carregar recibos a vencer: ${error.message}`);
-    }
-
-    receiptsData.push(...(data ?? []));
-    if (!data || data.length < PAGE_SIZE) break;
-  }
-
-  // Exclui estornos, mesmo que status apareça como PENDING.
-  const receipts = (receiptsData ?? []).filter((receipt) => {
-    const isReversal =
-      receipt.external_nature === "9" ||
-      (receipt.receipt_type ?? "").toUpperCase().includes("ESTORNO") ||
-      (receipt.receipt_type ?? "").toUpperCase().includes("REVERSAL");
-
-    return !isReversal;
-  });
-
-  if (receipts.length === 0) {
-    return [];
-  }
-
-  // ----------------------------------------
-  // Policies relacionadas (cliente, loja, nº apólice)
-  // ----------------------------------------
-
-  const policyIds = Array.from(
-    new Set(receipts.map((r) => r.policy_id).filter(Boolean)),
-  );
-
-  const companyIds = Array.from(
-    new Set(receipts.map((r) => r.company_id).filter(Boolean)),
-  );
-
-  type PolicyLink = {
-    id: string;
+  type Row = {
+    receipt_id: string;
+    receipt_number: string | null;
+    policy_number: string | null;
     client_id: string | null;
-    policy_number: string;
-    issuing_store_id: string | null;
+    client_name: string | null;
+    company_name: string | null;
+    due_date: string;
+    commercial_premium: number | string | null;
+    total_premium: number | string | null;
+    store_id: string | null;
+    store_name: string | null;
   };
 
-  const [policies, companies] = await Promise.all([
-    selectByIds<PolicyLink>(
-      "policies",
-      "id, client_id, policy_number, issuing_store_id",
-      policyIds,
-    ),
-    selectByIds<{ id: string; name: string }>(
-      "companies",
-      "id, name",
-      companyIds,
-    ),
-  ]);
-
-  const policyMap = new Map(policies.map((p) => [p.id, p]));
-  const companyMap = new Map(companies.map((c) => [c.id, c.name]));
-
-  // Filtrar por loja aqui, já que receipts não tem issuing_store_id
-  // direto. IMPORTANTE: tal como nas renovações, incluímos também
-  // recibos cuja apólice AINDA NÃO tem loja atribuída (null) — sem
-  // isto, um gestor de loja nunca via recibos Zurich por associar.
-  const filteredReceipts =
-    storeId && storeId !== "all"
-      ? receipts.filter((r) => {
-          const policyStoreId = policyMap.get(r.policy_id)?.issuing_store_id;
-          return policyStoreId === storeId || policyStoreId == null;
-        })
-      : receipts;
-
-  const clientIds = Array.from(
-    new Set(
-      filteredReceipts
-        .map((r) => policyMap.get(r.policy_id)?.client_id)
-        .filter(Boolean) as string[],
-    ),
-  );
-
-  const storeIds = Array.from(
-    new Set(
-      filteredReceipts
-        .map((r) => policyMap.get(r.policy_id)?.issuing_store_id)
-        .filter(Boolean) as string[],
-    ),
-  );
-
-  const [clients, stores] = await Promise.all([
-    selectByIds<{ id: string; name: string }>("clients", "id, name", clientIds),
-    selectByIds<{ id: string; name: string }>("stores", "id, name", storeIds),
-  ]);
-
-  const clientMap = new Map(clients.map((c) => [c.id, c.name]));
-  const storeMap = new Map(stores.map((s) => [s.id, s.name]));
-
-  return filteredReceipts.map((receipt) => {
-    const policy = policyMap.get(receipt.policy_id);
-
-    return {
-      receiptId: receipt.id,
-      receiptNumber: receipt.receipt_number,
-      policyNumber: policy?.policy_number ?? "—",
-      clientId: policy?.client_id ?? null,
-      clientName: policy?.client_id
-        ? clientMap.get(policy.client_id) ?? "Cliente"
-        : "Cliente",
-      companyName: companyMap.get(receipt.company_id) ?? "—",
-      dueDate: receipt.due_date as string,
-      commercialPremium:
-        receipt.commercial_premium === null
-          ? null
-          : Number(receipt.commercial_premium),
-      totalPremium:
-        receipt.total_premium === null
-          ? null
-          : Number(receipt.total_premium),
-      storeId: policy?.issuing_store_id ?? null,
-      storeName: policy?.issuing_store_id
-        ? storeMap.get(policy.issuing_store_id) ?? null
-        : null,
-      overdue: (receipt.due_date as string) < todayKey,
-    };
+  const rows = await rpcAllPages<Row>("get_upcoming_receipts", {
+    p_store_id: storeParam(storeId),
+    p_from: fromKey,
+    p_to: toKey,
   });
+
+  return rows.map((row) => ({
+    receiptId: row.receipt_id,
+    receiptNumber: row.receipt_number,
+    policyNumber: row.policy_number ?? "—",
+    clientId: row.client_id,
+    clientName: row.client_name ?? "Cliente",
+    companyName: row.company_name ?? "—",
+    dueDate: row.due_date,
+    commercialPremium:
+      row.commercial_premium === null ? null : Number(row.commercial_premium),
+    totalPremium: row.total_premium === null ? null : Number(row.total_premium),
+    storeId: row.store_id,
+    storeName: row.store_name,
+    overdue: row.due_date < todayKey,
+  }));
 }
 
 /*
- * Contagem exata de recibos vencidos, SEM limite
- * de janela de 30 dias (para o badge da sidebar,
- * onde queremos saber "todos" os atrasados, não
- * só os dos últimos 30 dias).
+ * Contagem exata de recibos vencidos, SEM limite de janela (badge da
+ * sidebar: todos os atrasados). Contado na BD (count_overdue_receipts).
  */
 export async function getOverdueReceiptsCount({
   storeId,
@@ -451,47 +204,15 @@ export async function getOverdueReceiptsCount({
   storeId: string | null;
 }): Promise<number> {
   const supabase = createAdminClient();
-  const todayKey = getDateKey(new Date());
 
-  let query = supabase
-    .from("receipts")
-    .select(
-      "policy_id, external_nature, receipt_type, policy:policies!inner(issuing_store_id)",
-    )
-    .eq("status", "PENDING")
-    .lt("due_date", todayKey);
-
-  if (storeId) {
-    // Tal como nas outras funções: inclui também apólices sem
-    // loja atribuída, para não escondermos recibos Zurich por
-    // associar do gestor de loja.
-    //
-    // Filtro por join (!inner) e não por .in("policy_id", [...]):
-    // a lista de ids de milhares de apólices rebentava o tamanho do
-    // URL ("Bad Request") e deitava abaixo todas as páginas com uma
-    // loja selecionada.
-    query = query.or(
-      `issuing_store_id.eq.${storeId},issuing_store_id.is.null`,
-      { referencedTable: "policy" },
-    );
-  }
-
-  const { data, error } = await query;
+  const { data, error } = await supabase.rpc("count_overdue_receipts", {
+    p_store_id: storeParam(storeId),
+    p_today: getDateKey(new Date()),
+  });
 
   if (error) {
-    throw new Error(
-      `Erro ao contar recibos vencidos: ${error.message}`,
-    );
+    throw new Error(`Erro ao contar recibos vencidos: ${error.message}`);
   }
 
-  const overdueCount = (data ?? []).filter((receipt) => {
-    const isReversal =
-      receipt.external_nature === "9" ||
-      (receipt.receipt_type ?? "").toUpperCase().includes("ESTORNO") ||
-      (receipt.receipt_type ?? "").toUpperCase().includes("REVERSAL");
-
-    return !isReversal;
-  }).length;
-
-  return overdueCount;
+  return Number(data ?? 0);
 }
