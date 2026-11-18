@@ -13,6 +13,8 @@ import {
 
 import {
   createTask,
+  findOpenProcessesForClient,
+  type OpenProcessMatch,
   type InsuranceLineOption,
   type ProcessPatch,
   type ProfileOption,
@@ -487,6 +489,16 @@ export function CreateTaskModal({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  // Aviso de duplicado: processos abertos do mesmo cliente e ramo.
+  // Depois de visto, o botão passa a "Criar mesmo assim".
+  const [duplicates, setDuplicates] = useState<OpenProcessMatch[] | null>(
+    null,
+  );
+  const [duplicatesKey, setDuplicatesKey] = useState("");
+  const dupKey = `${clientId ?? ""}|${clientNif.replace(/\D/g, "")}|${insuranceLineId}`;
+  const warned =
+    duplicates !== null && duplicates.length > 0 && duplicatesKey === dupKey;
+
   const isProcess = kind === "PROCESS";
 
   function handleSubmit() {
@@ -511,6 +523,21 @@ export function CreateTaskModal({
 
     startTransition(async () => {
       try {
+        // 1.º clique: ver se o cliente já tem um processo aberto igual.
+        if (isProcess && !warned && (clientId || clientNif.trim())) {
+          const found = await findOpenProcessesForClient({
+            clientId,
+            clientNif: clientNif || null,
+            insuranceLineId: insuranceLineId || null,
+          });
+
+          if (found.length > 0) {
+            setDuplicates(found);
+            setDuplicatesKey(dupKey);
+            return;
+          }
+        }
+
         await createTask({
           kind,
           title,
@@ -551,7 +578,11 @@ export function CreateTaskModal({
         <>
           <SecondaryButton onClick={onClose}>Cancelar</SecondaryButton>
           <PrimaryButton onClick={handleSubmit} pending={isPending}>
-            {isProcess ? "Criar processo" : "Criar tarefa"}
+            {isProcess
+              ? warned
+                ? "Criar mesmo assim"
+                : "Criar processo"
+              : "Criar tarefa"}
           </PrimaryButton>
         </>
       }
@@ -658,6 +689,38 @@ export function CreateTaskModal({
           </div>
         )}
       </div>
+
+      {warned && duplicates && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+          <p className="font-semibold">
+            Este cliente já tem{" "}
+            {duplicates.length === 1
+              ? "um processo aberto"
+              : `${duplicates.length} processos abertos`}
+            {insuranceLineId ? " deste ramo" : ""}:
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {duplicates.map((d) => (
+              <li key={d.id}>
+                <a
+                  href={`/processos?abrir=${d.id}`}
+                  className="underline decoration-amber-400 underline-offset-2 hover:text-amber-950"
+                >
+                  {d.title}
+                </a>
+                <span className="text-amber-800">
+                  {" "}
+                  · criado {formatDate(d.createdAt)}
+                  {d.createdBy ? ` por ${d.createdBy}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5">
+            Se é outro assunto, carrega em <b>Criar mesmo assim</b>.
+          </p>
+        </div>
+      )}
 
       {privileged && (
         <AssigneeField

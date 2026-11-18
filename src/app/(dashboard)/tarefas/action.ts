@@ -375,6 +375,75 @@ export type ProcessInput = {
   clientId?: string | null;
 };
 
+/*
+ * Aviso de duplicado ao criar um processo: processos ABERTOS do mesmo
+ * cliente (pelo cliente escolhido ou pelo NIF) e do mesmo ramo (ou sem
+ * ramo indicado). Um cliente pode ter vários processos: isto só avisa.
+ */
+export type OpenProcessMatch = {
+  id: string;
+  title: string;
+  createdAt: string;
+  createdBy: string | null;
+};
+
+export async function findOpenProcessesForClient(input: {
+  clientId: string | null;
+  clientNif: string | null;
+  insuranceLineId: string | null;
+}): Promise<OpenProcessMatch[]> {
+  await getAuthenticatedProfile();
+
+  const nif = cleanNif(input.clientNif);
+  const filters = [
+    input.clientId ? `client_id.eq.${input.clientId}` : null,
+    nif ? `client_nif.eq.${nif}` : null,
+  ].filter(Boolean);
+
+  if (filters.length === 0) return [];
+
+  const admin = createAdminClient();
+
+  let query = admin
+    .from("tasks")
+    .select(
+      "id, title, created_at, insurance_line_id, created_by:profiles!tasks_created_by_user_id_fkey ( full_name )",
+    )
+    .eq("kind", "PROCESS")
+    .not("status", "in", "(COMPLETED,CANCELLED)")
+    .or(filters.join(","))
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  // Mesmo ramo, ou processos sem ramo indicado.
+  if (input.insuranceLineId) {
+    query = query.or(
+      `insurance_line_id.eq.${input.insuranceLineId},insurance_line_id.is.null`,
+    );
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    // O aviso nunca impede de criar.
+    console.error("[processos] duplicados", error.message);
+    return [];
+  }
+
+  return (data ?? []).map((row) => {
+    const creator = Array.isArray(row.created_by)
+      ? row.created_by[0]
+      : row.created_by;
+
+    return {
+      id: row.id as string,
+      title: row.title as string,
+      createdAt: row.created_at as string,
+      createdBy: (creator as { full_name?: string } | null)?.full_name ?? null,
+    };
+  });
+}
+
 export async function createTask(input: {
   kind?: TaskKind;
   title: string;
