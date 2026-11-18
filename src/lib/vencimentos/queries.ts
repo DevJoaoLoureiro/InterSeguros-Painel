@@ -15,8 +15,15 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 
+// Recibos a vencer: cobrar (30 dias para trás e 30 para a frente).
 const WINDOW_DAYS_AHEAD = 30;
 const WINDOW_DAYS_BEHIND = 30;
+
+// Renovações: preparar com tempo (45 dias) e ver as que acabaram de
+// passar (7). Uma renovação de há um mês já não se trabalha: se o
+// cliente não pagou, aparece nos recibos em atraso.
+const RENEWAL_DAYS_AHEAD = 45;
+const RENEWAL_DAYS_BEHIND = 7;
 
 // O PostgREST devolve no máximo 1000 linhas por pedido (também nas
 // funções): lê-se por páginas.
@@ -53,14 +60,17 @@ function getDateKey(date: Date) {
   return date.toISOString().slice(0, 10);
 }
 
-function getWindow() {
+function getWindow(
+  daysBehind = WINDOW_DAYS_BEHIND,
+  daysAhead = WINDOW_DAYS_AHEAD,
+) {
   const today = new Date();
 
   const from = new Date(today);
-  from.setDate(from.getDate() - WINDOW_DAYS_BEHIND);
+  from.setDate(from.getDate() - daysBehind);
 
   const to = new Date(today);
-  to.setDate(to.getDate() + WINDOW_DAYS_AHEAD);
+  to.setDate(to.getDate() + daysAhead);
 
   return {
     todayKey: getDateKey(today),
@@ -101,15 +111,19 @@ export type UpcomingReceiptRow = {
 };
 
 /*
- * Apólices a renovar: period_end do último recibo não-estorno de cada
- * apólice ativa, dentro da janela (função get_upcoming_renewals).
+ * Apólices a renovar: próximo aniversário do contrato (Generali: início
+ * da anuidade enviado pela API), sem prémio único — ver
+ * supabase/migrations/*_renewals_by_anniversary.sql.
  */
 export async function getUpcomingRenewals({
   storeId,
 }: {
   storeId: string | null;
 }): Promise<RenewalRow[]> {
-  const { todayKey, fromKey, toKey } = getWindow();
+  const { todayKey, fromKey, toKey } = getWindow(
+    RENEWAL_DAYS_BEHIND,
+    RENEWAL_DAYS_AHEAD,
+  );
 
   type Row = {
     policy_id: string;
